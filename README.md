@@ -1,47 +1,73 @@
 # StrollWise
 
-StrollWise is a crowd-sourced travel intelligence app that uses H3 hexagonal zoning to map how people move and interact in a city. Instead of relying on static POIs, it aggregates reports, traveler behavior, and activity patterns into privacy-aware hex zones.
+StrollWise is a crowd-sourced travel intelligence app. It uses **H3** hex cells to aggregate reports and movement signals into **merged, map-ready zones** (local vs tourist mix, function types like food hotspots, and similar) without exposing individual trajectories in public APIs.
 
-## Repo Structure
+## Repository layout
 
-- `frontend/` Flutter app (MapLibre + Riverpod + Dio)
-- `backend/` FastAPI app (PostgreSQL + H3 aggregation + classification)
-- `docker-compose.yml` local development stack (PostGIS, Redis, API)
+| Path | Stack | Role |
+| --- | --- | --- |
+| `frontend/` | Flutter 3 (Dart ^3.11), **Riverpod**, **go_router**, **Dio**, **MapLibre** (+ `flutter_map`, `h3_flutter`, **geolocator**) | Mobile app: auth, hex map explore, feed, tag submission, layers/analytics, profile |
+| `backend/` | **FastAPI**, SQLAlchemy 2, **Alembic**, PostgreSQL **PostGIS**, **Redis**, **h3-py**, JWT | REST API under `/api/v1`, aggregation, classification, zone merge pipeline |
+| `docker-compose.yml` | PostGIS 16, Redis 7, API container | Local stack: DB, cache, API on port **8000** |
 
-## MVP Features Implemented
+Detailed backend notes (env vars, full route table, caching): [`backend/README.md`](backend/README.md).
 
-- Auth APIs (`/auth/register`, `/auth/login`, `/auth/me`)
-- Explore map with H3 zone payloads (`/zones`, `/zones/{h3_index}`, neighbors)
-- Report submission and feed (`/reports`, `/reports/feed`, `/reports/by-zone/{h3_index}`)
-- User profile and saved zones (`/users/me`, saved zone routes)
-- Analytics summary and trends
-- H3 aggregation and zone classification service
-- Synthetic seed data generation (`backend/seed.py`)
-- Flutter tabs: Explore, Feed, Add Tag, Trends/Layers, Profile
+## What is implemented
 
-## Local Setup
+**Backend (`/api/v1/…`)**
 
-### 1) Start infrastructure + backend
+- **Auth:** register, login, current user (`/auth/…`, `/auth/me`).
+- **Users:** profile, saved zones (`/users/me`, saved-zone CRUD).
+- **Reports:** create report, global feed, reports by merged zone (`/reports`, `/reports/feed`, `/reports/by-zone/{zone_id}`).
+- **Zones:** viewport listing, zone detail, nearby zones, **current zone** overview for the user location (`/zones`, `/zones/{zone_id}`, `/zones/{zone_id}/nearby`, `/zones/current`).
+- **Analytics:** city pulse, trends, per-zone history (`/analytics/…`).
+- **Uploads:** image upload when S3 is configured (`/uploads/image`).
+
+**Flutter app**
+
+- **Routing:** `go_router` starts at **`/auth`** (login/register against the API), then a bottom shell with **Explore**, **Feed**, **Add tag**, **Layers**, **Profile** (`/explore`, `/feed`, `/add-tag`, `/layers`, `/profile`).
+- **API base:** `ApiConstants.baseUrl` from `--dart-define=API_URL=…` (default `http://localhost:8000`) + path prefix **`/api/v1`** (see `frontend/lib/core/constants/api_constants.dart`).
+
+**Data & ops**
+
+- **Alembic** migrations run automatically when the API container starts (`backend/docker/entrypoint.sh`).
+- Optional **`SEED_ON_BOOT=true`** for compose to run `seed.py` on startup; otherwise seed manually (below).
+- Idempotent **`backend/seed.py`**: demo users (roughly 20–50) and hundreds of synthetic reports around **Cebu City** districts, then full aggregation → classification → merge.
+
+## Prerequisites
+
+- Docker with Compose v2 (`docker compose`)
+- For local Flutter only: Flutter SDK matching `frontend/pubspec.yaml` (Dart ^3.11), Xcode/Android toolchain as needed
+
+## Local setup
+
+### 1) API + PostGIS + Redis
+
+From the repo root:
 
 ```bash
 docker compose up --build
 ```
 
-API runs at [http://localhost:8000](http://localhost:8000)
-Swagger docs at [http://localhost:8000/docs](http://localhost:8000/docs)
+- API: [http://localhost:8000](http://localhost:8000)
+- OpenAPI: [http://localhost:8000/docs](http://localhost:8000/docs)
+- Health: `GET http://localhost:8000/health`
 
-### 2) Seed development data
+Compose wires **`DATABASE_URL`** / **`REDIS_URL`** inside the API service; it loads **`backend/.env.example`** by default. Copy to `backend/.env` if you want to override secrets or tuning (see [`backend/.env.example`](backend/.env.example)).
+
+**Optional auto-seed on container start:**
 
 ```bash
-cd backend
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-cp .env.example .env
-python seed.py
+SEED_ON_BOOT=true docker compose up --build
 ```
 
-### 3) Run Flutter app
+**Or seed after the stack is up:**
+
+```bash
+docker compose exec api python seed.py
+```
+
+### 2) Flutter app
 
 ```bash
 cd frontend
@@ -49,34 +75,50 @@ flutter pub get
 flutter run
 ```
 
-For emulator/device connectivity, override API URL:
+**Pointing the app at the API**
+
+- **Simulator/emulator on the same machine as Docker:** often `http://localhost:8000` works on iOS simulator; Android emulator typically needs the host loopback alias:
 
 ```bash
 flutter run --dart-define=API_URL=http://10.0.2.2:8000
 ```
 
-## API Notes
+- **Physical device:** use your machine’s LAN IP, e.g. `--dart-define=API_URL=http://192.168.1.x:8000`, and ensure the host firewall allows port 8000.
 
-- Public map/feed payloads are zone-level and do not expose individual trajectories.
-- Reports store raw coordinates privately in backend storage and link public results to `h3_index`.
-- Traveler classification:
-  - Local if `local_count / total_count >= 0.70`
-  - International if `international_count / total_count >= 0.70`
-  - Else Mixed
+### 3) Backend without Docker (optional)
 
-## Seed Data
+If you run Postgres+PostGIS and Redis yourself, follow [`backend/README.md`](backend/README.md) (`alembic upgrade head`, `uvicorn app.main:app --reload`, etc.).
 
-`backend/seed.py` creates:
+## Tests
 
-- 40 synthetic users
-- ~350 synthetic reports
-- Multiple categories/tags and report time patterns
-- Recomputed hex aggregates and zone snapshots
+```bash
+cd backend && pytest -q
+```
 
-## Next Recommended Steps
+## Privacy & API behavior
 
-- Add Alembic migration workflow and full PostGIS geometry columns
-- Move auth token handling to secure storage in Flutter
-- Add dedicated onboarding + auth screens connected to backend
-- Implement precise map hit-testing for selected hex instead of first-result fallback
-- Add media upload flow to S3 and moderation hooks
+- Public map and feed payloads are **zone-level**; they do not expose raw trajectories.
+- Reports store coordinates server-side for aggregation; public responses tie to **merged zone** / H3-derived identifiers as implemented in the services layer.
+
+## Traveler mix (classification)
+
+Heuristic used in classification (see backend services):
+
+- **Local** if `local_count / total_count >= 0.70`
+- **International** if `international_count / total_count >= 0.70`
+- Otherwise **Mixed**
+
+## Pipeline (short)
+
+1. **`POST /api/v1/reports`** resolves `latitude` / `longitude` to an H3 cell, persists the report, and recomputes aggregates for that cell and neighbors.
+2. **Classification** assigns behavior/function signals per cell aggregate.
+3. **Zone merge** expands similar adjacent cells into **merged zones** for the map.
+4. **Redis** caches zone viewport responses and city pulse; relevant keys are invalidated when reports or merges change data.
+
+## Roadmap ideas
+
+- Harden token storage on mobile (e.g. platform secure storage) and refresh-token flow if you add it server-side.
+- Production object storage and moderation for `/uploads/image`.
+- Map interaction polish (selection, hit-testing) and any first-run UX you add beyond the current auth gate.
+
+For migration commands, S3 env vars, and the full route list, use **`backend/README.md`**.

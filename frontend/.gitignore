@@ -1,6 +1,12 @@
 # Miscellaneous
 *.class
 *.log
+
+# Local env files (never commit secrets)
+.env
+.env.*
+!.env.example
+!.env.sample
 *.pyc
 *.swp
 .DS_Store

@@ -7,9 +7,11 @@ __pycache__/
 .ruff_cache/
 .mypy_cache/
 
-# Environment
+# Environment / secrets — never commit real env files (templates stay tracked)
 .env
-.env.local
+.env.*
+!.env.example
+!.env.sample
 *.log
 
 # Editor
