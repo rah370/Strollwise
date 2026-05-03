@@ -1,0 +1,59 @@
+from __future__ import annotations
+
+from typing import Any
+from uuid import UUID
+
+from pydantic import Field
+
+from app.schemas.common import Centroid, ORMModel
+
+
+class ZoneListItem(ORMModel):
+    zone_id: UUID
+    display_name: str
+    behavior_type: str
+    function_type: str
+    summary: str | None = None
+    live_status: str
+    polygon_geojson: dict[str, Any]
+    centroid: Centroid
+    crowd_level: float
+    local_presence_percent: float
+    peak_time_label: str | None = None
+    confidence_score: float
+    priority_score: float
+
+
+class ZoneDetail(ORMModel):
+    zone_id: UUID
+    display_name: str
+    behavior_type: str
+    function_type: str
+    summary: str | None = None
+    live_status: str
+    polygon_geojson: dict[str, Any]
+    centroid: Centroid
+    crowd_level: float
+    local_presence_percent: float
+    peak_time_label: str | None = None
+    top_activities: list[str] = Field(default_factory=list)
+    confidence_score: float
+    why_visit: str | None = None
+    live_update: str | None = None
+    nearby_zone_ids: list[UUID] = Field(default_factory=list)
+    source_h3_indexes: list[str] = Field(default_factory=list)
+    report_count: int = 0
+
+
+class ZoneLaunchContext(ORMModel):
+    city_activity: str
+    crowd_level_percent: float
+    local_presence_percent: float
+    peak_time_window: str | None = None
+
+
+class CurrentZoneOverview(ORMModel):
+    current_zone: ZoneListItem | None = None
+    nearby_zones: list[ZoneListItem] = Field(default_factory=list)
+    alternative_zones: list[ZoneListItem] = Field(default_factory=list)
+    context: ZoneLaunchContext
