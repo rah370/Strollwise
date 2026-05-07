@@ -1,3 +1,5 @@
+// ignore_for_file: unused_element, unused_import, unused_field
+
 import 'dart:async';
 import 'dart:math' as math;
 
@@ -5,11 +7,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart' as fm;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:go_router/go_router.dart';
 import 'package:latlong2/latlong.dart' as ll;
 import 'package:maplibre_gl/maplibre_gl.dart';
 
 import '../../../app/theme/colors.dart';
-import '../../../shared/models/current_zone_overview.dart';
 import '../../../shared/models/zone.dart';
 import '../../../shared/providers/app_providers.dart';
 import '../../zones/presentation/zone_detail_sheet.dart';
@@ -32,13 +34,15 @@ class ExploreScreen extends ConsumerStatefulWidget {
 
 class _ExploreScreenState extends ConsumerState<ExploreScreen> {
   MapLibreMapController? _controller;
-  final fm.MapController _flutterMapController = fm.MapController();
   StreamSubscription<Position>? _positionSubscription;
   bool _isUpdatingViewport = false;
   bool _didBootstrapLocation = false;
   bool _didApplyCurrentZone = false;
-  // ignore: unused_field
   bool _isLocationEnabledForMap = false;
+  bool _mapStyleLoaded = false;
+  bool _zoneLayersAdded = false;
+  String? _zoneBelowLayerId;
+  List<ZoneModel> _latestZones = const [];
   bool _usingManualLocation = false;
   bool _followUser = true;
   bool _showLayerLegend = false;
@@ -61,6 +65,9 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
   static const _cebuCityCenter = LatLng(10.3157, 123.8854);
   static const _defaultZoom = 14.7;
   static const _cebuRegionRadiusMeters = 120000.0;
+  static const _zonesSourceId = 'zones-source';
+  static const _zonesFillLayerId = 'zones-fill';
+  static const _zonesLineLayerId = 'zones-line';
 
   @override
   void initState() {
@@ -154,10 +161,12 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
       maxLat: target.latitude + latDelta,
       maxLng: target.longitude + lngDelta,
     );
-    _flutterMapController.move(
-      ll.LatLng(target.latitude, target.longitude),
-      zoom,
-    );
+    final controller = _controller;
+    if (controller != null) {
+      await controller.moveCamera(
+        CameraUpdate.newLatLngZoom(target, zoom),
+      );
+    }
   }
 
   Future<void> _ensureDefaultCebuViewport() async {
@@ -250,26 +259,97 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
     }
   }
 
-  // ignore: unused_element
   Future<void> _drawZones(List<ZoneModel> zones) async {
     final controller = _controller;
-    if (controller == null) {
+    if (controller == null || !_mapStyleLoaded) {
       return;
     }
+    _latestZones = zones;
     final selectedZone = ref.read(selectedZoneProvider);
     final userLocation = ref.read(currentUserLocationProvider);
     final mapMode = _mapMode;
     final currentZoom = ref.read(mapViewportProvider).zoom;
     try {
-      await controller.clearLines();
-      await controller.clearFills();
       await controller.clearSymbols();
+      await controller.clearCircles();
     } catch (_) {
-      // Map style/source can momentarily be unavailable during hot reload
-      // or quick route transitions. Skip this frame and redraw on next tick.
       return;
     }
     try {
+      final features = <Map<String, dynamic>>[];
+      for (final zone in zones) {
+        final layerKey = _zoneLayerKey(zone);
+        final isSelected = selectedZone?.h3Index == zone.h3Index;
+        if (!_enabledLayerKeys.contains(layerKey) && !isSelected) continue;
+        final color = _streetZoneColor(zone);
+        final rings = zone.sourceH3Rings;
+        if (rings.isEmpty) continue;
+        for (final ring in rings) {
+          if (ring.length < 6) continue;
+          features.add({
+            'type': 'Feature',
+            'properties': {
+              'zone_id': zone.zoneId,
+              'zone_type': layerKey,
+              'fill': _hexFromColor(color),
+              'line': _hexFromColor(color),
+              'selected': isSelected,
+            },
+            'geometry': {
+              'type': 'Polygon',
+              'coordinates': [ring],
+            },
+          });
+        }
+      }
+      final geoJson = {
+        'type': 'FeatureCollection',
+        'features': features,
+      };
+      if (!_zoneLayersAdded) {
+        await controller.addGeoJsonSource(_zonesSourceId, geoJson);
+        final belowLayerId =
+            _zoneBelowLayerId ?? await _resolveRoadLayerId(controller);
+        _zoneBelowLayerId = belowLayerId;
+        await controller.addFillLayer(
+          _zonesSourceId,
+          _zonesFillLayerId,
+          FillLayerProperties(
+            fillColor: ['get', 'fill'],
+            fillOpacity: [
+              'case',
+              ['boolean', ['get', 'selected'], false],
+              0.33,
+              0.28,
+            ],
+          ),
+          belowLayerId: belowLayerId,
+        );
+        await controller.addLineLayer(
+          _zonesSourceId,
+          _zonesLineLayerId,
+          LineLayerProperties(
+            lineColor: ['get', 'line'],
+            lineWidth: [
+              'case',
+              ['boolean', ['get', 'selected'], false],
+              1.6,
+              1.3,
+            ],
+            lineOpacity: [
+              'case',
+              ['boolean', ['get', 'selected'], false],
+              0.86,
+              0.76,
+            ],
+          ),
+          belowLayerId: belowLayerId,
+        );
+        _zoneLayersAdded = true;
+      } else {
+        await controller.setGeoJsonSource(_zonesSourceId, geoJson);
+      }
+
       final labelZones = [...zones]
         ..sort((a, b) {
           final aScore = a.reportCount + a.confidenceScore;
@@ -277,16 +357,15 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
           return bScore.compareTo(aScore);
         });
       final labelLimit = currentZoom >= 13
-          ? 10
+          ? 14
           : currentZoom >= 11.5
-          ? 7
-          : 4;
+          ? 10
+          : 6;
       final labeledZoneIds = labelZones
           .take(labelLimit)
           .map((zone) => zone.h3Index)
           .toSet();
       for (final zone in zones) {
-        final palette = _zonePalette(zone);
         if (zone.polygonParts.isEmpty) {
           continue;
         }
@@ -295,55 +374,6 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
         final layerVisible = _enabledLayerKeys.contains(layerKey);
         if (!layerVisible && !isSelected) {
           continue;
-        }
-        final fillOpacity = _zoneFillOpacity(
-          mode: mapMode,
-          selected: isSelected,
-          hasSelection: selectedZone != null,
-          confidenceScore: zone.confidenceScore,
-        );
-        final fillColor = _hexFromColor(palette.fill);
-        final borderColor = _hexFromColor(palette.border);
-        final lineWidth = mapMode == ExploreMapMode.navigating
-            ? (isSelected ? 2.0 : 0.7)
-            : (isSelected ? 3.2 : 1.2);
-        final lineOpacity = mapMode == ExploreMapMode.navigating
-            ? (isSelected ? 0.45 : 0.18)
-            : (isSelected ? 1.0 : 0.55);
-
-        // Draw every polygon part of the merged zone (handles MultiPolygon
-        // splits + holes) so the shape rendered matches exactly what the
-        // backend defined. Users see named city zones, not H3 cells.
-        for (final rings in zone.polygonParts) {
-          if (rings.isEmpty) continue;
-          final fillGeometry = <List<LatLng>>[];
-          for (final ring in rings) {
-            final latLngRing = ring
-                .map((point) => LatLng(point[1], point[0]))
-                .toList();
-            if (latLngRing.length < 3) continue;
-            fillGeometry.add(latLngRing);
-          }
-          if (fillGeometry.isEmpty) continue;
-
-          await controller.addFill(
-            FillOptions(
-              geometry: fillGeometry,
-              fillColor: fillColor,
-              fillOpacity: fillOpacity,
-            ),
-          );
-          // Outline the outer ring (index 0). Holes are visually delimited
-          // by the fill itself and usually don't need a separate stroke.
-          final outer = fillGeometry.first;
-          await controller.addLine(
-            LineOptions(
-              geometry: [...outer, outer.first],
-              lineColor: borderColor,
-              lineWidth: lineWidth,
-              lineOpacity: lineOpacity,
-            ),
-          );
         }
         final center = _zoneCenter(zone);
         final shouldLabel = mapMode == ExploreMapMode.navigating
@@ -357,9 +387,9 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
               textSize: isSelected
                   ? (currentZoom >= 12.5 ? 13 : 12)
                   : (currentZoom >= 12.5 ? 11.4 : 10.2),
-              textColor: _hexFromColor(palette.accent),
+              textColor: isSelected ? '#1F2937' : '#374151',
               textHaloColor: '#FFFFFF',
-              textHaloWidth: 1.9,
+              textHaloWidth: 1.6,
               textOpacity: isSelected ? 1 : 0.90,
               textAnchor: 'center',
               textMaxWidth: 9,
@@ -381,9 +411,88 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
           ),
         );
       }
+      if (userLocation != null) {
+        await controller.addCircle(
+          CircleOptions(
+            geometry: userLocation,
+            circleRadius: 7.2,
+            circleColor: '#2F80ED',
+            circleStrokeColor: '#FFFFFF',
+            circleStrokeWidth: 3.0,
+          ),
+        );
+      }
     } catch (_) {
       return;
     }
+  }
+
+  Future<String?> _resolveRoadLayerId(MapLibreMapController controller) async {
+    try {
+      final layers = await controller.getLayerIds();
+      const preferredRoadLayers = <String>[
+        'road-label',
+        'road',
+        'roads',
+        'transportation',
+      ];
+      for (final preferred in preferredRoadLayers) {
+        for (final raw in layers) {
+          final id = raw.toString().toLowerCase();
+          if (id == preferred || id.contains(preferred)) return raw.toString();
+        }
+      }
+      for (final raw in layers) {
+        final id = raw.toString().toLowerCase();
+        if (id.contains('road') || id.contains('street')) return raw.toString();
+      }
+      for (final raw in layers) {
+        final id = raw.toString().toLowerCase();
+        if (id.contains('label')) return raw.toString();
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  Future<void> _applyBaseMapVisualTuning(MapLibreMapController controller) async {
+    try {
+      final layers = await controller.getLayerIds();
+      for (final raw in layers) {
+        final layerId = raw.toString();
+        final id = layerId.toLowerCase();
+        if (id.contains('poi') ||
+            id.contains('medical') ||
+            id.contains('hospital') ||
+            id.contains('clinic') ||
+            id.contains('pharmacy')) {
+          try {
+            await controller.setLayerProperties(
+              layerId,
+              SymbolLayerProperties(
+                iconOpacity: 0,
+                textOpacity: 0,
+              ),
+            );
+          } catch (_) {}
+        } else if (id.contains('transit') ||
+            id.contains('rail') ||
+            id.contains('station')) {
+          try {
+            await controller.setLayerProperties(
+              layerId,
+              LineLayerProperties(lineOpacity: 0.2),
+            );
+          } catch (_) {
+            try {
+              await controller.setLayerProperties(
+                layerId,
+                SymbolLayerProperties(iconOpacity: 0.3, textOpacity: 0.3),
+              );
+            } catch (_) {}
+          }
+        }
+      }
+    } catch (_) {}
   }
 
   LatLng _zoneCenter(ZoneModel zone) {
@@ -422,7 +531,6 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
     return selected;
   }
 
-  // ignore: unused_element
   Future<void> _refreshViewportZones() async {
     final controller = _controller;
     if (controller == null || _isUpdatingViewport) {
@@ -441,6 +549,10 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
         maxLat: bounds.northeast.latitude,
         maxLng: bounds.northeast.longitude,
       );
+      final zones = ref.read(visibleZonesProvider).valueOrNull;
+      if (zones != null) {
+        unawaited(_drawZones(zones));
+      }
     } finally {
       _isUpdatingViewport = false;
     }
@@ -463,10 +575,10 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
       _followUser = true;
     });
     final target = _zoneCenter(zone);
-    _flutterMapController.move(
-      ll.LatLng(target.latitude, target.longitude),
-      13.2,
-    );
+    final controller = _controller;
+    if (controller != null) {
+      unawaited(controller.animateCamera(CameraUpdate.newLatLngZoom(target, 13.2)));
+    }
   }
 
   void _exitNavigation() {
@@ -491,10 +603,15 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
           final live = LatLng(position.latitude, position.longitude);
           ref.read(currentUserLocationProvider.notifier).state = live;
           if (_followUser) {
-            _flutterMapController.move(
-              ll.LatLng(live.latitude, live.longitude),
-              _mapMode == ExploreMapMode.navigating ? 14 : 13,
-            );
+            final controller = _controller;
+            if (controller != null) {
+              await controller.moveCamera(
+                CameraUpdate.newLatLngZoom(
+                  live,
+                  _mapMode == ExploreMapMode.navigating ? 14 : 13,
+                ),
+              );
+            }
           }
         });
   }
@@ -574,6 +691,19 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
           final color = _streetZoneColor(zone);
           final selected = selectedZone?.h3Index == zone.h3Index;
           final opacity = selected ? 0.30 : (zoom >= 14.2 ? 0.24 : 0.18);
+          final hexRings = zone.sourceH3Rings;
+          if (hexRings.isNotEmpty) {
+            return hexRings.map((ring) {
+              final points = ring.map((point) => ll.LatLng(point[1], point[0])).toList();
+              return fm.Polygon(
+                points: points,
+                // Outline-only zones so roads remain completely plain.
+                color: Colors.transparent,
+                borderColor: color.withValues(alpha: selected ? 0.82 : 0.68),
+                borderStrokeWidth: selected ? 1.25 : 1.0,
+              );
+            });
+          }
           return zone.polygonParts.expand((rings) {
             if (rings.isEmpty) return const <fm.Polygon<Object>>[];
             final outerRing = rings.first
@@ -682,120 +812,59 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
     currentZoneOverview.whenData((overview) {
       if (_didApplyCurrentZone || overview?.currentZone == null) return;
       _didApplyCurrentZone = true;
-      ref.read(selectedZoneProvider.notifier).state = overview!.currentZone;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        ref.read(selectedZoneProvider.notifier).state = overview!.currentZone;
+      });
+    });
+    zonesValue.whenData((zones) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        unawaited(_drawZones(zones));
+      });
     });
 
     return Scaffold(
       body: LayoutBuilder(
         builder: (context, constraints) {
           final compact = constraints.maxWidth < 520;
-          final mapZoom = ref.watch(mapViewportProvider).zoom;
           return Stack(
             children: [
-              fm.FlutterMap(
-                mapController: _flutterMapController,
-                options: fm.MapOptions(
-                  initialCenter: ll.LatLng(
-                    _cebuCityCenter.latitude,
-                    _cebuCityCenter.longitude,
-                  ),
-                  initialZoom: 14.7,
-                  minZoom: 11,
-                  maxZoom: 18,
-                  interactionOptions: const fm.InteractionOptions(
-                    flags: fm.InteractiveFlag.all & ~fm.InteractiveFlag.rotate,
-                  ),
-                  onTap: (_, point) {
-                    if (_mapMode == ExploreMapMode.navigating) return;
-                    final zones = zonesValue.asData?.value;
-                    if (zones == null || zones.isEmpty) return;
-                    final selected = _findNearestZone(
-                      LatLng(point.latitude, point.longitude),
-                      zones,
-                    );
-                    if (selected != null) _selectZone(selected);
-                  },
-                  onPositionChanged: (camera, _) {
-                    final center = camera.center;
-                    final current = ref.read(mapViewportProvider);
-                    ref.read(mapViewportProvider.notifier).state = current
-                        .copyWith(
-                          center: LatLng(center.latitude, center.longitude),
-                          zoom: camera.zoom,
-                        );
-                  },
+              MapLibreMap(
+                styleString:
+                    'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json',
+                initialCameraPosition: const CameraPosition(
+                  target: _cebuCityCenter,
+                  zoom: 14.7,
                 ),
-                children: [
-                  fm.TileLayer(
-                    urlTemplate:
-                        'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                    userAgentPackageName: 'com.example.strollwise',
-                  ),
-                  zonesValue.maybeWhen(
-                    data: (zones) => fm.PolygonLayer(
-                      polygons: _buildStreetZoomPolygons(
-                        zones,
-                        selectedZone,
-                        mapZoom,
-                      ),
-                    ),
-                    orElse: () =>
-                        fm.PolygonLayer(polygons: const <fm.Polygon<Object>>[]),
-                  ),
-                  zonesValue.maybeWhen(
-                    data: (zones) => fm.MarkerLayer(
-                      markers: _buildStreetZoomLabels(
-                        zones,
-                        selectedZone,
-                        mapZoom,
-                      ),
-                    ),
-                    orElse: () => const fm.MarkerLayer(markers: []),
-                  ),
-                  if (currentUserLocation != null)
-                    fm.MarkerLayer(
-                      markers: [
-                        fm.Marker(
-                          point: ll.LatLng(
-                            currentUserLocation.latitude,
-                            currentUserLocation.longitude,
-                          ),
-                          width: 20,
-                          height: 20,
-                          child: Container(
-                            decoration: BoxDecoration(
-                              color: const Color(0xFF1D9BF0),
-                              shape: BoxShape.circle,
-                              border: Border.all(color: Colors.white, width: 2),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  if (_mapMode == ExploreMapMode.navigating &&
-                      selectedZone != null &&
-                      currentUserLocation != null)
-                    fm.PolylineLayer(
-                      polylines: [
-                        fm.Polyline(
-                          points: [
-                            ll.LatLng(
-                              currentUserLocation.latitude,
-                              currentUserLocation.longitude,
-                            ),
-                            ll.LatLng(
-                              _zoneCenter(selectedZone).latitude,
-                              _zoneCenter(selectedZone).longitude,
-                            ),
-                          ],
-                          strokeWidth: 3.2,
-                          color: AppColors.secondaryAction.withValues(
-                            alpha: 0.9,
-                          ),
-                        ),
-                      ],
-                    ),
-                ],
+                minMaxZoomPreference: const MinMaxZoomPreference(7.8, 18),
+                rotateGesturesEnabled: false,
+                onMapCreated: (controller) {
+                  _controller = controller;
+                },
+                onStyleLoadedCallback: () async {
+                  _mapStyleLoaded = true;
+                  _zoneLayersAdded = false;
+                  final controller = _controller;
+                  if (controller == null) return;
+                  await _applyBaseMapVisualTuning(controller);
+                  _zoneBelowLayerId = await _resolveRoadLayerId(controller);
+                  final zones = ref.read(visibleZonesProvider).valueOrNull;
+                  if (zones != null) {
+                    unawaited(_drawZones(zones));
+                  }
+                },
+                onCameraIdle: _refreshViewportZones,
+                onMapClick: (point, latLng) {
+                  if (_mapMode == ExploreMapMode.navigating) return;
+                  final zones = _latestZones;
+                  if (zones.isEmpty) return;
+                  final selected = _findNearestZone(
+                    LatLng(latLng.latitude, latLng.longitude),
+                    zones,
+                  );
+                  if (selected != null) _selectZone(selected);
+                },
               ),
               IgnorePointer(
                 child: DecoratedBox(
@@ -804,12 +873,12 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
                       begin: Alignment.topCenter,
                       end: Alignment.bottomCenter,
                       colors: [
-                        Colors.white.withValues(alpha: 0.94),
-                        Colors.white.withValues(alpha: 0.30),
+                        Colors.white.withValues(alpha: 0.38),
+                        Colors.white.withValues(alpha: 0.07),
                         Colors.transparent,
-                        Colors.white.withValues(alpha: 0.12),
+                        Colors.white.withValues(alpha: 0.04),
                       ],
-                      stops: const [0, 0.17, 0.42, 1],
+                      stops: const [0, 0.10, 0.45, 1],
                     ),
                   ),
                   child: const SizedBox.expand(),
@@ -845,7 +914,7 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
                       onRetry: () => _bootstrapCurrentLocation(force: true),
                       onManualLocation: _promptManualLocation,
                     ),
-                    const SizedBox(height: 10),
+                    const SizedBox(height: 8),
                     _TopTagFilterRow(onTagSelected: _applyTopTagFilter),
                     if (_showSearch) ...[
                       const SizedBox(height: 10),
@@ -895,7 +964,7 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
               ),
               Positioned(
                 right: 18,
-                bottom: compact ? 260 : 292,
+                bottom: selectedZone != null ? (compact ? 242 : 264) : 152,
                 child: Column(
                   children: [
                     if (_mapMode == ExploreMapMode.navigating)
@@ -905,19 +974,33 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
                         onPressed: _exitNavigation,
                       )
                     else
-                      _MapFab(
-                        heroTag: 'location-btn',
-                        icon: _followUser
-                            ? Icons.my_location_rounded
-                            : Icons.location_searching_rounded,
-                        onPressed: () {
-                          if (_usingManualLocation) {
-                            _promptManualLocation();
-                          } else {
-                            setState(() => _followUser = true);
-                            _bootstrapCurrentLocation(force: true);
-                          }
-                        },
+                      Column(
+                        children: [
+                          _MapFab(
+                            heroTag: 'location-btn',
+                            icon: _followUser
+                                ? Icons.my_location_rounded
+                                : Icons.location_searching_rounded,
+                            onPressed: () {
+                              if (_usingManualLocation) {
+                                _promptManualLocation();
+                              } else {
+                                setState(() => _followUser = true);
+                                _bootstrapCurrentLocation(force: true);
+                              }
+                            },
+                          ),
+                          const SizedBox(height: 10),
+                          _MapFab(
+                            heroTag: 'layers-btn',
+                            icon: Icons.tune_rounded,
+                            onPressed: () {
+                              setState(
+                                () => _showLayerLegend = !_showLayerLegend,
+                              );
+                            },
+                          ),
+                        ],
                       ),
                   ],
                 ),
@@ -931,18 +1014,6 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
                       : (compact ? 28 : 34),
                   child: const SizedBox.shrink(),
                 ),
-              Positioned(
-                left: 18,
-                right: 18,
-                bottom: selectedZone != null ? (compact ? 356 : 376) : 86,
-                child: currentZoneOverview.maybeWhen(
-                  data: (overview) {
-                    if (overview == null) return const SizedBox.shrink();
-                    return _LaunchContextCard(overview: overview);
-                  },
-                  orElse: () => const SizedBox.shrink(),
-                ),
-              ),
               if (selectedZone != null || _mapMode == ExploreMapMode.navigating)
                 Positioned(
                   left: 16,
@@ -999,15 +1070,22 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
                   ),
                 ),
               Positioned(
-                left: 18,
-                bottom: selectedZone != null ? (compact ? 238 : 258) : 112,
-                child: _ZoneLegendPanel(
-                  expanded: _showLayerLegend,
-                  enabledKeys: _enabledLayerKeys,
-                  onToggleExpanded: () {
-                    setState(() => _showLayerLegend = !_showLayerLegend);
-                  },
-                  onToggleLayer: _toggleLayerKey,
+                right: 18,
+                bottom: selectedZone != null ? (compact ? 358 : 386) : 254,
+                child: AnimatedOpacity(
+                  opacity: _showLayerLegend ? 1 : 0,
+                  duration: const Duration(milliseconds: 180),
+                  child: IgnorePointer(
+                    ignoring: !_showLayerLegend,
+                    child: _ZoneLegendPanel(
+                      expanded: true,
+                      enabledKeys: _enabledLayerKeys,
+                      onToggleExpanded: () {
+                        setState(() => _showLayerLegend = false);
+                      },
+                      onToggleLayer: _toggleLayerKey,
+                    ),
+                  ),
                 ),
               ),
             ],
@@ -1334,7 +1412,7 @@ class _LocationStatusBanner extends StatelessWidget {
       ),
       _LocationBootstrapState.permissionDenied => (
         Icons.location_disabled_rounded,
-        'Location access needed. Enable in Settings for nearby zones.',
+        "Location Access 'Always' needed. Go to Settings to fix it.",
         'Open settings',
       ),
       _LocationBootstrapState.serviceDisabled => (
@@ -1400,87 +1478,6 @@ class _LocationStatusBanner extends StatelessWidget {
   }
 }
 
-class _LaunchContextCard extends StatelessWidget {
-  const _LaunchContextCard({required this.overview});
-
-  final CurrentZoneOverviewModel overview;
-
-  @override
-  Widget build(BuildContext context) {
-    final current = overview.currentZone;
-    if (current == null) return const SizedBox.shrink();
-    final nearbyLabels = overview.nearbyZones
-        .take(3)
-        .map(_zoneIdentity)
-        .toSet()
-        .join(' • ');
-    final alternatives = overview.alternativeZones
-        .take(2)
-        .map(_zoneTitle)
-        .join(', ');
-    return Container(
-      padding: const EdgeInsets.fromLTRB(14, 10, 14, 11),
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.92),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Colors.white),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x120F172A),
-            blurRadius: 14,
-            offset: Offset(0, 6),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(
-            'You are in ${_zoneIdentity(current)}',
-            style: const TextStyle(
-              color: AppColors.primaryText,
-              fontWeight: FontWeight.w900,
-              fontSize: 13,
-            ),
-          ),
-          if (nearbyLabels.isNotEmpty) ...[
-            const SizedBox(height: 4),
-            Text(
-              'Nearby: $nearbyLabels',
-              style: const TextStyle(
-                color: AppColors.secondaryText,
-                fontWeight: FontWeight.w700,
-                fontSize: 12,
-              ),
-            ),
-          ],
-          const SizedBox(height: 3),
-          Text(
-            'Activity ${overview.context.cityActivity} • Crowd ${overview.context.crowdLevelPercent.round()}%',
-            style: const TextStyle(
-              color: AppColors.mutedText,
-              fontWeight: FontWeight.w700,
-              fontSize: 11,
-            ),
-          ),
-          if (alternatives.isNotEmpty) ...[
-            const SizedBox(height: 3),
-            Text(
-              'Try instead: $alternatives',
-              style: const TextStyle(
-                color: AppColors.primaryAction,
-                fontWeight: FontWeight.w800,
-                fontSize: 11,
-              ),
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-}
-
 class _MapTopBar extends StatelessWidget {
   const _MapTopBar({
     required this.zoneCount,
@@ -1495,15 +1492,15 @@ class _MapTopBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(18, 8, 18, 0),
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
       child: Row(
         children: [
           ClipRRect(
-            borderRadius: BorderRadius.circular(10),
+            borderRadius: BorderRadius.circular(12),
             child: Image.asset(
               'lib/app/theme/strollwiselogo.jpg',
-              width: 42,
-              height: 42,
+              width: 44,
+              height: 44,
               fit: BoxFit.cover,
             ),
           ),
@@ -1512,12 +1509,19 @@ class _MapTopBar extends StatelessWidget {
             child: GestureDetector(
               onTap: onSearchTap,
               child: Container(
-                height: 42,
-                padding: const EdgeInsets.symmetric(horizontal: 12),
+                height: 46,
+                padding: const EdgeInsets.symmetric(horizontal: 14),
                 decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.96),
-                  borderRadius: BorderRadius.circular(14),
+                  color: Colors.white.withValues(alpha: 0.95),
+                  borderRadius: BorderRadius.circular(18),
                   border: Border.all(color: AppColors.border),
+                  boxShadow: const [
+                    BoxShadow(
+                      color: Color(0x140F172A),
+                      blurRadius: 14,
+                      offset: Offset(0, 6),
+                    ),
+                  ],
                 ),
                 child: Row(
                   children: [
@@ -1529,12 +1533,12 @@ class _MapTopBar extends StatelessWidget {
                     const SizedBox(width: 8),
                     Text(
                       zoneCount == null
-                          ? 'Search area'
+                          ? 'Search places or zones...'
                           : 'Search $zoneCount zones',
                       style: const TextStyle(
                         color: AppColors.mutedText,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
                       ),
                     ),
                   ],
@@ -1543,13 +1547,10 @@ class _MapTopBar extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 10),
-          if (zoneCount != null) ...[
-            _StatusPill(label: '$zoneCount zones'),
-            const SizedBox(width: 10),
-          ],
           _TopIconButton(
             icon: Icons.notifications_none_rounded,
             onTap: onNotificationTap,
+            showDot: true,
           ),
         ],
       ),
@@ -1558,23 +1559,52 @@ class _MapTopBar extends StatelessWidget {
 }
 
 class _TopIconButton extends StatelessWidget {
-  const _TopIconButton({required this.icon, required this.onTap});
+  const _TopIconButton({
+    required this.icon,
+    required this.onTap,
+    this.showDot = false,
+  });
 
   final IconData icon;
   final VoidCallback onTap;
+  final bool showDot;
 
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: Colors.white.withValues(alpha: 0.96),
-      borderRadius: BorderRadius.circular(14),
+      color: Colors.white.withValues(alpha: 0.95),
+      borderRadius: BorderRadius.circular(18),
       child: InkWell(
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(18),
         onTap: onTap,
-        child: SizedBox(
-          width: 42,
-          height: 42,
-          child: Icon(icon, color: AppColors.primaryText, size: 22),
+        child: Container(
+          width: 46,
+          height: 46,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: AppColors.border),
+          ),
+          child: Stack(
+            clipBehavior: Clip.none,
+            children: [
+              Center(
+                child: Icon(icon, color: const Color(0xFF111827), size: 22),
+              ),
+              if (showDot)
+                Positioned(
+                  top: 11,
+                  right: 11,
+                  child: Container(
+                    width: 8,
+                    height: 8,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF43F5E),
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                  ),
+                ),
+            ],
+          ),
         ),
       ),
     );
@@ -1631,10 +1661,10 @@ class _TopTagFilterRow extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final activeFilter = ref.watch(activeZoneFilterProvider);
     return SizedBox(
-      height: 40,
+      height: 42,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 18),
+        padding: const EdgeInsets.symmetric(horizontal: 16),
         itemBuilder: (context, index) {
           final tag = _tags[index];
           final selected =
@@ -1645,20 +1675,24 @@ class _TopTagFilterRow extends ConsumerWidget {
                   activeFilter != 'commercial' &&
                   activeFilter != 'food');
           return Material(
-            color: selected ? tag.fill : Colors.white.withValues(alpha: 0.92),
+            color: selected
+                ? tag.fill.withValues(alpha: 0.50)
+                : Colors.white.withValues(alpha: 0.92),
             borderRadius: BorderRadius.circular(999),
             child: InkWell(
               borderRadius: BorderRadius.circular(999),
               onTap: () => onTagSelected(tag.filter),
               child: Container(
                 padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 8,
+                  horizontal: 13,
+                  vertical: 9,
                 ),
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(999),
                   border: Border.all(
-                    color: selected ? tag.color : AppColors.border,
+                    color: selected
+                        ? tag.color.withValues(alpha: 0.95)
+                        : AppColors.border,
                   ),
                 ),
                 child: Row(
@@ -1690,7 +1724,6 @@ class _TopTagFilterRow extends ConsumerWidget {
   }
 }
 
-// ignore: unused_element
 class _SearchFilterRow extends StatelessWidget {
   const _SearchFilterRow();
 
@@ -1837,7 +1870,6 @@ _ExploreFilter _activeFilter(String? key) {
   return _exploreFilters.first;
 }
 
-// ignore: unused_element
 class _RecommendedPill extends ConsumerWidget {
   const _RecommendedPill();
 
@@ -1894,7 +1926,6 @@ class _RecommendedPill extends ConsumerWidget {
   }
 }
 
-// ignore: unused_element
 class _MobileExploreChips extends ConsumerWidget {
   const _MobileExploreChips();
 
@@ -1932,7 +1963,6 @@ class _MobileExploreChips extends ConsumerWidget {
   }
 }
 
-// ignore: unused_element
 class _ExplorePanel extends ConsumerWidget {
   const _ExplorePanel({required this.onClear});
 
@@ -2629,31 +2659,6 @@ class _LoadingZoneCard extends StatelessWidget {
   }
 }
 
-class _StatusPill extends StatelessWidget {
-  const _StatusPill({required this.label});
-
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-      decoration: BoxDecoration(
-        color: AppColors.secondaryAction.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(999),
-      ),
-      child: Text(
-        label,
-        style: const TextStyle(
-          color: Color(0xFF047857),
-          fontSize: 11,
-          fontWeight: FontWeight.w900,
-        ),
-      ),
-    );
-  }
-}
-
 class _ZoneLegendPanel extends StatelessWidget {
   const _ZoneLegendPanel({
     required this.expanded,
@@ -2787,12 +2792,106 @@ class _MapFab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return FloatingActionButton.small(
-      heroTag: heroTag,
-      elevation: 8,
-      backgroundColor: Colors.white.withValues(alpha: 0.96),
-      onPressed: onPressed,
-      child: Icon(icon, color: AppColors.primaryText),
+    return SizedBox(
+      width: 56,
+      height: 56,
+      child: FloatingActionButton(
+        heroTag: heroTag,
+        elevation: 6,
+        backgroundColor: Colors.white.withValues(alpha: 0.96),
+        onPressed: onPressed,
+        child: Icon(icon, color: const Color(0xFF2563EB), size: 24),
+      ),
+    );
+  }
+}
+
+class _BottomQuickActionBar extends StatelessWidget {
+  const _BottomQuickActionBar({
+    required this.onZoneAlert,
+    required this.onCommunity,
+    required this.onTrends,
+  });
+
+  final VoidCallback onZoneAlert;
+  final VoidCallback onCommunity;
+  final VoidCallback onTrends;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+      children: [
+        _QuickActionBubble(
+          icon: Icons.warning_amber_rounded,
+          label: 'Zone Alert',
+          gradient: const [Color(0xFF3B82F6), Color(0xFF2563EB)],
+          onTap: onZoneAlert,
+        ),
+        _QuickActionBubble(
+          icon: Icons.groups_rounded,
+          label: 'Community',
+          gradient: const [Color(0xFF8B5CF6), Color(0xFF7C3AED)],
+          onTap: onCommunity,
+        ),
+        _QuickActionBubble(
+          icon: Icons.show_chart_rounded,
+          label: 'Trends',
+          gradient: const [Color(0xFF22D3EE), Color(0xFF06B6D4)],
+          onTap: onTrends,
+        ),
+      ],
+    );
+  }
+}
+
+class _QuickActionBubble extends StatelessWidget {
+  const _QuickActionBubble({
+    required this.icon,
+    required this.label,
+    required this.gradient,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String label;
+  final List<Color> gradient;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 64,
+            height: 64,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              gradient: LinearGradient(colors: gradient),
+              boxShadow: const [
+                BoxShadow(
+                  color: Color(0x220F172A),
+                  blurRadius: 16,
+                  offset: Offset(0, 8),
+                ),
+              ],
+            ),
+            child: Icon(icon, color: Colors.white, size: 30),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            label,
+            style: const TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+              color: AppColors.primaryText,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

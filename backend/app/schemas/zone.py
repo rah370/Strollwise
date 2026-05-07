@@ -22,6 +22,7 @@ class ZoneListItem(ORMModel):
     peak_time_label: str | None = None
     confidence_score: float
     priority_score: float
+    source_h3_rings: list[list[list[float]]] = Field(default_factory=list)
 
 
 class ZoneDetail(ORMModel):
@@ -42,6 +43,7 @@ class ZoneDetail(ORMModel):
     live_update: str | None = None
     nearby_zone_ids: list[UUID] = Field(default_factory=list)
     source_h3_indexes: list[str] = Field(default_factory=list)
+    source_h3_rings: list[list[list[float]]] = Field(default_factory=list)
     report_count: int = 0
 
 

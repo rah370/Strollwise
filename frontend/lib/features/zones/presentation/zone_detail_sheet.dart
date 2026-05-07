@@ -273,6 +273,9 @@ class _ZoneBody extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final overview = ref.watch(currentZoneOverviewProvider).valueOrNull;
     final alternatives = overview?.alternativeZones ?? const <ZoneModel>[];
+    final nearby = overview?.nearbyZones ?? const <ZoneModel>[];
+    final activityChips = _activityChips(zone);
+    final hotspotChips = _hotspotChips(zone, nearby, alternatives);
     final lat = zone.boundary.isNotEmpty
         ? zone.boundary.map((p) => p[1]).reduce((a, b) => a + b) /
               zone.boundary.length
@@ -363,15 +366,22 @@ class _ZoneBody extends ConsumerWidget {
         const SizedBox(height: 20),
         _SectionHeading(title: 'Top Activities'),
         const SizedBox(height: 10),
-        const Wrap(
+        Wrap(
           spacing: 10,
           runSpacing: 10,
-          children: [
-            _IconLabel(icon: Icons.landscape, label: 'Sightseeing'),
-            _IconLabel(icon: Icons.shopping_bag_outlined, label: 'Shopping'),
-            _IconLabel(icon: Icons.restaurant_outlined, label: 'Dining'),
-            _IconLabel(icon: Icons.nightlife_outlined, label: 'Nightlife'),
-          ],
+          children: activityChips
+              .map((chip) => _IconLabel(icon: chip.$1, label: chip.$2))
+              .toList(),
+        ),
+        const SizedBox(height: 20),
+        _SectionHeading(title: 'Hotspots Nearby'),
+        const SizedBox(height: 10),
+        Wrap(
+          spacing: 10,
+          runSpacing: 10,
+          children: hotspotChips
+              .map((chip) => _IconLabel(icon: chip.$1, label: chip.$2))
+              .toList(),
         ),
         const SizedBox(height: 20),
         if (alternatives.isNotEmpty) ...[
@@ -452,6 +462,84 @@ class _ZoneBody extends ConsumerWidget {
     if (zone.reportCount >= 40) return 'High crowd';
     if (zone.reportCount >= 20) return 'Moderate';
     return 'Quiet';
+  }
+
+  List<(IconData, String)> _activityChips(ZoneModel zone) {
+    final source = zone.topActivities.isNotEmpty
+        ? zone.topActivities
+        : const ['sightseeing', 'shopping', 'dining', 'nightlife'];
+    return source.take(6).map((activity) {
+      final normalized = activity.toLowerCase();
+      if (normalized.contains('food') ||
+          normalized.contains('dining') ||
+          normalized.contains('cafe')) {
+        return (Icons.restaurant_outlined, 'Dining');
+      }
+      if (normalized.contains('night')) {
+        return (Icons.nightlife_outlined, 'Nightlife');
+      }
+      if (normalized.contains('shop') || normalized.contains('market')) {
+        return (Icons.shopping_bag_outlined, 'Shopping');
+      }
+      if (normalized.contains('transport') || normalized.contains('traffic')) {
+        return (Icons.directions_bus_outlined, 'Transit');
+      }
+      if (normalized.contains('school') || normalized.contains('study')) {
+        return (Icons.school_outlined, 'Student Spots');
+      }
+      if (normalized.contains('safety') || normalized.contains('issue')) {
+        return (Icons.warning_amber_rounded, 'Safety Watch');
+      }
+      return (Icons.landscape, _titleize(activity));
+    }).toList();
+  }
+
+  List<(IconData, String)> _hotspotChips(
+    ZoneModel zone,
+    List<ZoneModel> nearby,
+    List<ZoneModel> alternatives,
+  ) {
+    final candidates = [...nearby, ...alternatives]
+        .where((z) => z.zoneId != zone.zoneId)
+        .take(4)
+        .toList();
+    if (candidates.isEmpty) {
+      return const [
+        (Icons.location_on_outlined, 'City Center'),
+        (Icons.explore_outlined, 'Popular Area'),
+      ];
+    }
+    return candidates
+        .map((z) => (_iconForZoneType(z.zoneType), _titleize(z.displayName)))
+        .toList();
+  }
+
+  IconData _iconForZoneType(String zoneType) {
+    final type = zoneType.toLowerCase();
+    if (type.contains('food')) return Icons.restaurant_outlined;
+    if (type.contains('school') || type.contains('student')) {
+      return Icons.school_outlined;
+    }
+    if (type.contains('transport')) return Icons.directions_bus_outlined;
+    if (type.contains('commercial')) return Icons.storefront_outlined;
+    if (type.contains('safety')) return Icons.warning_amber_rounded;
+    return Icons.location_on_outlined;
+  }
+
+  String _titleize(String value) {
+    final text = value.trim();
+    if (text.isEmpty) return 'Hotspot';
+    final normalized = text
+        .replaceAll('_', ' ')
+        .replaceAll('-', ' ')
+        .replaceAll(RegExp(r'\s+'), ' ');
+    return normalized
+        .split(' ')
+        .map((part) {
+          if (part.isEmpty) return part;
+          return '${part[0].toUpperCase()}${part.substring(1)}';
+        })
+        .join(' ');
   }
 }
 

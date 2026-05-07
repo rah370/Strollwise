@@ -16,6 +16,7 @@ from app.repositories.zone_repository import ZoneRepository
 from app.schemas.common import Centroid
 from app.schemas.zone import CurrentZoneOverview, ZoneDetail, ZoneLaunchContext, ZoneListItem
 from app.services.ranking_service import RankingService
+from app.services import h3_service
 from app.utils.geo_utils import haversine_km, polygon_intersects_bbox
 
 router = APIRouter(prefix="/zones", tags=["zones"])
@@ -154,6 +155,7 @@ def zone_detail(zone_id: UUID, db: Session = Depends(get_db)) -> ZoneDetail:
         live_update=_live_update(zone),
         nearby_zone_ids=nearby,
         source_h3_indexes=list(zone.source_h3_indexes_json or []),
+        source_h3_rings=_display_h3_rings(zone),
         report_count=zone.report_count,
     )
 
@@ -198,7 +200,37 @@ def _to_list_item(zone) -> ZoneListItem:
         peak_time_label=zone.peak_time_label,
         confidence_score=zone.confidence_score,
         priority_score=zone.priority_score,
+        source_h3_rings=_display_h3_rings(zone),
     )
+
+
+def _close_ring(ring: list[list[float]]) -> list[list[float]]:
+    if not ring:
+        return []
+    if ring[0] == ring[-1]:
+        return ring
+    return [*ring, ring[0]]
+
+
+def _display_h3_rings(zone) -> list[list[list[float]]]:
+    source = [idx for idx in (zone.source_h3_indexes_json or []) if idx]
+    if not source:
+        return []
+
+    # Render with finer hexes than aggregation resolution so the map reads as
+    # small manageable cells instead of one large chunky region.
+    target_resolution = min(settings.h3_resolution + 1, 10)
+    try:
+        display_indexes = h3_service.expand_cells(source, target_resolution)
+    except Exception:
+        display_indexes = source
+
+    # Keep payload bounded in very dense areas.
+    unique = list(dict.fromkeys(display_indexes))
+    if len(unique) > 600:
+        unique = unique[:600]
+
+    return [_close_ring(h3_service.cell_to_lnglat_ring(idx)) for idx in unique]
 
 
 def _find_current_zone(zones: list, *, lat: float, lng: float):

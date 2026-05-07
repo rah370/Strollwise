@@ -23,6 +23,7 @@ class ZoneModel {
     required this.confidenceScore,
     required this.priorityScore,
     required this.reportCount,
+    this.sourceH3Rings = const [],
     this.topActivities = const [],
     this.whyVisit,
     this.liveUpdate,
@@ -79,6 +80,7 @@ class ZoneModel {
   /// Approximate report count. The list endpoint omits the exact number,
   /// so we derive a representative value from crowd + confidence signals.
   final int reportCount;
+  final List<List<List<double>>> sourceH3Rings;
 
   // Optional fields only populated by the detail endpoint.
   final List<String> topActivities;
@@ -230,6 +232,22 @@ class ZoneModel {
       reportCount: (json['report_count'] is num)
           ? (json['report_count'] as num).toInt()
           : _approxReports(crowdLevel, confidence),
+      sourceH3Rings: ((json['source_h3_rings'] as List?) ?? const [])
+          .whereType<List>()
+          .map(
+            (ring) => ring
+                .whereType<List>()
+                .map(
+                  (pt) => pt
+                      .whereType<num>()
+                      .map((v) => v.toDouble())
+                      .toList(growable: false),
+                )
+                .where((pt) => pt.length >= 2)
+                .toList(growable: false),
+          )
+          .where((ring) => ring.length >= 6)
+          .toList(growable: false),
       topActivities: ((json['top_activities'] as List?) ?? const [])
           .map((e) => e.toString())
           .toList(),

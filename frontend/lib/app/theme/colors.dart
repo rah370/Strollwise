@@ -11,8 +11,8 @@ class AppColors {
   static const mutedText = Color(0xFF64748B);
   static const border = Color(0xFFE2E8F0);
   static const borderStrong = Color(0xFFCBD5E1);
-  static const primaryAction = Color(0xFF8FBFA4);
-  static const primaryDark = Color(0xFF5F8E7B);
+  static const primaryAction = Color(0xFF39C97A);
+  static const primaryDark = Color(0xFF1F9B57);
   static const secondaryAction = Color(0xFF87C0E2);
   static const alert = Color(0xFFEF4444);
   static const accent = Color(0xFFF0D85A);
