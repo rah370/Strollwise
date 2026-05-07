@@ -79,6 +79,9 @@ See `.env.example`. Highlights:
 | `JWT_SECRET_KEY` | HMAC secret for access tokens |
 | `H3_RESOLUTION` | Base H3 resolution (8 for MVP) |
 | `CACHE_TTL_ZONES_SECONDS` | `/zones` response TTL |
+| `PENDING_MIN_REPORTS_PER_CELL` | Minimum pending reports before approval attempt |
+| `PENDING_AGREEMENT_RATIO` | Required top-category agreement ratio for approval |
+| `PENDING_CACHE_TTL_SECONDS` | TTL for pending submission cache metadata |
 | `S3_*` | Optional S3 credentials for `/uploads/image` |
 
 ## Migrations
@@ -134,16 +137,18 @@ column types so no Postgres instance is required.
 
 ## How the pipeline works
 
-1. `POST /reports` receives the payload, validates it, and converts
+1. `POST /reports` validates the submission and converts
    `latitude/longitude` into an H3 index at `H3_RESOLUTION`.
-2. The raw report is persisted to `reports`.
-3. `AggregationService.recompute_cells` rebuilds aggregates for the cell
-   and its 1-ring neighbors, running `ClassificationService` to assign
-   `behavior_type` and `function_type`.
-4. `ZoneMergeService.recompute_near` performs a BFS over similar adjacent
-   cells and writes merged polygons to `merged_zones`.
-5. Zones and the city pulse are cached in Redis; `POST /reports` busts
-   `zones:vp:*` and `city:pulse:*` to keep the map in sync.
+2. The report is stored with `visibility_status="pending"` and pending
+   metadata is cached per H3 cell.
+3. Batch approval checks duplicate tendency, category agreement, and
+   configured thresholds (`PENDING_*` settings).
+4. Approved pending submissions are promoted to `visible`, then
+   `AggregationService.recompute_cells` updates cell counts and
+   `ClassificationService` assigns `behavior_type` / `function_type`.
+5. `ZoneMergeService.recompute_near` merges connected similar cells and
+   writes merged polygons to `merged_zones`; map caches are refreshed so
+   Explore renders approved overlays only.
 
 ## Caching
 

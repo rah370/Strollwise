@@ -25,7 +25,7 @@ Detailed backend notes (env vars, full route table, caching): [`backend/README.m
 
 **Flutter app**
 
-- **Routing:** `go_router` starts at **`/auth`** (login/register against the API), then a bottom shell with **Explore**, **Feed**, **Add tag**, **Layers**, **Profile** (`/explore`, `/feed`, `/add-tag`, `/layers`, `/profile`).
+- **Routing:** `go_router` starts at **`/auth`** (login/register against the API), then a bottom shell with **Explore**, **Add tag**, **Feed**, **Layers/Trends**, **Profile** (`/explore`, `/add-tag`, `/feed`, `/layers`, `/profile`).
 - **API base:** `ApiConstants.baseUrl` from `--dart-define=API_URL=…` (default `http://localhost:8000`) + path prefix **`/api/v1`** (see `frontend/lib/core/constants/api_constants.dart`).
 
 **Data & ops**
@@ -110,10 +110,11 @@ Heuristic used in classification (see backend services):
 
 ## Pipeline (short)
 
-1. **`POST /api/v1/reports`** resolves `latitude` / `longitude` to an H3 cell, persists the report, and recomputes aggregates for that cell and neighbors.
-2. **Classification** assigns behavior/function signals per cell aggregate.
-3. **Zone merge** expands similar adjacent cells into **merged zones** for the map.
-4. **Redis** caches zone viewport responses and city pulse; relevant keys are invalidated when reports or merges change data.
+1. **`POST /api/v1/reports`** validates a submission and converts `latitude` / `longitude` to an H3 zone.
+2. The report is stored as **pending**, then a batch validator checks duplicates, agreement, and approval thresholds.
+3. If approved, pending reports are promoted to visible and the system recomputes zone counts and assigns classification.
+4. Connected similar zones are merged into frontend-ready polygons and approved zone records are refreshed.
+5. Explore renders only approved overlays; Redis keys for viewport/pulse are refreshed when publication changes zone outputs.
 
 ## Roadmap ideas
 
