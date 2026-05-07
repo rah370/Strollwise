@@ -5,7 +5,9 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
-from app.core.cache import cache_delete_pattern
+from collections import Counter
+
+from app.core.cache import cache_delete_pattern, cache_set
 from app.core.config import settings
 from app.models.enums import ReportCategory, VisibilityStatus
 from app.models.media import Media
@@ -48,7 +50,7 @@ class ReportService:
             image_url=payload.image_url,
             source_type=payload.source_type,
             traveler_type_snapshot=user.traveler_type,
-            visibility_status=VisibilityStatus.VISIBLE.value,
+            visibility_status=VisibilityStatus.PENDING.value,
         )
         self.reports.create(report)
         self.db.flush()
@@ -80,17 +82,8 @@ class ReportService:
 
         self.db.commit()
         self.db.refresh(report)
-
-        # Synchronously recompute the affected cell + neighbours, then merge.
-        affected = {h3_index}
-        affected.update(h3_service.get_neighbors(h3_index, ring_size=1))
-        AggregationService(self.db).recompute_cells(affected)
-        self.db.commit()
-
-        ZoneMergeService(self.db).recompute_near([h3_index])
-
-        cache_delete_pattern("zones:vp:*")
-        cache_delete_pattern("city:pulse:*")
+        self._write_pending_cache(h3_index)
+        self._approve_if_threshold_met(h3_index)
         return report
 
     # --- helpers ---------------------------------------------------------
@@ -117,3 +110,42 @@ class ReportService:
 
     def report_by_id(self, report_id: UUID) -> Report | None:
         return self.reports.get_by_id(report_id)
+
+    def _write_pending_cache(self, h3_index: str) -> None:
+        pending_reports = self.reports.list_pending_by_h3_index(h3_index)
+        cache_set(
+            f"reports:pending:{h3_index}",
+            {
+                "h3_index": h3_index,
+                "pending_count": len(pending_reports),
+                "latest_report_ids": [str(r.id) for r in pending_reports[:20]],
+            },
+            settings.pending_cache_ttl_seconds,
+        )
+
+    def _approve_if_threshold_met(self, h3_index: str) -> None:
+        pending_reports = self.reports.list_pending_by_h3_index(h3_index)
+        min_reports = max(settings.pending_min_reports_per_cell, 1)
+        if len(pending_reports) < min_reports:
+            return
+
+        category_counts = Counter((r.category or "").lower() for r in pending_reports)
+        top_count = max(category_counts.values(), default=0)
+        agreement = (top_count / len(pending_reports)) if pending_reports else 0.0
+        if agreement < settings.pending_agreement_ratio:
+            return
+
+        for report in pending_reports:
+            report.visibility_status = VisibilityStatus.VISIBLE.value
+
+        self.db.commit()
+
+        affected = {h3_index}
+        affected.update(h3_service.get_neighbors(h3_index, ring_size=1))
+        AggregationService(self.db).recompute_cells(affected)
+        self.db.commit()
+        ZoneMergeService(self.db).recompute_near([h3_index])
+
+        cache_delete_pattern("zones:vp:*")
+        cache_delete_pattern("city:pulse:*")
+        cache_delete_pattern(f"reports:pending:{h3_index}")

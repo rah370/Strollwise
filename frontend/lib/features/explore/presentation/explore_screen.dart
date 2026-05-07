@@ -48,11 +48,15 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
     'mixed',
     'commercial',
     'food',
+    'transport',
+    'school',
+    'tourist',
+    'safety',
+    'hotel',
   };
   _LocationBootstrapState _locationState = _LocationBootstrapState.locating;
   ExploreMapMode _mapMode = ExploreMapMode.discovery;
   bool _showSearch = false;
-  int _quickFilterIndex = 0;
   final TextEditingController _searchController = TextEditingController();
   static const _cebuCityCenter = LatLng(10.3157, 123.8854);
   static const _defaultZoom = 14.7;
@@ -502,15 +506,6 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
     super.dispose();
   }
 
-  void _toggleQuickFilter() {
-    setState(() {
-      _quickFilterIndex = (_quickFilterIndex + 1) % 2;
-    });
-    ref.read(activeZoneFilterProvider.notifier).state = _quickFilterIndex == 0
-        ? 'popular_now'
-        : 'local_picks';
-  }
-
   void _toggleSearch() {
     setState(() {
       _showSearch = !_showSearch;
@@ -578,7 +573,7 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
         .expand((zone) {
           final color = _streetZoneColor(zone);
           final selected = selectedZone?.h3Index == zone.h3Index;
-          final opacity = selected ? 0.28 : (zoom >= 14.2 ? 0.24 : 0.20);
+          final opacity = selected ? 0.30 : (zoom >= 14.2 ? 0.24 : 0.18);
           return zone.polygonParts.expand((rings) {
             if (rings.isEmpty) return const <fm.Polygon<Object>>[];
             final outerRing = rings.first
@@ -589,7 +584,7 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
               fm.Polygon(
                 points: outerRing,
                 color: color.withValues(alpha: opacity),
-                borderColor: color.withValues(alpha: 0.58),
+                borderColor: color.withValues(alpha: selected ? 0.80 : 0.66),
                 borderStrokeWidth: selected ? 1.45 : 1.2,
               ),
             ];
@@ -606,7 +601,7 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
     if (zoom < 13.4) {
       return const <fm.Marker>[];
     }
-    final limit = zoom >= 15 ? 7 : 5;
+    final limit = zoom >= 15 ? 7 : 4;
     final sorted = [...zones]
       ..sort(
         (a, b) => (b.reportCount + b.confidenceScore).compareTo(
@@ -668,6 +663,11 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
       'local' => const Color(0xFF5FAF7A),
       'commercial' => const Color(0xFFE96F7D),
       'food' => const Color(0xFFEFA15C),
+      'transport' => const Color(0xFFE4BF38),
+      'school' => const Color(0xFF8B6FE8),
+      'tourist' => const Color(0xFF57B6C2),
+      'hotel' => const Color(0xFFE592B8),
+      'safety' => const Color(0xFFEF5350),
       'international' => const Color(0xFF57B6C2),
       _ => const Color(0xFF8B6FE8),
     };
@@ -839,6 +839,9 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
                     _LocationStatusBanner(
                       state: _locationState,
                       usingManualLocation: _usingManualLocation,
+                      importantZoneIssue: currentZoneOverview.asData?.value
+                          ?.currentZone
+                          ?.liveStatus,
                       onRetry: () => _bootstrapCurrentLocation(force: true),
                       onManualLocation: _promptManualLocation,
                     ),
@@ -916,12 +919,6 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
                           }
                         },
                       ),
-                    const SizedBox(height: 12),
-                    _MapFab(
-                      heroTag: 'filter-btn',
-                      icon: Icons.tune_rounded,
-                      onPressed: _toggleQuickFilter,
-                    ),
                   ],
                 ),
               ),
@@ -1120,26 +1117,31 @@ double _zoneFillOpacity({
   required double confidenceScore,
 }) {
   if (mode == ExploreMapMode.navigating) {
-    return selected ? 0.14 : 0.06;
+    return selected ? 0.20 : 0.18;
   }
   if (selected) {
-    return 0.48;
+    return 0.30;
   }
   if (hasSelection) {
-    return 0.10;
+    return 0.18;
   }
   if (confidenceScore >= 70) {
     return 0.30;
   }
   if (confidenceScore >= 45) {
-    return 0.20;
+    return 0.24;
   }
-  return 0.10;
+  return 0.18;
 }
 
 String _zoneLayerKey(ZoneModel zone) {
   final type = zone.zoneType.toLowerCase();
   if (type.contains('food')) return 'food';
+  if (type.contains('transport')) return 'transport';
+  if (type.contains('school') || type.contains('student')) return 'school';
+  if (type.contains('safety') || type.contains('issue')) return 'safety';
+  if (type.contains('hotel')) return 'hotel';
+  if (type.contains('tourist')) return 'tourist';
   if (type.contains('commercial')) return 'commercial';
   if (zone.travelerType == 'Local') return 'local';
   if (zone.travelerType == 'International') return 'international';
@@ -1229,6 +1231,13 @@ _ZonePalette _zonePalette(ZoneModel zone) {
       accent: AppColors.transportAccent,
     );
   }
+  if (type.contains('hotel')) {
+    return const _ZonePalette(
+      fill: AppColors.hotelFill,
+      border: AppColors.zoneCommercial,
+      accent: AppColors.hotelAccent,
+    );
+  }
   if (type.contains('commercial')) {
     return const _ZonePalette(
       fill: AppColors.commercialFill,
@@ -1285,25 +1294,38 @@ class _LocationStatusBanner extends StatelessWidget {
   const _LocationStatusBanner({
     required this.state,
     required this.usingManualLocation,
+    required this.importantZoneIssue,
     required this.onRetry,
     required this.onManualLocation,
   });
 
   final _LocationBootstrapState state;
   final bool usingManualLocation;
+  final String? importantZoneIssue;
   final VoidCallback onRetry;
   final VoidCallback onManualLocation;
 
   @override
   Widget build(BuildContext context) {
-    if (state == _LocationBootstrapState.ready && !usingManualLocation) {
+    final showZoneIssue = importantZoneIssue == 'caution_now' ||
+        importantZoneIssue == 'peak_now';
+    if (state == _LocationBootstrapState.ready &&
+        !usingManualLocation &&
+        !showZoneIssue) {
       return const SizedBox.shrink();
     }
     final (icon, message, action) = switch (state) {
+      _LocationBootstrapState.ready when showZoneIssue => (
+        Icons.warning_amber_rounded,
+        importantZoneIssue == 'caution_now'
+            ? 'Safety warning reported in your current zone.'
+            : 'Current zone is at peak crowd level.',
+        null,
+      ),
       _LocationBootstrapState.ready => (
         Icons.edit_location_alt_rounded,
         'Using your manual location. You can change it anytime.',
-        'Use GPS',
+        null,
       ),
       _LocationBootstrapState.locating => (
         Icons.gps_fixed_rounded,
@@ -1312,8 +1334,8 @@ class _LocationStatusBanner extends StatelessWidget {
       ),
       _LocationBootstrapState.permissionDenied => (
         Icons.location_disabled_rounded,
-        'Location denied. Enable to view nearby zones instantly.',
-        'Retry',
+        'Location access needed. Enable in Settings for nearby zones.',
+        'Open settings',
       ),
       _LocationBootstrapState.serviceDisabled => (
         Icons.location_off_rounded,
@@ -1326,13 +1348,21 @@ class _LocationStatusBanner extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         decoration: BoxDecoration(
-          color: Colors.white.withValues(alpha: 0.95),
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: AppColors.border),
+          color: showZoneIssue
+              ? AppColors.safetyFill.withValues(alpha: 0.95)
+              : Colors.white.withValues(alpha: 0.95),
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(
+            color: showZoneIssue ? AppColors.safetyBorder : AppColors.border,
+          ),
         ),
         child: Row(
           children: [
-            Icon(icon, size: 16, color: AppColors.mutedText),
+            Icon(
+              icon,
+              size: 16,
+              color: showZoneIssue ? AppColors.safetyAccent : AppColors.mutedText,
+            ),
             const SizedBox(width: 8),
             Expanded(
               child: Text(
@@ -1346,20 +1376,23 @@ class _LocationStatusBanner extends StatelessWidget {
             ),
             if (action != null) ...[
               TextButton(
-                onPressed: onManualLocation,
-                child: const Text(
-                  'Change',
-                  style: TextStyle(fontWeight: FontWeight.w800),
-                ),
-              ),
-              TextButton(
-                onPressed: onRetry,
+                onPressed: state == _LocationBootstrapState.permissionDenied
+                    ? Geolocator.openAppSettings
+                    : onRetry,
                 child: Text(
                   action,
                   style: const TextStyle(fontWeight: FontWeight.w800),
                 ),
               ),
             ],
+            if (state == _LocationBootstrapState.ready && usingManualLocation)
+              TextButton(
+                onPressed: onManualLocation,
+                child: const Text(
+                  'Change',
+                  style: TextStyle(fontWeight: FontWeight.w800),
+                ),
+              ),
           ],
         ),
       ),
@@ -2566,6 +2599,7 @@ IconData _zoneIcon(ZoneModel zone) {
   if (identity == 'Student Area') return Icons.school_rounded;
   if (identity == 'Commercial Zone') return Icons.shopping_bag_rounded;
   if (identity == 'Safety Concern') return Icons.warning_amber_rounded;
+  if (identity.contains('Hotel')) return Icons.hotel_rounded;
   if (identity == 'Tourist Area') return Icons.photo_camera_rounded;
   if (identity == 'Local Area') return Icons.groups_rounded;
   return Icons.explore_rounded;
@@ -2643,6 +2677,11 @@ class _ZoneLegendPanel extends StatelessWidget {
     (key: 'mixed', label: 'Mixed', color: AppColors.mixedAccent),
     (key: 'commercial', label: 'Commercial', color: AppColors.commercialAccent),
     (key: 'food', label: 'Food', color: AppColors.foodAccent),
+    (key: 'transport', label: 'Transport', color: AppColors.transportAccent),
+    (key: 'school', label: 'School', color: AppColors.studentAccent),
+    (key: 'tourist', label: 'Tourist', color: AppColors.touristAccent),
+    (key: 'safety', label: 'Safety', color: AppColors.safetyAccent),
+    (key: 'hotel', label: 'Hotel', color: AppColors.zoneCommercial),
   ];
 
   @override

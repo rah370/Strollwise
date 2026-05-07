@@ -16,7 +16,7 @@ def _register(client):
 
 def test_create_report_converts_latlng_into_h3(client):
     token = _register(client)
-    resp = client.post(
+    first = client.post(
         "/api/v1/reports",
         headers={"Authorization": f"Bearer {token}"},
         json={
@@ -25,6 +25,19 @@ def test_create_report_converts_latlng_into_h3(client):
             "category": "food",
             "tags": ["food", "cafe"],
             "note_text": "Great spot",
+        },
+    )
+    assert first.status_code == 201, first.text
+    # First submission stays pending; second matching report crosses threshold.
+    resp = client.post(
+        "/api/v1/reports",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "latitude": 10.3157,
+            "longitude": 123.8854,
+            "category": "food",
+            "tags": ["food", "cafe"],
+            "note_text": "Another confirmation",
         },
     )
     assert resp.status_code == 201, resp.text
@@ -36,8 +49,8 @@ def test_create_report_converts_latlng_into_h3(client):
 
 def test_zones_endpoint_returns_list(client):
     token = _register(client)
-    # Create a couple of reports so merging has something to chew on.
-    for lat in (10.3157, 10.3162, 10.3170):
+    # Two matching reports in the same H3 cell trigger approval/publication.
+    for lat in (10.3157, 10.31571):
         client.post(
             "/api/v1/reports",
             headers={"Authorization": f"Bearer {token}"},
@@ -75,3 +88,21 @@ def test_report_rejects_unknown_category(client):
         },
     )
     assert resp.status_code == 422
+
+
+def test_report_feed_only_includes_approved_reports(client):
+    token = _register(client)
+    first = client.post(
+        "/api/v1/reports",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "latitude": 10.3201,
+            "longitude": 123.9021,
+            "category": "transport",
+            "tags": ["traffic"],
+        },
+    )
+    assert first.status_code == 201
+    feed = client.get("/api/v1/reports/feed")
+    assert feed.status_code == 200
+    assert feed.json() == []

@@ -6,7 +6,13 @@ class MainShell extends StatelessWidget {
 
   final Widget child;
 
-  static const _tabs = ['/explore', '/feed', '/add-tag', '/layers', '/profile'];
+  static const _tabs = [
+    '/explore',
+    '/add-tag',
+    '/feed',
+    '/layers',
+    '/profile',
+  ];
 
   int _currentIndex(String location) {
     final index = _tabs.indexWhere((route) => location.startsWith(route));
@@ -30,12 +36,12 @@ class MainShell extends StatelessWidget {
                   label: 'Explore',
                 ),
                 NavigationDestination(
-                  icon: Icon(Icons.dynamic_feed_outlined),
-                  label: 'Feed',
-                ),
-                NavigationDestination(
                   icon: Icon(Icons.add_location_alt_outlined),
                   label: 'Add Tag',
+                ),
+                NavigationDestination(
+                  icon: Icon(Icons.dynamic_feed_outlined),
+                  label: 'Feed',
                 ),
                 NavigationDestination(
                   icon: Icon(Icons.trending_up_outlined),

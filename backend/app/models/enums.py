@@ -53,6 +53,7 @@ class LiveStatus(str, Enum):
 
 
 class VisibilityStatus(str, Enum):
+    PENDING = "pending"
     VISIBLE = "visible"
     HIDDEN = "hidden"
     FLAGGED = "flagged"

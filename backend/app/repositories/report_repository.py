@@ -36,7 +36,21 @@ class ReportRepository:
             return []
         stmt = (
             select(Report)
-            .where(Report.h3_index.in_(h3_list))
+            .where(
+                Report.h3_index.in_(h3_list),
+                Report.visibility_status == "visible",
+            )
+            .order_by(desc(Report.created_at))
+        )
+        return list(self.db.execute(stmt).scalars())
+
+    def list_pending_by_h3_index(self, h3_index: str) -> list[Report]:
+        stmt = (
+            select(Report)
+            .where(
+                Report.h3_index == h3_index,
+                Report.visibility_status == "pending",
+            )
             .order_by(desc(Report.created_at))
         )
         return list(self.db.execute(stmt).scalars())

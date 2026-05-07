@@ -47,6 +47,8 @@ class AppColors {
   static const busyAccent = Color(0xFFB91C1C);
   static const transportFill = Color(0xFFFFF4CC);
   static const transportAccent = Color(0xFFA16207);
+  static const hotelFill = Color(0xFFFFE5F2);
+  static const hotelAccent = Color(0xFFBE185D);
   static const commercialFill = Color(0xFFFFE0EA);
   static const commercialAccent = Color(0xFFBE123C);
   static const residentialFill = Color(0xFFEEF2F7);
