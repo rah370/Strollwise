@@ -1,13 +1,29 @@
 # StrollWise
 
-StrollWise is a crowd-sourced travel intelligence app. It uses **H3** hex cells to aggregate reports and movement signals into **merged, map-ready zones** (local vs tourist mix, function types like food hotspots, and similar) without exposing individual trajectories in public APIs.
+StrollWise is a crowd-sourced travel intelligence app. It uses **H3** hex cells to aggregate reports into **merged, map-ready zones** (local vs tourist mix, function types like food hotspots, and similar) without exposing individual trajectories in public APIs.
+
+## Architecture
+
+```text
+Flutter (iOS, Android, desktop, web)
+        |  REST (Dio), JWT auth
+        v
+FastAPI  —  SQLAlchemy / GeoAlchemy2  —  PostgreSQL + PostGIS
+        |
+        +—  Redis (viewport + analytics cache)
+        +—  Local disk or S3 (optional image uploads)
+```
+
+- **Client:** Flutter with Riverpod, go_router, MapLibre and flutter_map, geolocator, and H3 helpers.
+- **Server:** FastAPI with layered **routers → services → repositories → models**, Pydantic schemas, and Alembic migrations.
+- **Data:** PostGIS stores merged zone geometry and relational data; **h3-py** drives cell indexing, aggregation, classification, and merge logic; **Redis** caches hot reads and is invalidated when zones change.
 
 ## Repository layout
 
 | Path | Stack | Role |
 | --- | --- | --- |
-| `frontend/` | Flutter 3 (Dart ^3.11), **Riverpod**, **go_router**, **Dio**, **MapLibre** (+ `flutter_map`, `h3_flutter`, **geolocator**) | Mobile app: auth, hex map explore, feed, tag submission, layers/analytics, profile |
-| `backend/` | **FastAPI**, SQLAlchemy 2, **Alembic**, PostgreSQL **PostGIS**, **Redis**, **h3-py**, JWT | REST API under `/api/v1`, aggregation, classification, zone merge pipeline |
+| `frontend/` | Flutter 3 (Dart ^3.11.4), **Riverpod**, **go_router**, **Dio**, **MapLibre** (+ `flutter_map`, `latlong2`, `h3_flutter`, **geolocator**) | Mobile and multi-platform app: auth, map explore, feed, tag submission, layers/analytics, profile |
+| `backend/` | **Python 3.11**, **FastAPI**, SQLAlchemy 2, **GeoAlchemy2**, **Shapely**, **Alembic**, PostgreSQL **PostGIS**, **Redis**, **h3-py**, JWT (**python-jose**, **passlib**/bcrypt), optional **boto3** | REST API under `/api/v1`, aggregation, classification, zone merge pipeline |
 | `docker-compose.yml` | PostGIS 16, Redis 7, API container | Local stack: DB, cache, API on port **8000** |
 
 Detailed backend notes (env vars, full route table, caching): [`backend/README.md`](backend/README.md).
@@ -19,25 +35,26 @@ Detailed backend notes (env vars, full route table, caching): [`backend/README.m
 - **Auth:** register, login, current user (`/auth/…`, `/auth/me`).
 - **Users:** profile, saved zones (`/users/me`, saved-zone CRUD).
 - **Reports:** create report, global feed, reports by merged zone (`/reports`, `/reports/feed`, `/reports/by-zone/{zone_id}`).
-- **Zones:** viewport listing, zone detail, nearby zones, **current zone** overview for the user location (`/zones`, `/zones/{zone_id}`, `/zones/{zone_id}/nearby`, `/zones/current`).
+- **Zones:** viewport listing, zone detail, nearby zones, **current zone** for the user location (`/zones`, `/zones/{zone_id}`, `/zones/{zone_id}/nearby`, `/zones/current`).
 - **Analytics:** city pulse, trends, per-zone history (`/analytics/…`).
-- **Uploads:** image upload when S3 is configured (`/uploads/image`).
+- **Uploads:** `POST /uploads/image` (JWT required). Files go to **local disk** by default (`UPLOAD_LOCAL_DIR`); configure **S3** env vars to use object storage instead.
 
 **Flutter app**
 
-- **Routing:** `go_router` starts at **`/auth`** (login/register against the API), then a bottom shell with **Explore**, **Add tag**, **Feed**, **Layers/Trends**, **Profile** (`/explore`, `/add-tag`, `/feed`, `/layers`, `/profile`).
-- **API base:** `ApiConstants.baseUrl` from `--dart-define=API_URL=…` (default `http://localhost:8000`) + path prefix **`/api/v1`** (see `frontend/lib/core/constants/api_constants.dart`).
+- **Routing:** `go_router` starts at **`/auth`**, then a shell with **Explore**, **Add tag**, **Feed**, **Layers**, **Profile** (`/explore`, `/add-tag`, `/feed`, `/layers`, `/profile`).
+- **API base:** `ApiConstants.baseUrl` from `--dart-define=API_URL=…` (default `http://localhost:8000`) plus **`/api/v1`** (see `frontend/lib/core/constants/api_constants.dart`).
+- **Demo login:** In the auth screen you can sign in as `demo@strollwise.local` with password `demo12345` or `demo` for an offline-style demo path when the API is down (see `auth_screen.dart`).
 
-**Data & ops**
+**Data and operations**
 
-- **Alembic** migrations run automatically when the API container starts (`backend/docker/entrypoint.sh`).
-- Optional **`SEED_ON_BOOT=true`** for compose to run `seed.py` on startup; otherwise seed manually (below).
-- Idempotent **`backend/seed.py`**: demo users (roughly 20–50) and hundreds of synthetic reports around **Cebu City** districts, then full aggregation → classification → merge.
+- **Alembic** migrations run when the API container starts (`backend/docker/entrypoint.sh`).
+- Optional **`SEED_ON_BOOT=true`** for Compose to run `seed.py` on startup; otherwise seed manually (below).
+- Idempotent **`backend/seed.py`**: demo users and synthetic reports around **Cebu City** districts, then aggregation → classification → merge.
 
 ## Prerequisites
 
 - Docker with Compose v2 (`docker compose`)
-- For local Flutter only: Flutter SDK matching `frontend/pubspec.yaml` (Dart ^3.11), Xcode/Android toolchain as needed
+- For local Flutter: SDK matching `frontend/pubspec.yaml` (Dart ^3.11.4), plus Xcode / Android Studio toolchains for mobile targets
 
 ## Local setup
 
@@ -53,7 +70,7 @@ docker compose up --build
 - OpenAPI: [http://localhost:8000/docs](http://localhost:8000/docs)
 - Health: `GET http://localhost:8000/health`
 
-Compose wires **`DATABASE_URL`** / **`REDIS_URL`** inside the API service; it loads **`backend/.env.example`** by default. Copy to `backend/.env` if you want to override secrets or tuning (see [`backend/.env.example`](backend/.env.example)).
+Compose sets **`DATABASE_URL`** / **`REDIS_URL`** for the API service and loads **`backend/.env.example`** by default. Copy to `backend/.env` to override secrets or tuning (see [`backend/.env.example`](backend/.env.example)).
 
 **Optional auto-seed on container start:**
 
@@ -77,7 +94,7 @@ flutter run
 
 **Pointing the app at the API**
 
-- **Simulator/emulator on the same machine as Docker:** often `http://localhost:8000` works on iOS simulator; Android emulator typically needs the host loopback alias:
+- **Simulator/emulator on the same machine as Docker:** iOS simulator often works with `http://localhost:8000`; the Android emulator typically needs the host loopback alias:
 
 ```bash
 flutter run --dart-define=API_URL=http://10.0.2.2:8000
@@ -89,13 +106,15 @@ flutter run --dart-define=API_URL=http://10.0.2.2:8000
 
 If you run Postgres+PostGIS and Redis yourself, follow [`backend/README.md`](backend/README.md) (`alembic upgrade head`, `uvicorn app.main:app --reload`, etc.).
 
-## Tests
+## Tests and quality
 
 ```bash
 cd backend && pytest -q
 ```
 
-## Privacy & API behavior
+Backend linting is configured with **Ruff** in `backend/pyproject.toml`. Flutter analysis uses **flutter_lints** via `frontend/analysis_options.yaml`.
+
+## Privacy and API behavior
 
 - Public map and feed payloads are **zone-level**; they do not expose raw trajectories.
 - Reports store coordinates server-side for aggregation; public responses tie to **merged zone** / H3-derived identifiers as implemented in the services layer.
@@ -110,16 +129,16 @@ Heuristic used in classification (see backend services):
 
 ## Pipeline (short)
 
-1. **`POST /api/v1/reports`** validates a submission and converts `latitude` / `longitude` to an H3 zone.
-2. The report is stored as **pending**, then a batch validator checks duplicates, agreement, and approval thresholds.
-3. If approved, pending reports are promoted to visible and the system recomputes zone counts and assigns classification.
-4. Connected similar zones are merged into frontend-ready polygons and approved zone records are refreshed.
-5. Explore renders only approved overlays; Redis keys for viewport/pulse are refreshed when publication changes zone outputs.
+1. **`POST /api/v1/reports`** validates a submission and converts `latitude` / `longitude` to an H3 cell.
+2. The report is stored as **pending**; validators check duplicates, agreement, and approval thresholds.
+3. If approved, reports are promoted to visible; the system recomputes cell aggregates and assigns classification.
+4. Connected similar cells are merged into frontend-ready polygons; approved zone records are refreshed.
+5. Explore consumes approved overlays; Redis keys for viewport and city pulse are refreshed when publication changes zone outputs.
 
 ## Roadmap ideas
 
 - Harden token storage on mobile (e.g. platform secure storage) and refresh-token flow if you add it server-side.
-- Production object storage and moderation for `/uploads/image`.
-- Map interaction polish (selection, hit-testing) and any first-run UX you add beyond the current auth gate.
+- Production object storage, CDN, and moderation for `/uploads/image`.
+- Map interaction polish (selection, hit-testing) and first-run UX beyond the current auth gate.
 
 For migration commands, S3 env vars, and the full route list, use **`backend/README.md`**.
