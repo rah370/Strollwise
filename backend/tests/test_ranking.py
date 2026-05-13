@@ -33,9 +33,10 @@ def _zone(**overrides) -> MergedZone:
 
 
 def test_food_filter_prioritizes_food_hotspots():
-    food = _zone(function_type=FunctionType.FOOD_HOTSPOT.value, priority_score=10.0)
-    other = _zone(function_type=FunctionType.RESIDENTIAL_ZONE.value, priority_score=60.0)
+    food = _zone(function_type=FunctionType.FOOD_HOTSPOT.value, priority_score=20.0)
+    other = _zone(function_type=FunctionType.RESIDENTIAL_ZONE.value, priority_score=55.0)
     ranked = RankingService.rank([other, food], filter_key="food")
+    # Food filter adds +40 to food hotspots; 20+40=60 edges out residential 55.
     assert ranked[0].zone_id == food.zone_id
 
 
@@ -51,6 +52,13 @@ def test_no_filter_sorts_by_priority():
     z2 = _zone(priority_score=50.0)
     ranked = RankingService.rank([z1, z2], filter_key=None)
     assert ranked[0].zone_id == z2.zone_id
+
+
+def test_rank_with_limit_returns_top_k_only():
+    zones = [_zone(priority_score=float(i)) for i in range(20)]
+    ranked = RankingService.rank(zones, filter_key=None, limit=5)
+    assert len(ranked) == 5
+    assert {z.priority_score for z in ranked} == {19.0, 18.0, 17.0, 16.0, 15.0}
 
 
 def test_user_location_penalizes_far_zones():

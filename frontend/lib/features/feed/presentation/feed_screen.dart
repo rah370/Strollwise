@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -5,7 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/widgets/empty_state_card.dart';
 import '../../../core/widgets/loading_skeleton.dart';
-import '../../../shared/models/report.dart';
+import '../../../shared/models/zone.dart';
 import '../../../shared/providers/app_providers.dart';
 
 class FeedScreen extends ConsumerStatefulWidget {
@@ -26,11 +27,31 @@ class _FeedScreenState extends ConsumerState<FeedScreen> {
     'Crowd',
     'Safety',
   ];
-  String _selectedFilter = 'Nearby';
+
+  static const _backgroundRefreshInterval = Duration(seconds: 50);
+
+  Timer? _backgroundRefresh;
+
+  @override
+  void initState() {
+    super.initState();
+    _backgroundRefresh = Timer.periodic(_backgroundRefreshInterval, (_) {
+      if (!mounted) return;
+      ref.invalidate(zoneFeedProvider);
+    });
+  }
+
+  @override
+  void dispose() {
+    _backgroundRefresh?.cancel();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
-    final feed = ref.watch(feedProvider);
+    final feed = ref.watch(zoneFeedProvider);
+    final selectedChip = ref.watch(zoneFeedChipProvider);
+    final zoneDataNotice = ref.watch(zoneDataNoticeProvider);
     return Scaffold(
       backgroundColor: const Color(0xFFF1F5F9),
       body: LayoutBuilder(
@@ -48,46 +69,67 @@ class _FeedScreenState extends ConsumerState<FeedScreen> {
                     const _FeedHeader(),
                     const SizedBox(height: 4),
                     _FeedFilterRow(
-                      selectedLabel: _selectedFilter,
+                      selectedLabel: selectedChip,
                       labels: _filters,
                       onSelected: (label) {
-                        setState(() => _selectedFilter = label);
+                        ref.read(zoneFeedChipProvider.notifier).state = label;
                       },
                     ),
+                    if (zoneDataNotice != null) ...[
+                      const SizedBox(height: 8),
+                      _FeedCacheNotice(message: zoneDataNotice),
+                    ],
                     const SizedBox(height: 12),
                     Expanded(
                       child: feed.when(
-                        data: (reports) {
-                          final filtered = _applyFilter(
-                            reports,
-                            _selectedFilter,
-                          );
-                          if (filtered.isEmpty) {
-                            return const EmptyStateCard(
-                              message: 'No reports for this tag filter yet.',
-                            );
-                          }
-                          return ListView.separated(
-                            padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
-                            itemCount: filtered.length,
-                            separatorBuilder: (_, index) =>
-                                const SizedBox(height: 12),
-                            itemBuilder: (context, index) {
-                              final report = filtered[index];
-                              final likes = 12 + (index * 7) % 180;
-                              final comments = 3 + (index % 8);
-                              return _FeedItemCard(
-                                report: report,
-                                likes: likes,
-                                comments: comments,
-                                seed: index,
-                              );
-                            },
+                        data: (zones) {
+                          return RefreshIndicator(
+                            onRefresh: () =>
+                                ref.refresh(zoneFeedProvider.future),
+                            child: zones.isEmpty
+                                ? ListView(
+                                    physics:
+                                        const AlwaysScrollableScrollPhysics(),
+                                    padding: const EdgeInsets.only(top: 48),
+                                    children: const [
+                                      EmptyStateCard(
+                                        message:
+                                            'No zones match this filter yet. Pull to refresh.',
+                                      ),
+                                    ],
+                                  )
+                                : ListView.separated(
+                                    physics:
+                                        const AlwaysScrollableScrollPhysics(),
+                                    padding: const EdgeInsets.fromLTRB(
+                                      16,
+                                      4,
+                                      16,
+                                      24,
+                                    ),
+                                    itemCount: zones.length,
+                                    separatorBuilder: (context, index) =>
+                                        const SizedBox(height: 12),
+                                    itemBuilder: (context, index) {
+                                      return _ZoneFeedCard(
+                                        zone: zones[index],
+                                        seed: index,
+                                      );
+                                    },
+                                  ),
                           );
                         },
                         loading: LoadingSkeleton.new,
-                        error: (error, _) =>
-                            EmptyStateCard(message: error.toString()),
+                        error: (error, _) => RefreshIndicator(
+                          onRefresh: () => ref.refresh(zoneFeedProvider.future),
+                          child: ListView(
+                            physics: const AlwaysScrollableScrollPhysics(),
+                            padding: const EdgeInsets.only(top: 48),
+                            children: [
+                              EmptyStateCard(message: error.toString()),
+                            ],
+                          ),
+                        ),
                       ),
                     ),
                   ],
@@ -98,34 +140,6 @@ class _FeedScreenState extends ConsumerState<FeedScreen> {
         },
       ),
     );
-  }
-
-  List<ReportModel> _applyFilter(List<ReportModel> reports, String filter) {
-    switch (filter.toLowerCase()) {
-      case 'food':
-        return reports.where((r) => _matches(r, 'food')).toList();
-      case 'crowd':
-        return reports.where((r) => _matches(r, 'crowd')).toList();
-      case 'safety':
-        return reports
-            .where((r) => _matches(r, 'safety') || _matches(r, 'issue'))
-            .toList();
-      case 'trending':
-        final sorted = [...reports];
-        sorted.sort((a, b) => b.createdAt.compareTo(a.createdAt));
-        return sorted;
-      case 'following':
-      case 'nearby':
-      default:
-        return reports;
-    }
-  }
-
-  bool _matches(ReportModel report, String key) {
-    final k = key.toLowerCase();
-    return report.category.toLowerCase().contains(k) ||
-        report.tags.any((tag) => tag.toLowerCase().contains(k)) ||
-        (report.note?.toLowerCase().contains(k) ?? false);
   }
 }
 
@@ -174,6 +188,48 @@ class _IconCircle extends StatelessWidget {
         child: Padding(
           padding: const EdgeInsets.all(9),
           child: Icon(icon, size: 20, color: const Color(0xFF0F172A)),
+        ),
+      ),
+    );
+  }
+}
+
+class _FeedCacheNotice extends StatelessWidget {
+  const _FeedCacheNotice({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+        decoration: BoxDecoration(
+          color: const Color(0xFFFFF8EE),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: const Color(0xFFF0A127)),
+        ),
+        child: Row(
+          children: [
+            const Icon(
+              Icons.offline_bolt_rounded,
+              size: 17,
+              color: Color(0xFFB7791F),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                message,
+                style: const TextStyle(
+                  color: Color(0xFF475569),
+                  fontWeight: FontWeight.w800,
+                  fontSize: 12,
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -254,40 +310,32 @@ class _FilterPill extends StatelessWidget {
   }
 }
 
-class _FeedItemCard extends StatelessWidget {
-  const _FeedItemCard({
-    required this.report,
-    required this.likes,
-    required this.comments,
-    required this.seed,
-  });
+class _ZoneFeedCard extends StatelessWidget {
+  const _ZoneFeedCard({required this.zone, required this.seed});
 
-  final ReportModel report;
-  final int likes;
-  final int comments;
+  final ZoneModel zone;
   final int seed;
 
-  Color _chipColor(String value) {
-    switch (value.toLowerCase()) {
-      case 'food':
-        return const Color(0xFFF59E0B);
-      case 'transport':
-        return const Color(0xFF22C55E);
-      case 'crowd':
-        return const Color(0xFF3B82F6);
-      case 'safety':
-      case 'issue':
-        return const Color(0xFFEF4444);
-      case 'event':
-        return const Color(0xFFA855F7);
-      default:
-        return const Color(0xFF94A3B8);
+  static Color _parseHex(String hex) {
+    var h = hex.replaceFirst('#', '').trim();
+    if (h.length == 6) {
+      h = 'FF$h';
     }
+    return Color(int.parse(h, radix: 16));
+  }
+
+  String _functionLabel() {
+    return zone.functionType.replaceAll('_', ' ');
   }
 
   @override
   Widget build(BuildContext context) {
-    final chip = _chipColor(report.category);
+    final accent = _parseHex(zone.borderColor);
+    final crowdPct = (zone.crowdLevel * 100).clamp(0, 100).round();
+    final summary = (zone.summary?.trim().isNotEmpty == true)
+        ? zone.summary!.trim()
+        : 'Ranked from community signals in this H3 area.';
+
     return Container(
       decoration: BoxDecoration(
         color: Colors.white,
@@ -300,18 +348,19 @@ class _FeedItemCard extends StatelessWidget {
           ),
         ],
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(14, 14, 14, 10),
-            child: Row(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(14, 14, 14, 14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 SizedBox(
                   width: 48,
                   height: 48,
                   child: CustomPaint(
-                    painter: _MiniHexPainter(color: chip, seed: seed),
+                    painter: _MiniHexPainter(color: accent, seed: seed),
                   ),
                 ),
                 const SizedBox(width: 12),
@@ -320,20 +369,21 @@ class _FeedItemCard extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        'Zone ${report.h3Index.substring(0, 6).toUpperCase()}',
+                        zone.displayName,
                         style: const TextStyle(
                           fontWeight: FontWeight.w800,
                           color: Color(0xFF0F172A),
                           fontSize: 15,
+                          height: 1.25,
                         ),
                       ),
-                      const SizedBox(height: 2),
+                      const SizedBox(height: 4),
                       Text(
-                        _timeAgo(report.createdAt),
+                        '${zone.travelerType} · ${_functionLabel()}',
                         style: const TextStyle(
                           fontSize: 12,
                           color: Color(0xFF64748B),
-                          fontWeight: FontWeight.w500,
+                          fontWeight: FontWeight.w600,
                         ),
                       ),
                     ],
@@ -345,125 +395,88 @@ class _FeedItemCard extends StatelessWidget {
                     vertical: 5,
                   ),
                   decoration: BoxDecoration(
-                    color: chip.withValues(alpha: 0.14),
+                    color: accent.withValues(alpha: 0.12),
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: Text(
-                    report.category.toUpperCase(),
+                    '★ ${zone.confidenceScore.round()}',
                     style: TextStyle(
                       fontSize: 11,
                       fontWeight: FontWeight.w800,
-                      color: chip,
-                      letterSpacing: 0.3,
+                      color: accent,
+                      letterSpacing: 0.2,
                     ),
                   ),
                 ),
               ],
             ),
-          ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(14, 0, 14, 12),
-            child: Text(
-              report.note?.isNotEmpty == true
-                  ? report.note!
-                  : 'Community tag in this zone.',
+            const SizedBox(height: 10),
+            Text(
+              summary,
+              maxLines: 3,
+              overflow: TextOverflow.ellipsis,
               style: const TextStyle(
                 height: 1.45,
                 fontSize: 14,
                 color: Color(0xFF334155),
               ),
             ),
-          ),
-          if (report.tags.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(14, 0, 14, 12),
-              child: Wrap(
-                spacing: 6,
-                runSpacing: 6,
-                children: [
-                  for (final tag in report.tags.take(4))
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 9,
-                        vertical: 4,
-                      ),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFF1F5F9),
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: Text(
-                        '#$tag',
-                        style: const TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w600,
-                          color: Color(0xFF475569),
-                        ),
-                      ),
-                    ),
-                ],
-              ),
-            ),
-          Container(
-            padding: const EdgeInsets.fromLTRB(14, 10, 14, 12),
-            decoration: const BoxDecoration(
-              border: Border(top: BorderSide(color: Color(0xFFF1F5F9))),
-            ),
-            child: Row(
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 8,
+              runSpacing: 6,
               children: [
-                _ActionStat(
-                  icon: Icons.favorite_border_rounded,
-                  value: '$likes',
+                _MetaChip(
+                  icon: Icons.bubble_chart_outlined,
+                  label: zone.liveStatus.replaceAll('_', ' '),
                 ),
-                const SizedBox(width: 18),
-                _ActionStat(
-                  icon: Icons.mode_comment_outlined,
-                  value: '$comments',
+                _MetaChip(
+                  icon: Icons.people_outline_rounded,
+                  label: '$crowdPct% activity',
                 ),
-                const SizedBox(width: 18),
-                const _ActionStat(icon: Icons.share_outlined, value: 'Share'),
-                const Spacer(),
-                const Icon(
-                  Icons.bookmark_border_rounded,
-                  size: 20,
-                  color: Color(0xFF64748B),
+                _MetaChip(
+                  icon: Icons.flag_outlined,
+                  label: '${zone.reportCount} reports',
                 ),
               ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _MetaChip extends StatelessWidget {
+  const _MetaChip({required this.icon, required this.label});
+
+  final IconData icon;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 14, color: const Color(0xFF64748B)),
+          const SizedBox(width: 5),
+          Text(
+            label,
+            style: const TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w700,
+              color: Color(0xFF475569),
             ),
           ),
         ],
       ),
-    );
-  }
-
-  String _timeAgo(DateTime time) {
-    final diff = DateTime.now().difference(time);
-    if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
-    if (diff.inHours < 24) return '${diff.inHours}h ago';
-    return '${diff.inDays}d ago';
-  }
-}
-
-class _ActionStat extends StatelessWidget {
-  const _ActionStat({required this.icon, required this.value});
-
-  final IconData icon;
-  final String value;
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: [
-        Icon(icon, size: 18, color: const Color(0xFF64748B)),
-        const SizedBox(width: 5),
-        Text(
-          value,
-          style: const TextStyle(
-            fontSize: 12,
-            color: Color(0xFF64748B),
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-      ],
     );
   }
 }

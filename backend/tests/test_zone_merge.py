@@ -49,7 +49,7 @@ def _create_user(db_session):
     from app.models.user import User
 
     user = User(
-        email="merge-tester@strollwise.test",
+        email="merge-tester@example.com",
         password_hash="x",
         display_name="Tester",
         traveler_type="local",
@@ -70,17 +70,15 @@ def test_merge_creates_zone_with_landmark_name(db_session):
 
     zones = ZoneMergeService(db_session).recompute_near(list(affected_cells))
 
-    assert zones, "expected at least one merged zone"
+    assert zones, "expected at least one per-cell zone"
+    # Each active H3 cell is its own zone (single hex, no multi-cell merge).
+    assert all(len(z.source_h3_indexes_json) == 1 for z in zones)
+    assert all(z.behavior_type == BehaviorType.LOCAL_AREA.value for z in zones)
+    assert all(z.function_type == FunctionType.FOOD_HOTSPOT.value for z in zones)
     zone = zones[0]
-
     # Name follows the `<function> near <landmark>` template.
     assert " near " in zone.display_name, zone.display_name
-    assert zone.behavior_type == BehaviorType.LOCAL_AREA.value
-    assert zone.function_type == FunctionType.FOOD_HOTSPOT.value
-    # Source h3 indexes should be recorded.
-    assert zone.source_h3_indexes_json
-    assert len(zone.source_h3_indexes_json) >= 1
-    # Polygon was persisted.
+    # Polygon was persisted (single hex => Polygon).
     assert zone.polygon_geojson is not None
     assert zone.polygon_geojson.get("type") in ("Polygon", "MultiPolygon")
 

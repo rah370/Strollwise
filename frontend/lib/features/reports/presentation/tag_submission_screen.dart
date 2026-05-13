@@ -1,9 +1,9 @@
 import 'dart:math' as math;
 
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:geolocator/geolocator.dart';
 import 'package:go_router/go_router.dart';
 import 'package:maplibre_gl/maplibre_gl.dart';
 
@@ -123,13 +123,14 @@ class _TagSubmissionScreenState extends ConsumerState<TagSubmissionScreen> {
   String _selectedTypeLabel = _tagTypes.first.label;
   String _selectedVisibility = 'Anonymous';
   String _selectedDetail = _tagTypes.first.details.first;
-  bool _isResolvingLocation = false;
+  LatLng? _pickedLocation;
 
   _TagType get _selectedType =>
       _tagTypes.firstWhere((type) => type.label == _selectedTypeLabel);
 
   bool get _canSubmit =>
-      _selectedDetail.isNotEmpty || noteController.text.trim().isNotEmpty;
+      _pickedLocation != null &&
+      (_selectedDetail.isNotEmpty || noteController.text.trim().isNotEmpty);
 
   @override
   void dispose() {
@@ -138,41 +139,27 @@ class _TagSubmissionScreenState extends ConsumerState<TagSubmissionScreen> {
   }
 
   Future<void> _submit() async {
-    if (!_canSubmit) return;
-    setState(() => _isResolvingLocation = true);
-    Position? position;
-    try {
-      final isEnabled = await Geolocator.isLocationServiceEnabled();
-      if (isEnabled) {
-        var permission = await Geolocator.checkPermission();
-        if (permission == LocationPermission.denied) {
-          permission = await Geolocator.requestPermission();
-        }
-        if (permission != LocationPermission.denied &&
-            permission != LocationPermission.deniedForever) {
-          position = await Geolocator.getCurrentPosition(
-            locationSettings: const LocationSettings(
-              accuracy: LocationAccuracy.medium,
-            ),
-          );
-        }
-      }
-    } catch (_) {
-      // Fall back to current map center if GPS lookup fails.
-    } finally {
-      if (mounted) setState(() => _isResolvingLocation = false);
+    if (_pickedLocation == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Choose the exact road/place first.')),
+      );
+      return;
+    }
+    if (!_canSubmit) {
+      return;
     }
 
-    final center = ref.read(mapViewportProvider).center;
+    final submitLocation = _pickedLocation!;
     final tags = <String>[
       if (_selectedDetail.isNotEmpty) _selectedDetail.toLowerCase(),
       _selectedType.label.toLowerCase(),
       _selectedVisibility.toLowerCase(),
+      if (_pickedLocation != null) 'exact_road_spot',
     ];
 
     final payload = TagSubmissionPayload(
-      latitude: position?.latitude ?? center.latitude,
-      longitude: position?.longitude ?? center.longitude,
+      latitude: submitLocation.latitude,
+      longitude: submitLocation.longitude,
       category: _selectedType.backendCategory,
       tags: tags,
       note: noteController.text.trim().isEmpty
@@ -181,23 +168,114 @@ class _TagSubmissionScreenState extends ConsumerState<TagSubmissionScreen> {
     );
 
     try {
-      await ref.read(tagSubmissionProvider.notifier).submit(payload);
+      final feedback = await ref
+          .read(tagSubmissionProvider.notifier)
+          .submit(payload);
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Tag submitted.')));
+      await _showAggregationFeedback(
+        latitude: payload.latitude,
+        longitude: payload.longitude,
+        feedback: feedback,
+      );
       setState(() {
         _selectedTypeLabel = _tagTypes.first.label;
         _selectedDetail = _tagTypes.first.details.first;
         _selectedVisibility = 'Anonymous';
+        _pickedLocation = null;
         noteController.clear();
       });
-    } catch (_) {
+    } catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(const SnackBar(content: Text('Submission failed.')));
+      ).showSnackBar(SnackBar(content: Text(_submissionErrorMessage(error))));
     }
+  }
+
+  String _submissionErrorMessage(Object error) {
+    if (error is DioException) {
+      if (error.response?.statusCode == 401 ||
+          error.response?.statusCode == 403) {
+        return 'Please log in again before submitting a tag.';
+      }
+      if (error.type == DioExceptionType.connectionError ||
+          error.type == DioExceptionType.connectionTimeout) {
+        return 'Backend is unreachable. Use Demo Login or start the backend.';
+      }
+      final detail = error.response?.data;
+      if (detail is Map && detail['detail'] != null) {
+        return detail['detail'].toString();
+      }
+      return 'Submission failed (${error.response?.statusCode ?? 'network'}).';
+    }
+    return 'Submission failed. Please try again.';
+  }
+
+  Future<void> _pickExactLocation() async {
+    final fallback =
+        _pickedLocation ??
+        ref.read(currentUserLocationProvider) ??
+        ref.read(mapViewportProvider).center;
+    final picked = await showModalBottomSheet<LatLng>(
+      context: context,
+      isScrollControlled: true,
+      enableDrag: false,
+      backgroundColor: Colors.transparent,
+      builder: (_) => _RoadSpotPicker(initialLocation: fallback),
+    );
+    if (picked == null || !mounted) return;
+    setState(() => _pickedLocation = picked);
+  }
+
+  Future<void> _showAggregationFeedback({
+    required double latitude,
+    required double longitude,
+    required TagSubmissionFeedback feedback,
+  }) async {
+    final thresholdLine = feedback.thresholdMet
+        ? '${feedback.matchingCount}/${feedback.threshold} matching tags reached'
+        : '${feedback.matchingCount}/${feedback.threshold} matching tags needed';
+    await showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Tag added as a zone signal'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Your tag added 1 signal to H3 cell ${feedback.h3Index}.'),
+            const SizedBox(height: 8),
+            Text(thresholdLine),
+            if (!feedback.thresholdMet)
+              Text(
+                '${feedback.remainingToThreshold} more matching '
+                '${feedback.remainingToThreshold == 1 ? 'tag' : 'tags'} before this can update a zone.',
+              ),
+            const SizedBox(height: 8),
+            Text(feedback.publicZoneUpdate),
+            const SizedBox(height: 12),
+            Text(
+              'Exact GPS (${latitude.toStringAsFixed(4)}, '
+              '${longitude.toStringAsFixed(4)}) is converted into an H3 cell; '
+              'the public map shows aggregated behavior, not individual posts.',
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Keep tagging'),
+          ),
+          FilledButton(
+            onPressed: () {
+              Navigator.of(context).pop();
+              context.go('/explore');
+            },
+            child: const Text('View map'),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -216,9 +294,10 @@ class _TagSubmissionScreenState extends ConsumerState<TagSubmissionScreen> {
           selectedDetail: _selectedDetail,
           selectedVisibility: _selectedVisibility,
           noteController: noteController,
+          pickedLocation: _pickedLocation,
           selectedZone: selectedZone,
           overview: overview,
-          isLoading: submissionState.isLoading || _isResolvingLocation,
+          isLoading: submissionState.isLoading,
           safeBottom: safeBottom,
           onBack: () => context.go('/explore'),
           onTypeSelected: (type) => setState(() {
@@ -231,6 +310,8 @@ class _TagSubmissionScreenState extends ConsumerState<TagSubmissionScreen> {
               setState(() => _selectedDetail = detail),
           onVisibilitySelected: (value) =>
               setState(() => _selectedVisibility = value),
+          onPickLocation: _pickExactLocation,
+          onClearLocation: () => setState(() => _pickedLocation = null),
           onSubmit: _canSubmit ? _submit : null,
         ),
         loading: () => const Center(child: CircularProgressIndicator()),
@@ -239,9 +320,10 @@ class _TagSubmissionScreenState extends ConsumerState<TagSubmissionScreen> {
           selectedDetail: _selectedDetail,
           selectedVisibility: _selectedVisibility,
           noteController: noteController,
+          pickedLocation: _pickedLocation,
           selectedZone: selectedZone,
           overview: null,
-          isLoading: submissionState.isLoading || _isResolvingLocation,
+          isLoading: submissionState.isLoading,
           safeBottom: safeBottom,
           onBack: () => context.go('/explore'),
           onTypeSelected: (type) => setState(() {
@@ -254,6 +336,8 @@ class _TagSubmissionScreenState extends ConsumerState<TagSubmissionScreen> {
               setState(() => _selectedDetail = detail),
           onVisibilitySelected: (value) =>
               setState(() => _selectedVisibility = value),
+          onPickLocation: _pickExactLocation,
+          onClearLocation: () => setState(() => _pickedLocation = null),
           onSubmit: _canSubmit ? _submit : null,
         ),
       ),
@@ -267,6 +351,7 @@ class _AddTagScene extends StatelessWidget {
     required this.selectedDetail,
     required this.selectedVisibility,
     required this.noteController,
+    required this.pickedLocation,
     required this.selectedZone,
     required this.overview,
     required this.isLoading,
@@ -275,6 +360,8 @@ class _AddTagScene extends StatelessWidget {
     required this.onTypeSelected,
     required this.onDetailSelected,
     required this.onVisibilitySelected,
+    required this.onPickLocation,
+    required this.onClearLocation,
     required this.onSubmit,
   });
 
@@ -282,6 +369,7 @@ class _AddTagScene extends StatelessWidget {
   final String selectedDetail;
   final String selectedVisibility;
   final TextEditingController noteController;
+  final LatLng? pickedLocation;
   final ZoneModel? selectedZone;
   final CurrentZoneOverviewModel? overview;
   final bool isLoading;
@@ -290,6 +378,8 @@ class _AddTagScene extends StatelessWidget {
   final ValueChanged<_TagType> onTypeSelected;
   final ValueChanged<String> onDetailSelected;
   final ValueChanged<String> onVisibilitySelected;
+  final VoidCallback onPickLocation;
+  final VoidCallback onClearLocation;
   final VoidCallback? onSubmit;
 
   @override
@@ -297,6 +387,7 @@ class _AddTagScene extends StatelessWidget {
     final zone = selectedZone ?? overview?.currentZone;
     final mapLabels = _buildMapLabels(zone, overview);
     final noteLength = noteController.text.length;
+    final hasLocation = pickedLocation != null;
 
     return SafeArea(
       child: Column(
@@ -343,7 +434,7 @@ class _AddTagScene extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   const Text(
-                    'Contribute what this area is known for.',
+                    'Add a precise zone signal in three steps.',
                     style: TextStyle(
                       fontSize: 14,
                       color: AppColors.mutedText,
@@ -351,118 +442,162 @@ class _AddTagScene extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(height: 14),
-                  _CurrentZoneCard(zone: zone),
-                  const SizedBox(height: 18),
-                  const _SectionLabel('Tag Type'),
-                  const SizedBox(height: 10),
-                  Wrap(
-                    spacing: 10,
-                    runSpacing: 10,
-                    children: _TagSubmissionScreenState._tagTypes
-                        .map(
-                          (type) => _TypeChip(
-                            type: type,
-                            selected: type.label == selectedType.label,
-                            onTap: () => onTypeSelected(type),
-                          ),
-                        )
-                        .toList(),
+                  _TagProgressHeader(
+                    hasLocation: hasLocation,
+                    hasCategory: true,
+                    hasDetail: selectedDetail.isNotEmpty,
                   ),
-                  const SizedBox(height: 18),
-                  const _SectionLabel('Optional Detail'),
-                  const SizedBox(height: 10),
-                  Wrap(
-                    spacing: 10,
-                    runSpacing: 10,
-                    children: selectedType.details
-                        .map(
-                          (detail) => _PillChoiceChip(
-                            label: detail,
-                            selected: detail == selectedDetail,
-                            onTap: () => onDetailSelected(detail),
-                            accent: selectedType.accent,
-                            selectedFill: selectedType.fill,
-                          ),
-                        )
-                        .toList(),
+                  const SizedBox(height: 14),
+                  const _StepTitle(
+                    number: 1,
+                    title: 'Choose exact road/place',
+                    subtitle: 'Tap the spot where this behavior happened.',
                   ),
-                  const SizedBox(height: 18),
-                  const _SectionLabel('Add a note'),
                   const SizedBox(height: 10),
-                  Container(
-                    padding: const EdgeInsets.fromLTRB(14, 10, 14, 8),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(14),
-                      border: Border.all(color: AppColors.border),
+                  _ExactPlaceCard(
+                    pickedLocation: pickedLocation,
+                    onPickLocation: onPickLocation,
+                    onClearLocation: onClearLocation,
+                  ),
+                  if (!hasLocation) ...[
+                    const SizedBox(height: 12),
+                    const _GuidanceCard(
+                      icon: Icons.touch_app_rounded,
+                      title: 'Start here',
+                      message:
+                          'Pick the exact road, stall, cafe, crossing, or landmark before choosing a tag type.',
                     ),
-                    child: Column(
-                      children: [
-                        TextField(
-                          controller: noteController,
-                          maxLength: 120,
-                          maxLines: 2,
-                          inputFormatters: [
-                            LengthLimitingTextInputFormatter(120),
-                          ],
-                          decoration: const InputDecoration(
-                            hintText: 'Best for affordable food at night',
-                            counterText: '',
-                            border: InputBorder.none,
-                            enabledBorder: InputBorder.none,
-                            focusedBorder: InputBorder.none,
-                            isCollapsed: true,
-                            filled: false,
-                          ),
-                        ),
-                        Align(
-                          alignment: Alignment.centerRight,
-                          child: Text(
-                            '$noteLength/120',
-                            style: const TextStyle(
-                              color: AppColors.mutedText,
-                              fontSize: 12,
-                              fontWeight: FontWeight.w600,
+                  ] else ...[
+                    const SizedBox(height: 18),
+                    _CurrentZoneCard(zone: zone),
+                    const SizedBox(height: 18),
+                    const _StepTitle(
+                      number: 2,
+                      title: 'What type of zone signal is this?',
+                      subtitle:
+                          'Choose the behavior that best describes the place.',
+                    ),
+                    const SizedBox(height: 10),
+                    Wrap(
+                      spacing: 10,
+                      runSpacing: 10,
+                      children: _TagSubmissionScreenState._tagTypes
+                          .map(
+                            (type) => _TypeChip(
+                              type: type,
+                              selected: type.label == selectedType.label,
+                              onTap: () => onTypeSelected(type),
+                            ),
+                          )
+                          .toList(),
+                    ),
+                    const SizedBox(height: 18),
+                    const _StepTitle(
+                      number: 3,
+                      title: 'Add detail and submit',
+                      subtitle:
+                          'This becomes an aggregated H3 zone signal after validation.',
+                    ),
+                    const SizedBox(height: 10),
+                    Wrap(
+                      spacing: 10,
+                      runSpacing: 10,
+                      children: selectedType.details
+                          .map(
+                            (detail) => _PillChoiceChip(
+                              label: detail,
+                              selected: detail == selectedDetail,
+                              onTap: () => onDetailSelected(detail),
+                              accent: selectedType.accent,
+                              selectedFill: selectedType.fill,
+                            ),
+                          )
+                          .toList(),
+                    ),
+                    const SizedBox(height: 18),
+                    const _SectionLabel('Add a note'),
+                    const SizedBox(height: 10),
+                    Container(
+                      padding: const EdgeInsets.fromLTRB(14, 10, 14, 8),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(color: AppColors.border),
+                      ),
+                      child: Column(
+                        children: [
+                          TextField(
+                            controller: noteController,
+                            maxLength: 120,
+                            maxLines: 2,
+                            inputFormatters: [
+                              LengthLimitingTextInputFormatter(120),
+                            ],
+                            decoration: const InputDecoration(
+                              hintText: 'Best for affordable food at night',
+                              counterText: '',
+                              border: InputBorder.none,
+                              enabledBorder: InputBorder.none,
+                              focusedBorder: InputBorder.none,
+                              isCollapsed: true,
+                              filled: false,
                             ),
                           ),
+                          Align(
+                            alignment: Alignment.centerRight,
+                            child: Text(
+                              '$noteLength/120',
+                              style: const TextStyle(
+                                color: AppColors.mutedText,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 18),
+                    const _SectionLabel('Visibility'),
+                    const SizedBox(height: 10),
+                    _VisibilitySelector(
+                      selectedVisibility: selectedVisibility,
+                      onVisibilitySelected: onVisibilitySelected,
+                    ),
+                    const SizedBox(height: 16),
+                    _SubmitPreviewCard(
+                      type: selectedType,
+                      detail: selectedDetail,
+                      pickedLocation: pickedLocation!,
+                    ),
+                    const SizedBox(height: 12),
+                    SizedBox(
+                      width: double.infinity,
+                      child: FilledButton.icon(
+                        onPressed: onSubmit,
+                        icon: Icon(
+                          isLoading
+                              ? Icons.hourglass_top_rounded
+                              : Icons.send_rounded,
                         ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 18),
-                  const _SectionLabel('Visibility'),
-                  const SizedBox(height: 10),
-                  _VisibilitySelector(
-                    selectedVisibility: selectedVisibility,
-                    onVisibilitySelected: onVisibilitySelected,
-                  ),
-                  const SizedBox(height: 16),
-                  SizedBox(
-                    width: double.infinity,
-                    child: FilledButton.icon(
-                      onPressed: onSubmit,
-                      icon: Icon(
-                        isLoading
-                            ? Icons.my_location_rounded
-                            : Icons.send_rounded,
-                      ),
-                      label: Text(
-                        isLoading ? 'Getting location...' : 'Submit Tag',
-                      ),
-                      style: FilledButton.styleFrom(
-                        minimumSize: const Size.fromHeight(56),
+                        label: Text(
+                          isLoading ? 'Submitting signal...' : 'Submit Tag',
+                        ),
+                        style: FilledButton.styleFrom(
+                          minimumSize: const Size.fromHeight(56),
+                        ),
                       ),
                     ),
-                  ),
-                  const SizedBox(height: 10),
-                  const Text(
-                    'Tags are reviewed and released in batch after validation.',
-                    style: TextStyle(
-                      color: AppColors.secondaryText,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
+                    const SizedBox(height: 10),
+                    const Text(
+                      'Privacy: your tag becomes an aggregated H3 zone signal. Public zones update after matching community tags pass the threshold.',
+                      style: TextStyle(
+                        color: AppColors.secondaryText,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
-                  ),
+                  ],
                 ],
               ),
             ),
@@ -750,6 +885,228 @@ class _HexOutlinePainter extends CustomPainter {
       oldDelegate.color != color;
 }
 
+class _TagProgressHeader extends StatelessWidget {
+  const _TagProgressHeader({
+    required this.hasLocation,
+    required this.hasCategory,
+    required this.hasDetail,
+  });
+
+  final bool hasLocation;
+  final bool hasCategory;
+  final bool hasDetail;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Expanded(
+          child: _ProgressStep(
+            number: 1,
+            label: 'Spot',
+            complete: hasLocation,
+            active: !hasLocation,
+          ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: _ProgressStep(
+            number: 2,
+            label: 'Type',
+            complete: hasLocation && hasCategory,
+            active: hasLocation,
+          ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: _ProgressStep(
+            number: 3,
+            label: 'Submit',
+            complete: hasLocation && hasDetail,
+            active: hasLocation,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _ProgressStep extends StatelessWidget {
+  const _ProgressStep({
+    required this.number,
+    required this.label,
+    required this.complete,
+    required this.active,
+  });
+
+  final int number;
+  final String label;
+  final bool complete;
+  final bool active;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = complete
+        ? AppColors.primaryAction
+        : active
+        ? AppColors.accent
+        : AppColors.border;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: complete || active ? 0.14 : 0.5),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: color.withValues(alpha: 0.65)),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          CircleAvatar(
+            radius: 10,
+            backgroundColor: color,
+            child: complete
+                ? const Icon(Icons.check_rounded, size: 13, color: Colors.white)
+                : Text(
+                    '$number',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 10,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+          ),
+          const SizedBox(width: 6),
+          Flexible(
+            child: Text(
+              label,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: AppColors.primaryText,
+                fontSize: 11,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _StepTitle extends StatelessWidget {
+  const _StepTitle({
+    required this.number,
+    required this.title,
+    required this.subtitle,
+  });
+
+  final int number;
+  final String title;
+  final String subtitle;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        CircleAvatar(
+          radius: 13,
+          backgroundColor: AppColors.mapInk,
+          child: Text(
+            '$number',
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 12,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                title,
+                style: const TextStyle(
+                  color: AppColors.primaryText,
+                  fontSize: 16,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                subtitle,
+                style: const TextStyle(
+                  color: AppColors.mutedText,
+                  fontSize: 12,
+                  height: 1.3,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _GuidanceCard extends StatelessWidget {
+  const _GuidanceCard({
+    required this.icon,
+    required this.title,
+    required this.message,
+  });
+
+  final IconData icon;
+  final String title;
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFFBEB),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFFFDE68A)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, color: const Color(0xFFB45309)),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: const TextStyle(
+                    color: Color(0xFF92400E),
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  message,
+                  style: const TextStyle(
+                    color: Color(0xFF92400E),
+                    height: 1.35,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _CurrentZoneCard extends StatelessWidget {
   const _CurrentZoneCard({required this.zone});
 
@@ -836,6 +1193,417 @@ class _CurrentZoneCard extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+class _ExactPlaceCard extends StatelessWidget {
+  const _ExactPlaceCard({
+    required this.pickedLocation,
+    required this.onPickLocation,
+    required this.onClearLocation,
+  });
+
+  final LatLng? pickedLocation;
+  final VoidCallback onPickLocation;
+  final VoidCallback onClearLocation;
+
+  @override
+  Widget build(BuildContext context) {
+    final selected = pickedLocation != null;
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(
+          color: selected ? AppColors.primaryAction : AppColors.border,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFEAF6EF),
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: const Icon(
+                  Icons.add_road_rounded,
+                  color: AppColors.primaryAction,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Exact road/place',
+                      style: TextStyle(
+                        color: AppColors.primaryText,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      selected
+                          ? '${pickedLocation!.latitude.toStringAsFixed(5)}, ${pickedLocation!.longitude.toStringAsFixed(5)}'
+                          : 'Tap the map to pin the exact spot where this tag applies.',
+                      style: const TextStyle(
+                        color: AppColors.mutedText,
+                        fontSize: 12,
+                        height: 1.3,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: onPickLocation,
+                  icon: Icon(selected ? Icons.edit_location_alt : Icons.map),
+                  label: Text(selected ? 'Change spot' : 'Choose on map'),
+                ),
+              ),
+              if (selected) ...[
+                const SizedBox(width: 10),
+                IconButton(
+                  tooltip: 'Use automatic location',
+                  onPressed: onClearLocation,
+                  icon: const Icon(Icons.close_rounded),
+                ),
+              ],
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _RoadSpotPicker extends StatefulWidget {
+  const _RoadSpotPicker({required this.initialLocation});
+
+  final LatLng initialLocation;
+
+  @override
+  State<_RoadSpotPicker> createState() => _RoadSpotPickerState();
+}
+
+class _RoadSpotPickerState extends State<_RoadSpotPicker> {
+  MapLibreMapController? _controller;
+  late LatLng _selected = widget.initialLocation;
+
+  void _syncSelectedToCamera() {
+    final target = _controller?.cameraPosition?.target;
+    if (target == null || !mounted) return;
+    setState(() => _selected = target);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bottomPadding = MediaQuery.of(context).padding.bottom;
+    return SafeArea(
+      top: false,
+      child: Container(
+        height: MediaQuery.of(context).size.height * 0.82,
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+        ),
+        child: Column(
+          children: [
+            const SizedBox(height: 10),
+            Container(
+              width: 42,
+              height: 5,
+              decoration: BoxDecoration(
+                color: const Color(0xFFE2E8F0),
+                borderRadius: BorderRadius.circular(999),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(18, 16, 18, 12),
+              child: Row(
+                children: [
+                  const Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Choose exact road spot',
+                          style: TextStyle(
+                            color: AppColors.primaryText,
+                            fontSize: 18,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                        SizedBox(height: 4),
+                        Text(
+                          'Drag the map under the pin, or tap a road/place.',
+                          style: TextStyle(
+                            color: AppColors.mutedText,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    icon: const Icon(Icons.close_rounded),
+                  ),
+                ],
+              ),
+            ),
+            Expanded(
+              child: Stack(
+                children: [
+                  MapLibreMap(
+                    styleString:
+                        'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json',
+                    initialCameraPosition: CameraPosition(
+                      target: _selected,
+                      zoom: 16.2,
+                    ),
+                    minMaxZoomPreference: const MinMaxZoomPreference(12, 19),
+                    scrollGesturesEnabled: true,
+                    zoomGesturesEnabled: true,
+                    rotateGesturesEnabled: false,
+                    compassEnabled: false,
+                    onMapCreated: (controller) => _controller = controller,
+                    onCameraIdle: _syncSelectedToCamera,
+                    onMapClick: (_, latLng) {
+                      final next = LatLng(latLng.latitude, latLng.longitude);
+                      setState(() => _selected = next);
+                      _controller?.animateCamera(CameraUpdate.newLatLng(next));
+                    },
+                  ),
+                  const Center(
+                    child: IgnorePointer(
+                      child: Padding(
+                        padding: EdgeInsets.only(bottom: 42),
+                        child: Icon(
+                          Icons.location_pin,
+                          size: 48,
+                          color: AppColors.primaryAction,
+                        ),
+                      ),
+                    ),
+                  ),
+                  Positioned(
+                    top: 12,
+                    left: 14,
+                    right: 14,
+                    child: IgnorePointer(
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 9,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withValues(alpha: 0.94),
+                          borderRadius: BorderRadius.circular(16),
+                          boxShadow: const [
+                            BoxShadow(
+                              color: Color(0x120F172A),
+                              blurRadius: 12,
+                              offset: Offset(0, 5),
+                            ),
+                          ],
+                        ),
+                        child: const Text(
+                          'Move the map until the pin is exactly on the road/place.',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            color: AppColors.primaryText,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                  Positioned(
+                    left: 14,
+                    right: 14,
+                    bottom: 14,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 10,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.95),
+                        borderRadius: BorderRadius.circular(18),
+                        boxShadow: const [
+                          BoxShadow(
+                            color: Color(0x160F172A),
+                            blurRadius: 18,
+                            offset: Offset(0, 8),
+                          ),
+                        ],
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(
+                            Icons.add_road_rounded,
+                            color: AppColors.primaryAction,
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              '${_selected.latitude.toStringAsFixed(5)}, ${_selected.longitude.toStringAsFixed(5)}',
+                              style: const TextStyle(
+                                color: AppColors.primaryText,
+                                fontWeight: FontWeight.w800,
+                                fontSize: 12,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Padding(
+              padding: EdgeInsets.fromLTRB(18, 14, 18, bottomPadding + 14),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () => Navigator.of(context).pop(),
+                      child: const Text('Cancel'),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: FilledButton.icon(
+                      onPressed: () => Navigator.of(context).pop(_selected),
+                      icon: const Icon(Icons.check_rounded),
+                      label: const Text('Use this spot'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SubmitPreviewCard extends StatelessWidget {
+  const _SubmitPreviewCard({
+    required this.type,
+    required this.detail,
+    required this.pickedLocation,
+  });
+
+  final _TagType type;
+  final String detail;
+  final LatLng pickedLocation;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Preview',
+            style: TextStyle(
+              color: AppColors.primaryText,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          const SizedBox(height: 10),
+          _PreviewRow(
+            icon: type.icon,
+            label: 'Signal',
+            value: '${type.label} > $detail',
+          ),
+          const SizedBox(height: 8),
+          _PreviewRow(
+            icon: Icons.add_road_rounded,
+            label: 'Exact spot',
+            value:
+                '${pickedLocation.latitude.toStringAsFixed(5)}, ${pickedLocation.longitude.toStringAsFixed(5)}',
+          ),
+          const SizedBox(height: 8),
+          const _PreviewRow(
+            icon: Icons.hexagon_outlined,
+            label: 'Result',
+            value: 'Pending H3 zone signal until enough matching tags agree.',
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PreviewRow extends StatelessWidget {
+  const _PreviewRow({
+    required this.icon,
+    required this.label,
+    required this.value,
+  });
+
+  final IconData icon;
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(icon, size: 18, color: AppColors.primaryAction),
+        const SizedBox(width: 8),
+        SizedBox(
+          width: 72,
+          child: Text(
+            label,
+            style: const TextStyle(
+              color: AppColors.mutedText,
+              fontSize: 12,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+        ),
+        Expanded(
+          child: Text(
+            value,
+            style: const TextStyle(
+              color: AppColors.primaryText,
+              fontSize: 12,
+              height: 1.35,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ),
+      ],
     );
   }
 }

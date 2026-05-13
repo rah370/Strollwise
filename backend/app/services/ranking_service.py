@@ -1,6 +1,7 @@
 """Scoring for the built-in filters (Popular Now, Local Picks, Food, etc.)."""
 from __future__ import annotations
 
+import heapq
 from collections.abc import Iterable
 
 from app.models.enums import BehaviorType, FunctionType
@@ -28,14 +29,29 @@ class RankingService:
         filter_key: str | None,
         user_lat: float | None = None,
         user_lng: float | None = None,
+        limit: int | None = None,
     ) -> list[MergedZone]:
         zones_list = list(zones)
         if filter_key is None:
-            return sorted(zones_list, key=lambda z: z.priority_score, reverse=True)
+            if limit is None:
+                return sorted(
+                    zones_list, key=lambda z: float(z.priority_score or 0), reverse=True
+                )
+            return heapq.nlargest(
+                min(limit, len(zones_list)),
+                zones_list,
+                key=lambda z: float(z.priority_score or 0),
+            )
 
         key = filter_key.lower()
         if key not in cls.FILTERS:
-            return sorted(zones_list, key=lambda z: z.priority_score, reverse=True)
+
+            def priority_only(z: MergedZone) -> float:
+                return float(z.priority_score or 0)
+
+            if limit is None:
+                return sorted(zones_list, key=priority_only, reverse=True)
+            return heapq.nlargest(min(limit, len(zones_list)), zones_list, key=priority_only)
 
         def score(zone: MergedZone) -> float:
             base = float(zone.priority_score or 0)
@@ -77,7 +93,9 @@ class RankingService:
                 base -= min(distance_km, 20.0) * 2.0
             return base
 
-        return sorted(zones_list, key=score, reverse=True)
+        if limit is None:
+            return sorted(zones_list, key=score, reverse=True)
+        return heapq.nlargest(min(limit, len(zones_list)), zones_list, key=score)
 
     @classmethod
     def recommend_alternatives(

@@ -10,7 +10,7 @@ class MainShell extends StatelessWidget {
     '/explore',
     '/add-tag',
     '/feed',
-    '/layers',
+    '/trends',
     '/profile',
   ];
 

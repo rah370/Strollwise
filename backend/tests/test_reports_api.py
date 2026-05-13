@@ -5,7 +5,7 @@ def _register(client):
     resp = client.post(
         "/api/v1/auth/register",
         json={
-            "email": "report@strollwise.test",
+            "email": "report@example.com",
             "password": "supersecret123",
             "traveler_type": "local",
         },
@@ -45,6 +45,9 @@ def test_create_report_converts_latlng_into_h3(client):
     assert data["h3_index"]
     assert data["resolution"] == 8
     assert data["category"] == "food"
+    assert data["aggregation"]["matching_count"] == 2
+    assert data["aggregation"]["threshold_met"] is True
+    assert data["aggregation"]["remaining_to_threshold"] == 0
 
 
 def test_zones_endpoint_returns_list(client):
@@ -88,6 +91,22 @@ def test_report_rejects_unknown_category(client):
         },
     )
     assert resp.status_code == 422
+
+
+def test_report_rejects_sensitive_area(client):
+    token = _register(client)
+    resp = client.post(
+        "/api/v1/reports",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "latitude": 10.2968,
+            "longitude": 123.8946,
+            "category": "food",
+            "tags": ["canteen"],
+        },
+    )
+    assert resp.status_code == 422
+    assert "sensitive" in resp.json()["detail"]
 
 
 def test_report_feed_only_includes_approved_reports(client):

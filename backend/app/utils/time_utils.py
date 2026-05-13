@@ -1,14 +1,19 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime, timezone
+
+_UTC = timezone.utc
 
 
 def utcnow() -> datetime:
-    return datetime.now(UTC)
+    """UTC 'now' as naive datetime (matches SQLAlchemy defaults on SQLite tests)."""
+    return datetime.now(_UTC).replace(tzinfo=None)
 
 
 def hour_of(dt: datetime) -> int:
-    return dt.astimezone(UTC).hour
+    if dt.tzinfo is not None:
+        return int(dt.astimezone(_UTC).hour)
+    return int(dt.hour)
 
 
 def label_for_peak_hours(peak_hours: list[int]) -> str | None:

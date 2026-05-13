@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../../app/theme/colors.dart';
 import '../../../shared/models/zone.dart';
@@ -276,6 +277,7 @@ class _ZoneBody extends ConsumerWidget {
     final nearby = overview?.nearbyZones ?? const <ZoneModel>[];
     final activityChips = _activityChips(zone);
     final hotspotChips = _hotspotChips(zone, nearby, alternatives);
+    final intelligence = _zoneIntelligenceCopy(zone);
     final lat = zone.boundary.isNotEmpty
         ? zone.boundary.map((p) => p[1]).reduce((a, b) => a + b) /
               zone.boundary.length
@@ -296,7 +298,7 @@ class _ZoneBody extends ConsumerWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    zone.zoneType,
+                    zone.displayName,
                     style: const TextStyle(
                       fontSize: 24,
                       fontWeight: FontWeight.w800,
@@ -355,8 +357,7 @@ class _ZoneBody extends ConsumerWidget {
         _SectionHeading(title: 'About this Zone'),
         const SizedBox(height: 8),
         Text(
-          'This ${zone.zoneType.toLowerCase()} zone shows ${zone.travelerType.toLowerCase()} activity patterns. '
-          'Confidence is ${zone.confidenceScore.toStringAsFixed(0)}% based on recent community tags.',
+          intelligence,
           style: const TextStyle(
             height: 1.4,
             color: Color(0xFF334155),
@@ -432,7 +433,14 @@ class _ZoneBody extends ConsumerWidget {
                   ),
                   icon: const Icon(Icons.near_me_outlined, size: 20),
                   label: const Text('Explore Zone'),
-                  onPressed: () {},
+                  onPressed: () {
+                    final router = GoRouter.of(context);
+                    ref.read(selectedZoneProvider.notifier).state = zone;
+                    Navigator.of(context).maybePop();
+                    router.go(
+                      '/trends?zoneId=${Uri.encodeComponent(zone.zoneId)}',
+                    );
+                  },
                 ),
               ),
               const SizedBox(width: 10),
@@ -462,6 +470,30 @@ class _ZoneBody extends ConsumerWidget {
     if (zone.reportCount >= 40) return 'High crowd';
     if (zone.reportCount >= 20) return 'Moderate';
     return 'Quiet';
+  }
+
+  String _zoneIntelligenceCopy(ZoneModel zone) {
+    final traveler = zone.travelerType.toLowerCase();
+    final confidence = zone.confidenceScore.toStringAsFixed(0);
+    final peak = zone.peakTimeLabel ?? 'variable peak times';
+    final summary = zone.summary?.trim();
+    if (summary != null && summary.isNotEmpty) {
+      return '$summary This area is currently read as $traveler behavior with $confidence% confidence and $peak activity.';
+    }
+    final behavior = switch (zone.functionType) {
+      'food_hotspot' =>
+        'food behavior, dining movement, and activity combinations',
+      'student_area' =>
+        'student movement, study hubs, budget meals, and campus-edge activity',
+      'transport_zone' =>
+        'commute pressure, pickup movement, food stops, and local errands',
+      'commercial_zone' =>
+        'shopping, work, dining, and visible commercial movement',
+      'tourist_hotspot' =>
+        'visitor movement, sightseeing, accessible food, and photo-stop behavior',
+      _ => 'local movement, activity patterns, and zone-level behavior',
+    };
+    return 'This zone shows $traveler $behavior. Confidence is $confidence% based on recent community tags, with $peak activity.';
   }
 
   List<(IconData, String)> _activityChips(ZoneModel zone) {
@@ -684,27 +716,34 @@ class _IconLabel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF1F5F9),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 16, color: const Color(0xFF0F172A)),
-          const SizedBox(width: 6),
-          Text(
-            label,
-            style: const TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-              color: Color(0xFF0F172A),
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 220),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+        decoration: BoxDecoration(
+          color: const Color(0xFFF1F5F9),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: const Color(0xFFE2E8F0)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 16, color: const Color(0xFF0F172A)),
+            const SizedBox(width: 6),
+            Flexible(
+              child: Text(
+                label,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: Color(0xFF0F172A),
+                ),
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

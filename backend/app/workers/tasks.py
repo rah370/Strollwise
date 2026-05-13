@@ -49,10 +49,12 @@ def refresh_rankings_task() -> None:
     need to drop the relevant cache keys here.
     """
     cleared_zones = cache_delete_pattern("zones:vp:*")
+    cleared_feed = cache_delete_pattern("zones:feed*")
     cleared_pulse = cache_delete_pattern("city:pulse:*")
     log.info(
-        "refresh_rankings_task: cleared %d zone viewports and %d pulse entries",
+        "refresh_rankings_task: cleared %d zone viewports, %d feed keys, %d pulse entries",
         cleared_zones,
+        cleared_feed,
         cleared_pulse,
     )
 

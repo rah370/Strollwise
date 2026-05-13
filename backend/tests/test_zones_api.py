@@ -5,7 +5,7 @@ def _register(client):
     resp = client.post(
         "/api/v1/auth/register",
         json={
-            "email": "zoneapi@strollwise.test",
+            "email": "zoneapi@example.com",
             "password": "supersecret123",
             "traveler_type": "local",
         },
@@ -115,6 +115,24 @@ def test_zone_detail_returns_expected_fields(client):
 def test_zone_detail_404_for_unknown_id(client):
     resp = client.get("/api/v1/zones/00000000-0000-0000-0000-000000000000")
     assert resp.status_code == 404
+
+
+def test_zones_feed_returns_ranked_list(client):
+    token = _register(client)
+    _seed_cluster(client, token)
+
+    resp = client.get(
+        "/api/v1/zones/feed",
+        params={"limit": 10, "user_lat": 10.3308, "user_lng": 123.906},
+    )
+    assert resp.status_code == 200, resp.text
+    items = resp.json()
+    assert isinstance(items, list)
+    assert len(items) <= 10
+    if items:
+        assert "zone_id" in items[0]
+        assert "display_name" in items[0]
+        assert "confidence_score" in items[0]
 
 
 def test_current_zone_overview_returns_launch_payload(client):

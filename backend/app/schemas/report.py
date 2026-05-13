@@ -30,3 +30,17 @@ class ReportPublic(ORMModel):
     image_url: str | None = None
     source_type: str
     created_at: datetime
+
+
+class AggregationFeedback(ORMModel):
+    h3_index: str
+    pending_count: int
+    matching_count: int
+    threshold: int
+    remaining_to_threshold: int
+    threshold_met: bool
+    public_zone_update: str
+
+
+class ReportSubmissionResponse(ReportPublic):
+    aggregation: AggregationFeedback

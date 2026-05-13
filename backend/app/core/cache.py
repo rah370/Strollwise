@@ -93,3 +93,17 @@ def build_viewport_cache_key(
         f"{quant(min_lat)}:{quant(min_lng)}:{quant(max_lat)}:{quant(max_lng)}:"
         f"{zoom_part}:{filter_part}"
     )
+
+
+def build_zone_feed_cache_key(
+    limit: int,
+    filter_key: str | None,
+    user_lat: float | None,
+    user_lng: float | None,
+) -> str:
+    """Quantized user location (~100 m) so nearby requests share a cache key."""
+    quant3 = lambda v: f"{round(v, 3):.3f}"  # noqa: E731
+    lat_part = quant3(user_lat) if user_lat is not None else "na"
+    lng_part = quant3(user_lng) if user_lng is not None else "na"
+    filter_part = (filter_key or "all").lower()
+    return f"zones:feed:{limit}:{filter_part}:{lat_part}:{lng_part}"

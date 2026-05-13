@@ -6,11 +6,13 @@ import '../features/feed/presentation/feed_screen.dart';
 import '../features/layers/presentation/layers_screen.dart';
 import '../features/profile/presentation/profile_screen.dart';
 import '../features/reports/presentation/tag_submission_screen.dart';
+import '../features/trends/presentation/trends_screen.dart';
 import 'widgets/main_shell.dart';
 
 final GoRouter appRouter = GoRouter(
   initialLocation: '/auth',
   routes: [
+    GoRoute(path: '/', redirect: (context, state) => '/auth'),
     GoRoute(path: '/auth', builder: (context, state) => const AuthScreen()),
     ShellRoute(
       builder: (context, state, child) => MainShell(child: child),
@@ -27,6 +29,12 @@ final GoRouter appRouter = GoRouter(
         GoRoute(
           path: '/layers',
           builder: (context, state) => const LayersScreen(),
+        ),
+        GoRoute(
+          path: '/trends',
+          builder: (context, state) => TrendsScreen(
+            zoneId: state.uri.queryParameters['zoneId'],
+          ),
         ),
         GoRoute(
           path: '/profile',

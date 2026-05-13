@@ -12,6 +12,7 @@ class RegisterRequest(BaseModel):
     traveler_type: str = Field(default="mixed")
     nationality: str | None = Field(default=None, max_length=8)
     age_range: str | None = Field(default=None, max_length=16)
+    accepted_research_consent: bool = False
 
 
 class LoginRequest(BaseModel):

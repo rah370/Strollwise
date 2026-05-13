@@ -5,7 +5,7 @@ from uuid import UUID
 
 from sqlalchemy import func, select
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, defer
 
 from app.models.merged_zone import MergedZone
 from app.models.saved_zone import SavedZone
@@ -13,13 +13,22 @@ from app.models.zone_snapshot import ZoneSnapshot
 
 log = logging.getLogger(__name__)
 
+# PostGIS WKB helpers (AsEWKB) are not available on SQLite; API payloads use
+# `polygon_geojson` JSONB, so we defer the ORM geometry column unless a query
+# explicitly needs it (viewport ST_Intersects fast path).
+_DEFER_POLYGON_GEOM = defer(MergedZone.polygon_geometry)
+
 
 class ZoneRepository:
     def __init__(self, db: Session) -> None:
         self.db = db
 
     def list_active(self) -> list[MergedZone]:
-        stmt = select(MergedZone).where(MergedZone.is_active.is_(True))
+        stmt = (
+            select(MergedZone)
+            .where(MergedZone.is_active.is_(True))
+            .options(_DEFER_POLYGON_GEOM)
+        )
         return list(self.db.execute(stmt).scalars())
 
     def list_active_in_bbox(
@@ -52,11 +61,20 @@ class ZoneRepository:
             return None
 
     def list_by_slug(self, slug: str) -> MergedZone | None:
-        stmt = select(MergedZone).where(MergedZone.slug == slug)
+        stmt = (
+            select(MergedZone)
+            .where(MergedZone.slug == slug)
+            .options(_DEFER_POLYGON_GEOM)
+        )
         return self.db.execute(stmt).scalar_one_or_none()
 
     def get(self, zone_id: UUID) -> MergedZone | None:
-        return self.db.get(MergedZone, zone_id)
+        stmt = (
+            select(MergedZone)
+            .where(MergedZone.zone_id == zone_id)
+            .options(_DEFER_POLYGON_GEOM)
+        )
+        return self.db.execute(stmt).scalar_one_or_none()
 
     def upsert(self, zone: MergedZone) -> MergedZone:
         self.db.add(zone)

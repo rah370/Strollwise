@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Optional
 
 from sqlalchemy import DateTime, Float, Integer, String, func
 from sqlalchemy.dialects.postgresql import JSONB
@@ -33,7 +34,7 @@ class H3CellAggregate(Base):
         JSONB, nullable=False, default=dict, server_default="{}"
     )
 
-    dominant_category: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    dominant_category: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     dominant_tags_json: Mapped[list[str]] = mapped_column(
         JSONB, nullable=False, default=list, server_default="[]"
     )
@@ -56,7 +57,7 @@ class H3CellAggregate(Base):
         JSONB, nullable=False, default=list, server_default="[]"
     )
 
-    last_report_at: Mapped[datetime | None] = mapped_column(
+    last_report_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
     updated_at: Mapped[datetime] = mapped_column(

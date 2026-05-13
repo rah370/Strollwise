@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from datetime import timezone
+from datetime import datetime
+
 from sqlalchemy.orm import Session
 
 from app.core.security import create_access_token, hash_password, verify_password
@@ -29,6 +32,12 @@ class AuthService:
             traveler_type=payload.traveler_type or "mixed",
             nationality=payload.nationality,
             age_range=payload.age_range,
+            accepted_research_consent=payload.accepted_research_consent,
+            accepted_privacy_terms_at=(
+                datetime.now(timezone.utc)
+                if payload.accepted_research_consent
+                else None
+            ),
         )
         self.users.create(user)
         self.db.commit()

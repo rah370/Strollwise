@@ -1,6 +1,6 @@
 # StrollWise
 
-StrollWise is a crowd-sourced travel intelligence app. It uses **H3** hex cells to aggregate reports into **merged, map-ready zones** (local vs tourist mix, function types like food hotspots, and similar) without exposing individual trajectories in public APIs.
+StrollWise is a crowd-sourced travel intelligence app. It uses **H3** hex cells to aggregate reports into **map-ready zones** (one zone per cell footprint: local vs tourist mix, function types like food hotspots, and similar) without exposing individual trajectories in public APIs.
 
 ## Architecture
 
@@ -16,14 +16,14 @@ FastAPI  —  SQLAlchemy / GeoAlchemy2  —  PostgreSQL + PostGIS
 
 - **Client:** Flutter with Riverpod, go_router, MapLibre and flutter_map, geolocator, and H3 helpers.
 - **Server:** FastAPI with layered **routers → services → repositories → models**, Pydantic schemas, and Alembic migrations.
-- **Data:** PostGIS stores merged zone geometry and relational data; **h3-py** drives cell indexing, aggregation, classification, and merge logic; **Redis** caches hot reads and is invalidated when zones change.
+- **Data:** PostGIS stores per-cell zone geometry and relational data; **h3-py** drives cell indexing, aggregation, classification, and zone publication; **Redis** caches hot reads and is invalidated when zones change.
 
 ## Repository layout
 
 | Path | Stack | Role |
 | --- | --- | --- |
 | `frontend/` | Flutter 3 (Dart ^3.11.4), **Riverpod**, **go_router**, **Dio**, **MapLibre** (+ `flutter_map`, `latlong2`, `h3_flutter`, **geolocator**) | Mobile and multi-platform app: auth, map explore, feed, tag submission, layers/analytics, profile |
-| `backend/` | **Python 3.11**, **FastAPI**, SQLAlchemy 2, **GeoAlchemy2**, **Shapely**, **Alembic**, PostgreSQL **PostGIS**, **Redis**, **h3-py**, JWT (**python-jose**, **passlib**/bcrypt), optional **boto3** | REST API under `/api/v1`, aggregation, classification, zone merge pipeline |
+| `backend/` | **Python 3.11**, **FastAPI**, SQLAlchemy 2, **GeoAlchemy2**, **Shapely**, **Alembic**, PostgreSQL **PostGIS**, **Redis**, **h3-py**, JWT (**python-jose**, **passlib**/bcrypt), optional **boto3** | REST API under `/api/v1`, aggregation, classification, per-cell zone pipeline |
 | `docker-compose.yml` | PostGIS 16, Redis 7, API container | Local stack: DB, cache, API on port **8000** |
 
 Detailed backend notes (env vars, full route table, caching): [`backend/README.md`](backend/README.md).
@@ -49,7 +49,7 @@ Detailed backend notes (env vars, full route table, caching): [`backend/README.m
 
 - **Alembic** migrations run when the API container starts (`backend/docker/entrypoint.sh`).
 - Optional **`SEED_ON_BOOT=true`** for Compose to run `seed.py` on startup; otherwise seed manually (below).
-- Idempotent **`backend/seed.py`**: demo users and synthetic reports around **Cebu City** districts, then aggregation → classification → merge.
+- Idempotent **`backend/seed.py`**: demo users and synthetic reports around **Cebu City** districts, then aggregation → classification → per-cell zones.
 
 ## Prerequisites
 
@@ -132,7 +132,7 @@ Heuristic used in classification (see backend services):
 1. **`POST /api/v1/reports`** validates a submission and converts `latitude` / `longitude` to an H3 cell.
 2. The report is stored as **pending**; validators check duplicates, agreement, and approval thresholds.
 3. If approved, reports are promoted to visible; the system recomputes cell aggregates and assigns classification.
-4. Connected similar cells are merged into frontend-ready polygons; approved zone records are refreshed.
+4. Each active H3 cell is published as its own zone (single-hex polygon); overlapping stale rows for those cells are removed on partial recompute; approved zone records are refreshed.
 5. Explore consumes approved overlays; Redis keys for viewport and city pulse are refreshed when publication changes zone outputs.
 
 ## Roadmap ideas

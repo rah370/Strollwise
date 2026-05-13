@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from app.models.report import Report
 from app.services.aggregation_service import AggregationService
 
 
 def _report(**overrides) -> Report:
-    now = datetime.now(UTC)
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
     base = dict(
         h3_index="8a1",
         resolution=8,
@@ -44,7 +44,7 @@ def test_tag_counts_aggregate_across_reports():
 
 
 def test_time_distribution_has_24_hour_buckets():
-    now = datetime(2026, 1, 1, 10, tzinfo=UTC)
+    now = datetime(2026, 1, 1, 10)
     reports = [_report(created_at=now)]
     dist = AggregationService.compute_time_distribution(reports)
     assert len(dist) == 24
@@ -53,7 +53,7 @@ def test_time_distribution_has_24_hour_buckets():
 
 
 def test_crowd_score_prefers_recent_reports():
-    now = datetime.now(UTC)
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
     recent = [_report(created_at=now - timedelta(minutes=10)) for _ in range(6)]
     old = [_report(created_at=now - timedelta(days=3)) for _ in range(6)]
     assert AggregationService.compute_crowd_score(recent) > AggregationService.compute_crowd_score(old)

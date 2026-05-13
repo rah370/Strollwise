@@ -19,7 +19,6 @@ import '../../../shared/providers/app_providers.dart';
 import '../../zones/presentation/zone_detail_sheet.dart';
 
 enum ExploreMapMode { discovery, zoneSelected, navigating }
-enum _TransportMode { walking, driving, biking }
 
 enum _LocationBootstrapState {
   locating,
@@ -49,12 +48,12 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
   bool _usingManualLocation = false;
   bool _followUser = true;
   bool _showLayerLegend = false;
-  bool _isRouting = false;
-  _TransportMode _transportMode = _TransportMode.walking;
-  List<LatLng> _activeRoutePoints = const [];
-  List<_RouteStep> _activeRouteSteps = const [];
-  LatLng? _lastRouteOrigin;
-  DateTime? _lastRouteFetchedAt;
+  String? _lastTappedZoneId;
+  int _sameZoneTapCount = 0;
+  List<LatLng> _navigationRoute = const [];
+  _NavigationMetrics? _navigationMetrics;
+  bool _isFetchingRoute = false;
+  DateTime? _lastRouteRefreshAt;
   final Set<String> _enabledLayerKeys = {
     'local',
     'international',
@@ -69,29 +68,68 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
   };
   _LocationBootstrapState _locationState = _LocationBootstrapState.locating;
   ExploreMapMode _mapMode = ExploreMapMode.discovery;
+  bool _showSearch = false;
   final TextEditingController _searchController = TextEditingController();
-  Timer? _searchDebounce;
-  int _searchRequestToken = 0;
-  String? _searchFeedback;
-  bool _isSearching = false;
-  static const _cebuViewBox = '123.70,10.55,124.10,10.10';
-
   static const _cebuCityCenter = LatLng(10.3157, 123.8854);
   static const _defaultZoom = 14.7;
   static const _cebuRegionRadiusMeters = 120000.0;
   static const _zonesSourceId = 'zones-source';
   static const _zonesFillLayerId = 'zones-fill';
   static const _zonesLineLayerId = 'zones-line';
-  static const _routeRefreshMinInterval = Duration(seconds: 12);
-  static const _routeRefreshMinDistanceMeters = 35.0;
+  static const Map<String, LatLng> _knownCebuPlaces = {
+    'ayala': LatLng(10.3173, 123.9058),
+    'ayala center': LatLng(10.3173, 123.9058),
+    'it park': LatLng(10.3304, 123.9072),
+    'cebu it park': LatLng(10.3304, 123.9072),
+    'colon': LatLng(10.2966, 123.8986),
+    'colon street': LatLng(10.2966, 123.8986),
+    'carbon market': LatLng(10.2954, 123.8994),
+    'magellan': LatLng(10.2930, 123.9029),
+    'magellan cross': LatLng(10.2930, 123.9029),
+    'basilica': LatLng(10.2942, 123.9022),
+    'santo nino': LatLng(10.2942, 123.9022),
+    'fort san pedro': LatLng(10.2922, 123.9058),
+    'fuente': LatLng(10.3094, 123.8931),
+    'fuente osmena': LatLng(10.3094, 123.8931),
+    'mango': LatLng(10.3109, 123.8953),
+    'mango avenue': LatLng(10.3109, 123.8953),
+    'south bus': LatLng(10.3002, 123.8931),
+    'south bus terminal': LatLng(10.3002, 123.8931),
+    'sm city': LatLng(10.3112, 123.9187),
+    'sm seaside': LatLng(10.2816, 123.8810),
+    'pier': LatLng(10.3003, 123.9122),
+    'port area': LatLng(10.3003, 123.9122),
+    'j solon': LatLng(10.3181, 123.9021),
+    'usc': LatLng(10.3006, 123.8989),
+    'university of san carlos': LatLng(10.3006, 123.8989),
+    'cebu doctors': LatLng(10.3099, 123.8916),
+  };
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_consumeExploreFocus()) return;
       _ensureDefaultCebuViewport();
       _bootstrapCurrentLocation();
     });
+  }
+
+  bool _consumeExploreFocus() {
+    final focus = ref.read(exploreFocusLocationProvider);
+    if (focus == null) return false;
+    ref.read(exploreFocusLocationProvider.notifier).state = null;
+    ref.read(currentUserLocationProvider.notifier).state = focus;
+    if (mounted) {
+      setState(() {
+        _isLocationEnabledForMap = false;
+        _usingManualLocation = true;
+        _followUser = false;
+        _locationState = _LocationBootstrapState.ready;
+      });
+    }
+    unawaited(_moveCameraToLocation(focus, zoom: 15.2));
+    return true;
   }
 
   Future<void> _bootstrapCurrentLocation({bool force = false}) async {
@@ -179,9 +217,7 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
     );
     final controller = _controller;
     if (controller != null) {
-      await controller.moveCamera(
-        CameraUpdate.newLatLngZoom(target, zoom),
-      );
+      await controller.moveCamera(CameraUpdate.newLatLngZoom(target, zoom));
     }
   }
 
@@ -206,73 +242,160 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
   }
 
   Future<void> _promptManualLocation() async {
-    final latController = TextEditingController();
-    final lngController = TextEditingController();
-    try {
-      final result = await showDialog<LatLng>(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: const Text('Set location manually'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: latController,
-                keyboardType: const TextInputType.numberWithOptions(
-                  decimal: true,
-                  signed: true,
+    final placeController = TextEditingController();
+    final result = await showDialog<LatLng>(
+      context: context,
+      builder: (context) {
+        var isSearching = false;
+        String? errorText;
+        Future<void> resolvePlace(StateSetter setDialogState) async {
+          final query = placeController.text.trim();
+          if (query.isEmpty) {
+            setDialogState(() {
+              errorText = 'Enter a street, building, or landmark.';
+            });
+            return;
+          }
+          setDialogState(() {
+            isSearching = true;
+            errorText = null;
+          });
+          final resolved = await _lookupManualPlace(query);
+          if (!context.mounted) return;
+          if (resolved == null) {
+            setDialogState(() {
+              isSearching = false;
+              errorText =
+                  'Could not find that place in Cebu. Try a clearer landmark.';
+            });
+            return;
+          }
+          Navigator.of(context).pop(resolved);
+        }
+
+        return StatefulBuilder(
+          builder: (context, setDialogState) => AlertDialog(
+            title: const Text('Search your location'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Type a street, building, or landmark in Cebu. No GPS access needed.',
+                  style: TextStyle(fontSize: 13),
                 ),
-                decoration: const InputDecoration(labelText: 'Latitude'),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: placeController,
+                  enabled: !isSearching,
+                  autofocus: true,
+                  textInputAction: TextInputAction.search,
+                  onSubmitted: (_) => resolvePlace(setDialogState),
+                  decoration: InputDecoration(
+                    labelText: 'Street, building, or landmark',
+                    hintText: 'Ayala Center, IT Park, Colon Street...',
+                    prefixIcon: const Icon(Icons.search_rounded),
+                    errorText: errorText,
+                  ),
+                ),
+                if (isSearching) ...[
+                  const SizedBox(height: 12),
+                  const LinearProgressIndicator(minHeight: 3),
+                ],
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: isSearching
+                    ? null
+                    : () => Navigator.of(context).pop(),
+                child: const Text('Cancel'),
               ),
-              const SizedBox(height: 10),
-              TextField(
-                controller: lngController,
-                keyboardType: const TextInputType.numberWithOptions(
-                  decimal: true,
-                  signed: true,
-                ),
-                decoration: const InputDecoration(labelText: 'Longitude'),
+              FilledButton(
+                onPressed: isSearching
+                    ? null
+                    : () => resolvePlace(setDialogState),
+                child: Text(isSearching ? 'Searching...' : 'Use place'),
               ),
             ],
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () {
-                final lat = double.tryParse(latController.text.trim());
-                final lng = double.tryParse(lngController.text.trim());
-                if (lat == null ||
-                    lng == null ||
-                    lat.abs() > 90 ||
-                    lng.abs() > 180) {
-                  return;
-                }
-                Navigator.of(context).pop(LatLng(lat, lng));
-              },
-              child: const Text('Apply'),
-            ),
-          ],
-        ),
-      );
-      if (result == null) return;
-      ref.read(currentUserLocationProvider.notifier).state = result;
-      _positionSubscription?.cancel();
-      if (mounted) {
-        setState(() {
-          _isLocationEnabledForMap = false;
-          _usingManualLocation = true;
-          _followUser = false;
-          _locationState = _LocationBootstrapState.ready;
-        });
-      }
-      await _moveCameraToLocation(result, zoom: 13.5);
-    } finally {
-      latController.dispose();
-      lngController.dispose();
+        );
+      },
+    );
+    if (result == null) return;
+    ref.read(currentUserLocationProvider.notifier).state = result;
+    _positionSubscription?.cancel();
+    if (mounted) {
+      setState(() {
+        _isLocationEnabledForMap = false;
+        _usingManualLocation = true;
+        _followUser = false;
+        _locationState = _LocationBootstrapState.ready;
+      });
     }
+    await _moveCameraToLocation(result, zoom: 13.5);
+  }
+
+  Future<LatLng?> _lookupManualPlace(String query) async {
+    final localMatch = _knownCebuPlaceLookup(query);
+    if (localMatch != null) return localMatch;
+    try {
+      final response = await ref
+          .read(dioProvider)
+          .getUri(
+            Uri.https('nominatim.openstreetmap.org', '/search', {
+              'format': 'json',
+              'limit': '1',
+              'addressdetails': '0',
+              'countrycodes': 'ph',
+              'viewbox': '123.75,10.45,124.05,10.20',
+              'bounded': '1',
+              'q': '$query, Cebu City, Cebu, Philippines',
+            }),
+            options: Options(
+              headers: const {
+                'User-Agent': 'StrollWise prototype demo location lookup',
+              },
+            ),
+          );
+      final results = response.data;
+      if (results is! List || results.isEmpty || results.first is! Map) {
+        return null;
+      }
+      final first = results.first as Map;
+      final lat = double.tryParse(first['lat']?.toString() ?? '');
+      final lng = double.tryParse(first['lon']?.toString() ?? '');
+      if (lat == null || lng == null) return null;
+      final location = LatLng(lat, lng);
+      return _isWithinCebuRegion(location) ? location : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  LatLng? _knownCebuPlaceLookup(String query) {
+    final normalized = query.toLowerCase().trim();
+    for (final place in _knownCebuPlaces.entries) {
+      final key = place.key;
+      if (normalized.contains(key) || key.contains(normalized)) {
+        return place.value;
+      }
+    }
+    return null;
+  }
+
+  /// GeoJSON polygon rings must be closed (first position == last position).
+  List<List<double>> _closeGeoJsonLngLatRing(List<List<double>> ring) {
+    if (ring.length < 3) return ring;
+    final first = ring.first;
+    final last = ring.last;
+    if (first.length >= 2 &&
+        last.length >= 2 &&
+        first[0] == last[0] &&
+        first[1] == last[1]) {
+      return ring;
+    }
+    return [...ring, List<double>.from(first)];
   }
 
   Future<void> _drawZones(List<ZoneModel> zones) async {
@@ -299,30 +422,83 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
         final isSelected = selectedZone?.h3Index == zone.h3Index;
         if (!_enabledLayerKeys.contains(layerKey) && !isSelected) continue;
         final color = _streetZoneColor(zone);
-        final rings = zone.sourceH3Rings;
-        if (rings.isEmpty) continue;
-        for (final ring in rings) {
-          if (ring.length < 6) continue;
-          features.add({
-            'type': 'Feature',
-            'properties': {
-              'zone_id': zone.zoneId,
-              'zone_type': layerKey,
-              'fill': _hexFromColor(color),
-              'line': _hexFromColor(color),
-              'selected': isSelected,
-            },
-            'geometry': {
-              'type': 'Polygon',
-              'coordinates': [ring],
-            },
-          });
+        final lifecycle = _zoneLifecycleState(zone);
+        final h3Rings = zone.sourceH3Rings;
+        if (h3Rings.isNotEmpty) {
+          for (final ring in h3Rings) {
+            if (ring.length < 3) continue;
+            final closed = _closeGeoJsonLngLatRing(ring);
+            if (closed.length < 4) continue;
+            features.add({
+              'type': 'Feature',
+              'properties': {
+                'zone_id': zone.zoneId,
+                'zone_type': layerKey,
+                'fill': _hexFromColor(color),
+                'line': _hexFromColor(color),
+                'selected': isSelected,
+                'lifecycle': lifecycle,
+                'dashed': lifecycle == 'emerging',
+                'fill_opacity': _zoneFillOpacity(
+                  mode: mapMode,
+                  selected: isSelected,
+                  hasSelection: selectedZone != null,
+                  confidenceScore: zone.confidenceScore,
+                  lifecycle: lifecycle,
+                ),
+                'line_width': _zoneLifecycleLineWidth(
+                  selected: isSelected,
+                  lifecycle: lifecycle,
+                ),
+                'line_opacity': _zoneLifecycleLineOpacity(lifecycle),
+              },
+              'geometry': {
+                'type': 'Polygon',
+                'coordinates': [closed],
+              },
+            });
+          }
+        } else {
+          // Offline fallback zones and some API payloads only ship merged
+          // footprints (`polygon_parts`) without per-cell H3 rings.
+          for (final part in zone.polygonParts) {
+            if (part.isEmpty) continue;
+            final outer = part.first;
+            if (outer.length < 3) continue;
+            final closed = _closeGeoJsonLngLatRing(outer);
+            if (closed.length < 4) continue;
+            features.add({
+              'type': 'Feature',
+              'properties': {
+                'zone_id': zone.zoneId,
+                'zone_type': layerKey,
+                'fill': _hexFromColor(color),
+                'line': _hexFromColor(color),
+                'selected': isSelected,
+                'lifecycle': lifecycle,
+                'dashed': lifecycle == 'emerging',
+                'fill_opacity': _zoneFillOpacity(
+                  mode: mapMode,
+                  selected: isSelected,
+                  hasSelection: selectedZone != null,
+                  confidenceScore: zone.confidenceScore,
+                  lifecycle: lifecycle,
+                ),
+                'line_width': _zoneLifecycleLineWidth(
+                  selected: isSelected,
+                  lifecycle: lifecycle,
+                ),
+                'line_opacity': _zoneLifecycleLineOpacity(lifecycle),
+              },
+              'geometry': {
+                'type': 'Polygon',
+                'coordinates': [closed],
+              },
+            });
+          }
         }
       }
-      final geoJson = {
-        'type': 'FeatureCollection',
-        'features': features,
-      };
+      final geoJson = {'type': 'FeatureCollection', 'features': features};
       if (!_zoneLayersAdded) {
         await controller.addGeoJsonSource(_zonesSourceId, geoJson);
         final belowLayerId =
@@ -333,12 +509,7 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
           _zonesFillLayerId,
           FillLayerProperties(
             fillColor: ['get', 'fill'],
-            fillOpacity: [
-              'case',
-              ['boolean', ['get', 'selected'], false],
-              0.33,
-              0.28,
-            ],
+            fillOpacity: ['get', 'fill_opacity'],
           ),
           belowLayerId: belowLayerId,
         );
@@ -347,17 +518,23 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
           _zonesLineLayerId,
           LineLayerProperties(
             lineColor: ['get', 'line'],
-            lineWidth: [
+            lineWidth: ['get', 'line_width'],
+            lineOpacity: ['get', 'line_opacity'],
+            lineDasharray: [
               'case',
-              ['boolean', ['get', 'selected'], false],
-              1.6,
-              1.3,
-            ],
-            lineOpacity: [
-              'case',
-              ['boolean', ['get', 'selected'], false],
-              0.86,
-              0.76,
+              [
+                'boolean',
+                ['get', 'dashed'],
+                false,
+              ],
+              [
+                'literal',
+                [1.6, 1.2],
+              ],
+              [
+                'literal',
+                [1.0, 0.0],
+              ],
             ],
           ),
           belowLayerId: belowLayerId,
@@ -418,18 +595,16 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
       if (mapMode == ExploreMapMode.navigating &&
           selectedZone != null &&
           userLocation != null) {
-        final target = _zoneCenter(selectedZone);
-        final routeGeometry = _activeRoutePoints.length >= 2
-            ? _activeRoutePoints
-            : <LatLng>[userLocation, target];
-        await controller.addLine(
-          LineOptions(
-            geometry: routeGeometry,
-            lineColor: _hexFromColor(AppColors.secondaryAction),
-            lineWidth: 4.2,
-            lineOpacity: 0.86,
-          ),
-        );
+        if (_navigationRoute.length >= 2) {
+          await controller.addLine(
+            LineOptions(
+              geometry: _navigationRoute,
+              lineColor: _hexFromColor(AppColors.secondaryAction),
+              lineWidth: 5.4,
+              lineOpacity: 0.92,
+            ),
+          );
+        }
       }
       if (userLocation != null) {
         await controller.addCircle(
@@ -474,7 +649,9 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
     return null;
   }
 
-  Future<void> _applyBaseMapVisualTuning(MapLibreMapController controller) async {
+  Future<void> _applyBaseMapVisualTuning(
+    MapLibreMapController controller,
+  ) async {
     try {
       final layers = await controller.getLayerIds();
       for (final raw in layers) {
@@ -488,10 +665,7 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
           try {
             await controller.setLayerProperties(
               layerId,
-              SymbolLayerProperties(
-                iconOpacity: 0,
-                textOpacity: 0,
-              ),
+              SymbolLayerProperties(iconOpacity: 0, textOpacity: 0),
             );
           } catch (_) {}
         } else if (id.contains('transit') ||
@@ -553,14 +727,14 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
 
   Future<void> _refreshViewportZones() async {
     final controller = _controller;
-    if (controller == null || _isUpdatingViewport) {
+    if (controller == null || _isUpdatingViewport || !mounted) {
       return;
     }
-    _maybeDisableFollowOnManualPan(controller);
     _isUpdatingViewport = true;
     try {
       final bounds = await controller.getVisibleRegion();
       final camera = controller.cameraPosition;
+      if (!mounted) return;
       final current = ref.read(mapViewportProvider);
       ref.read(mapViewportProvider.notifier).state = current.copyWith(
         center: camera?.target,
@@ -571,29 +745,11 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
         maxLng: bounds.northeast.longitude,
       );
       final zones = ref.read(visibleZonesProvider).valueOrNull;
-      if (zones != null) {
+      if (zones != null && mounted) {
         unawaited(_drawZones(zones));
       }
     } finally {
       _isUpdatingViewport = false;
-    }
-  }
-
-  void _maybeDisableFollowOnManualPan(MapLibreMapController controller) {
-    if (!_followUser || _mapMode != ExploreMapMode.navigating) return;
-    final userLocation = ref.read(currentUserLocationProvider);
-    final cameraTarget = controller.cameraPosition?.target;
-    if (userLocation == null || cameraTarget == null) return;
-    final offsetMeters = Geolocator.distanceBetween(
-      userLocation.latitude,
-      userLocation.longitude,
-      cameraTarget.latitude,
-      cameraTarget.longitude,
-    );
-    // If the camera is clearly away from the user's current position,
-    // treat it as a manual pan and release follow mode.
-    if (offsetMeters > 120) {
-      setState(() => _followUser = false);
     }
   }
 
@@ -602,9 +758,62 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
     setState(() => _mapMode = ExploreMapMode.zoneSelected);
   }
 
+  void _handleZoneTap(ZoneModel zone) {
+    if (_lastTappedZoneId == zone.zoneId) {
+      _sameZoneTapCount += 1;
+    } else {
+      _lastTappedZoneId = zone.zoneId;
+      _sameZoneTapCount = 1;
+    }
+    _selectZone(zone);
+    if (_sameZoneTapCount >= 3) {
+      _sameZoneTapCount = 0;
+      _showZoneTypeMessage(zone);
+    }
+  }
+
+  void _showZoneTypeMessage(ZoneModel zone) {
+    final type = zone.zoneType.replaceAll('_', ' ');
+    final traveler = zone.travelerType;
+    final confidence = zone.confidenceScore.toStringAsFixed(0);
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          behavior: SnackBarBehavior.floating,
+          content: Text(
+            '${zone.displayName}: $traveler $type zone · $confidence% confidence',
+          ),
+          action: SnackBarAction(
+            label: 'Details',
+            onPressed: () => showModalBottomSheet<void>(
+              context: context,
+              isScrollControlled: true,
+              backgroundColor: Colors.transparent,
+              barrierColor: Colors.black.withValues(alpha: 0.35),
+              builder: (_) => const ZoneDetailSheet(),
+            ),
+          ),
+        ),
+      );
+  }
+
+  Future<void> _adjustZoom(double delta) async {
+    final controller = _controller;
+    if (controller == null) return;
+    final currentZoom =
+        controller.cameraPosition?.zoom ?? ref.read(mapViewportProvider).zoom;
+    final nextZoom = (currentZoom + delta).clamp(7.8, 18.0).toDouble();
+    await controller.animateCamera(CameraUpdate.zoomTo(nextZoom));
+  }
+
   void _clearSelectedZone() {
     ref.read(selectedZoneProvider.notifier).state = null;
-    setState(() => _mapMode = ExploreMapMode.discovery);
+    setState(() {
+      _mapMode = ExploreMapMode.discovery;
+      _lastTappedZoneId = null;
+      _sameZoneTapCount = 0;
+    });
   }
 
   void _startNavigation(ZoneModel zone) {
@@ -612,16 +821,22 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
     setState(() {
       _mapMode = ExploreMapMode.navigating;
       _followUser = true;
-      _activeRoutePoints = const [];
-      _activeRouteSteps = const [];
+      _navigationRoute = const [];
+      _navigationMetrics = const _NavigationMetrics(
+        distanceText: 'Finding...',
+        etaText: '--',
+        nextStep: 'Finding the fastest road route',
+        routeStatus: 'Routing on roads',
+      );
     });
-    final userLocation = ref.read(currentUserLocationProvider);
-    final target = userLocation ?? _zoneCenter(zone);
+    final target = _zoneCenter(zone);
     final controller = _controller;
     if (controller != null) {
-      unawaited(controller.animateCamera(CameraUpdate.newLatLngZoom(target, 13.2)));
+      unawaited(
+        controller.animateCamera(CameraUpdate.newLatLngZoom(target, 13.2)),
+      );
     }
-    unawaited(_ensureNavigationRoute(force: true));
+    unawaited(_refreshRoadRoute(zone, force: true));
   }
 
   void _exitNavigation() {
@@ -630,34 +845,165 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
           ? ExploreMapMode.discovery
           : ExploreMapMode.zoneSelected;
       _followUser = false;
-      _isRouting = false;
-      _activeRoutePoints = const [];
-      _activeRouteSteps = const [];
+      _navigationRoute = const [];
+      _navigationMetrics = null;
+      _lastRouteRefreshAt = null;
     });
   }
 
-  Future<void> _toggleNavigationFollow() async {
-    final shouldFollow = !_followUser;
-    setState(() => _followUser = shouldFollow);
-    if (!shouldFollow) return;
-    final userLocation = ref.read(currentUserLocationProvider);
-    if (userLocation == null) return;
-    await _moveCameraToLocation(
-      userLocation,
-      zoom: _mapMode == ExploreMapMode.navigating ? 14 : 13,
-    );
-  }
-
-  Future<void> _setTransportMode(_TransportMode mode) async {
-    if (_transportMode == mode) return;
+  Future<void> _refreshRoadRoute(ZoneModel zone, {bool force = false}) async {
+    final origin = ref.read(currentUserLocationProvider);
+    if (origin == null || _isFetchingRoute) return;
+    final now = DateTime.now();
+    if (!force &&
+        _lastRouteRefreshAt != null &&
+        now.difference(_lastRouteRefreshAt!) < const Duration(seconds: 18)) {
+      return;
+    }
     setState(() {
-      _transportMode = mode;
-      _activeRoutePoints = const [];
-      _activeRouteSteps = const [];
-      _lastRouteFetchedAt = null;
-      _lastRouteOrigin = null;
+      _isFetchingRoute = true;
+      _navigationMetrics ??= const _NavigationMetrics(
+        distanceText: 'Finding...',
+        etaText: '--',
+        nextStep: 'Finding the fastest road route',
+        routeStatus: 'Routing on roads',
+      );
     });
-    await _ensureNavigationRoute(force: true);
+    _lastRouteRefreshAt = now;
+    try {
+      final target = _zoneCenter(zone);
+      final route = await _fetchRoadRoute(origin: origin, target: target);
+      final points = route == null
+          ? _streetGridFallbackRoute(origin, target)
+          : _routePointsFromOsrm(route);
+      if (points.length < 2 || !mounted) return;
+      final distanceMeters = route == null
+          ? _polylineDistanceMeters(points)
+          : ((route['distance'] as num?) ?? 0).toDouble();
+      final durationSeconds = route == null
+          ? distanceMeters / 78 * 60
+          : ((route['duration'] as num?) ?? 0).toDouble();
+      final nextStep = route == null
+          ? 'Follow the street-grid preview toward ${_zoneTitle(zone)}'
+          : _routeNextStep(route, zone);
+      setState(() {
+        _navigationRoute = points;
+        _navigationMetrics = _NavigationMetrics(
+          distanceText: _formatDistance(distanceMeters),
+          etaText: _formatDuration(durationSeconds),
+          nextStep: nextStep,
+          routeStatus: route == null
+              ? 'Offline street preview'
+              : 'Fastest road route',
+        );
+      });
+      final zones = ref.read(visibleZonesProvider).valueOrNull;
+      if (zones != null) {
+        unawaited(_drawZones(zones));
+      }
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _navigationRoute = const [];
+        _navigationMetrics = const _NavigationMetrics(
+          distanceText: '--',
+          etaText: '--',
+          nextStep:
+              'Road routing is unavailable. Try again with internet access.',
+          routeStatus: 'Route unavailable',
+        );
+      });
+      final zones = ref.read(visibleZonesProvider).valueOrNull;
+      if (zones != null) {
+        unawaited(_drawZones(zones));
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isFetchingRoute = false);
+      } else {
+        _isFetchingRoute = false;
+      }
+    }
+  }
+
+  Future<Map?> _fetchRoadRoute({
+    required LatLng origin,
+    required LatLng target,
+  }) async {
+    for (final profile in const ['foot', 'driving']) {
+      final url = Uri.parse(
+        'https://router.project-osrm.org/route/v1/$profile/'
+        '${origin.longitude},${origin.latitude};'
+        '${target.longitude},${target.latitude}'
+        '?overview=full&geometries=geojson&steps=true&alternatives=false',
+      );
+      try {
+        final response = await ref.read(dioProvider).getUri(url);
+        final data = response.data;
+        if (data is! Map) continue;
+        final routes = data['routes'];
+        if (routes is List && routes.isNotEmpty && routes.first is Map) {
+          return routes.first as Map;
+        }
+      } catch (_) {
+        // Try the next profile before declaring routing unavailable.
+      }
+    }
+    return null;
+  }
+
+  List<LatLng> _routePointsFromOsrm(Map route) {
+    final geometry = route['geometry'];
+    final coords = geometry is Map ? geometry['coordinates'] : null;
+    if (coords is! List || coords.length < 2) return const [];
+    final points = <LatLng>[];
+    for (final coord in coords) {
+      if (coord is List && coord.length >= 2) {
+        final lng = (coord[0] as num).toDouble();
+        final lat = (coord[1] as num).toDouble();
+        points.add(LatLng(lat, lng));
+      }
+    }
+    return points;
+  }
+
+  List<LatLng> _streetGridFallbackRoute(LatLng origin, LatLng target) {
+    final midLat = (origin.latitude + target.latitude) / 2;
+    final midLng = (origin.longitude + target.longitude) / 2;
+    final horizontalFirst =
+        (origin.longitude - target.longitude).abs() >
+        (origin.latitude - target.latitude).abs();
+    if (horizontalFirst) {
+      return [
+        origin,
+        LatLng(origin.latitude, midLng),
+        LatLng(midLat, midLng),
+        LatLng(midLat, target.longitude),
+        target,
+      ];
+    }
+    return [
+      origin,
+      LatLng(midLat, origin.longitude),
+      LatLng(midLat, midLng),
+      LatLng(target.latitude, midLng),
+      target,
+    ];
+  }
+
+  double _polylineDistanceMeters(List<LatLng> points) {
+    var meters = 0.0;
+    for (var i = 1; i < points.length; i += 1) {
+      final a = points[i - 1];
+      final b = points[i];
+      meters += Geolocator.distanceBetween(
+        a.latitude,
+        a.longitude,
+        b.latitude,
+        b.longitude,
+      );
+    }
+    return meters;
   }
 
   void _startLiveLocationTracking() {
@@ -672,6 +1018,12 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
           if (!mounted || _usingManualLocation) return;
           final live = LatLng(position.latitude, position.longitude);
           ref.read(currentUserLocationProvider.notifier).state = live;
+          if (_mapMode == ExploreMapMode.navigating) {
+            final targetZone = ref.read(selectedZoneProvider);
+            if (targetZone != null) {
+              unawaited(_refreshRoadRoute(targetZone));
+            }
+          }
           if (_followUser) {
             final controller = _controller;
             if (controller != null) {
@@ -683,458 +1035,51 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
               );
             }
           }
-          if (_mapMode == ExploreMapMode.navigating) {
-            unawaited(_ensureNavigationRoute());
-          }
         });
-  }
-
-  Future<void> _ensureNavigationRoute({bool force = false}) async {
-    if (_mapMode != ExploreMapMode.navigating) return;
-    final selected = ref.read(selectedZoneProvider);
-    final userLocation = ref.read(currentUserLocationProvider);
-    if (selected == null || userLocation == null) return;
-    final now = DateTime.now();
-    if (!force) {
-      final lastAt = _lastRouteFetchedAt;
-      final lastOrigin = _lastRouteOrigin;
-      if (lastAt != null &&
-          now.difference(lastAt) < _routeRefreshMinInterval &&
-          lastOrigin != null) {
-        final movedMeters = Geolocator.distanceBetween(
-          lastOrigin.latitude,
-          lastOrigin.longitude,
-          userLocation.latitude,
-          userLocation.longitude,
-        );
-        if (movedMeters < _routeRefreshMinDistanceMeters) {
-          return;
-        }
-      }
-    }
-    setState(() => _isRouting = true);
-    try {
-      final target = _zoneCenter(selected);
-      final dio = ref.read(dioProvider);
-      final response = await dio.get(
-        'https://router.project-osrm.org/route/v1/${_osrmProfileForMode(_transportMode)}/'
-        '${userLocation.longitude},${userLocation.latitude};'
-        '${target.longitude},${target.latitude}',
-        queryParameters: {
-          'overview': 'full',
-          'geometries': 'geojson',
-          'steps': 'true',
-          'alternatives': 'false',
-        },
-      );
-      final data = response.data;
-      if (data is! Map<String, dynamic>) return;
-      final routes = data['routes'];
-      if (routes is! List || routes.isEmpty) return;
-      final first = routes.first;
-      if (first is! Map<String, dynamic>) return;
-      final geometry = first['geometry'] as Map<String, dynamic>?;
-      final coordinates = geometry?['coordinates'];
-      final points = (coordinates is List)
-          ? coordinates
-                .whereType<List>()
-                .map((pt) {
-                  if (pt.length < 2) return null;
-                  final lng = (pt[0] as num?)?.toDouble();
-                  final lat = (pt[1] as num?)?.toDouble();
-                  if (lat == null || lng == null) return null;
-                  return LatLng(lat, lng);
-                })
-                .whereType<LatLng>()
-                .toList(growable: false)
-          : const <LatLng>[];
-      final steps = _parseRouteSteps(first);
-      if (!mounted) return;
-      setState(() {
-        _activeRoutePoints = points;
-        _activeRouteSteps = steps;
-        _lastRouteOrigin = userLocation;
-        _lastRouteFetchedAt = now;
-      });
-      final zones = ref.read(visibleZonesProvider).valueOrNull;
-      if (zones != null) {
-        unawaited(_drawZones(zones));
-      }
-    } catch (_) {
-      // Keep fallback route line/metrics if API fails.
-    } finally {
-      if (mounted) setState(() => _isRouting = false);
-    }
-  }
-
-  List<_RouteStep> _parseRouteSteps(Map<String, dynamic> routeJson) {
-    final legs = routeJson['legs'];
-    if (legs is! List || legs.isEmpty) return const [];
-    final firstLeg = legs.first;
-    if (firstLeg is! Map<String, dynamic>) return const [];
-    final stepsRaw = firstLeg['steps'];
-    if (stepsRaw is! List || stepsRaw.isEmpty) return const [];
-    return stepsRaw
-        .whereType<Map<String, dynamic>>()
-        .map((step) {
-          final maneuver = step['maneuver'] as Map<String, dynamic>? ?? const {};
-          final maneuverType = (maneuver['type'] ?? 'straight').toString();
-          final modifier = (maneuver['modifier'] ?? '').toString();
-          final roadName = (step['name'] ?? '').toString().trim();
-          final action = _actionFromManeuver(maneuverType, modifier);
-          final instruction = roadName.isEmpty ? action : '$action on $roadName';
-          return _RouteStep(
-            instruction: instruction,
-            distanceMeters: (step['distance'] as num?)?.toDouble() ?? 0,
-            durationSeconds: (step['duration'] as num?)?.toDouble() ?? 0,
-            maneuverType: maneuverType,
-            maneuverModifier: modifier,
-          );
-        })
-        .toList(growable: false);
-  }
-
-  String _actionFromManeuver(String type, String modifier) {
-    final normalizedType = type.toLowerCase();
-    final normalizedModifier = modifier.toLowerCase();
-    if (normalizedType == 'arrive') return 'Arrive';
-    if (normalizedType == 'depart') return 'Head out';
-    if (normalizedType == 'roundabout') return 'Take the roundabout';
-    if (normalizedType == 'uturn') return 'Make a U-turn';
-    if (normalizedModifier.contains('left')) return 'Turn left';
-    if (normalizedModifier.contains('right')) return 'Turn right';
-    return 'Continue straight';
-  }
-
-  String _osrmProfileForMode(_TransportMode mode) {
-    return switch (mode) {
-      _TransportMode.driving => 'driving',
-      _TransportMode.biking => 'bike',
-      _ => 'foot',
-    };
   }
 
   @override
   void dispose() {
     _positionSubscription?.cancel();
-    _searchDebounce?.cancel();
     _searchController.dispose();
     super.dispose();
   }
 
-  void _clearSearch() {
-    _searchDebounce?.cancel();
-    _searchController.clear();
-    ref.read(activeZoneFilterProvider.notifier).state = null;
-    setState(() => _searchFeedback = null);
+  void _toggleSearch() {
+    setState(() {
+      _showSearch = !_showSearch;
+      if (!_showSearch) {
+        _searchController.clear();
+      }
+    });
+    if (!_showSearch) {
+      ref.read(activeZoneFilterProvider.notifier).state = null;
+    }
   }
 
   void _applySearchFilter(String value) {
-    _searchDebounce?.cancel();
-    if (_searchFeedback != null && mounted) {
-      setState(() => _searchFeedback = null);
-    }
-    _searchDebounce = Timer(const Duration(milliseconds: 280), () {
-      unawaited(_runSearch(value));
-    });
-  }
-
-  Future<void> _runSubmittedSearch(String value) async {
-    _searchDebounce?.cancel();
-    await _runSearch(value, prioritizeExact: true);
-  }
-
-  Future<void> _runSearch(
-    String value, {
-    bool prioritizeExact = false,
-  }) async {
-    final token = ++_searchRequestToken;
-    final q = _normalizeSearchText(value);
+    final q = value.trim().toLowerCase();
     if (q.isEmpty) {
       ref.read(activeZoneFilterProvider.notifier).state = null;
-      if (mounted) setState(() => _searchFeedback = null);
       return;
-    }
-    final matchedZone = _findBestZoneMatch(q, prioritizeExact: prioritizeExact);
-    if (matchedZone != null) {
-      ref.read(activeZoneFilterProvider.notifier).state = null;
-      _selectZone(matchedZone);
-      if (mounted) setState(() => _searchFeedback = null);
-      unawaited(_moveCameraToLocation(_zoneCenter(matchedZone), zoom: 14.8));
-      return;
-    }
-    if (mounted) setState(() => _isSearching = true);
-    try {
-      final cebuMatch = await _findBestZoneMatchAcrossCebu(
-        q,
-        prioritizeExact: prioritizeExact,
-      );
-      if (!mounted || token != _searchRequestToken) return;
-      if (cebuMatch != null) {
-        ref.read(activeZoneFilterProvider.notifier).state = null;
-        _selectZone(cebuMatch);
-        setState(() => _searchFeedback = null);
-        await _moveCameraToLocation(_zoneCenter(cebuMatch), zoom: 14.8);
-        return;
-      }
-      final placeMatches = await _findPlacesInCebu(q);
-      if (!mounted || token != _searchRequestToken) return;
-      if (placeMatches.isNotEmpty) {
-        final picked = (prioritizeExact && placeMatches.length > 1)
-            ? await _pickPlaceResult(placeMatches)
-            : placeMatches.first;
-        if (picked != null && mounted && token == _searchRequestToken) {
-          ref.read(activeZoneFilterProvider.notifier).state = null;
-          ref.read(selectedZoneProvider.notifier).state = null;
-          setState(() => _searchFeedback = null);
-          await _moveCameraToLocation(picked.location, zoom: 15.1);
-          return;
-        }
-      }
-    } finally {
-      if (mounted && token == _searchRequestToken) {
-        setState(() => _isSearching = false);
-      }
     }
     if (q.contains('food')) {
       ref.read(activeZoneFilterProvider.notifier).state = 'food';
-      setState(() => _searchFeedback = null);
       return;
     }
     if (q.contains('local')) {
       ref.read(activeZoneFilterProvider.notifier).state = 'local_picks';
-      setState(() => _searchFeedback = null);
       return;
     }
     if (q.contains('tour') || q.contains('international')) {
       ref.read(activeZoneFilterProvider.notifier).state = 'tourist';
-      setState(() => _searchFeedback = null);
       return;
     }
     if (q.contains('popular') || q.contains('trend')) {
       ref.read(activeZoneFilterProvider.notifier).state = 'popular_now';
-      setState(() => _searchFeedback = null);
       return;
     }
     ref.read(activeZoneFilterProvider.notifier).state = null;
-    setState(
-      () => _searchFeedback = 'No matching street, landmark, hotel, or area found.',
-    );
-  }
-
-  String _normalizeSearchText(String value) {
-    final lower = value.trim().toLowerCase();
-    return lower.replaceAll(RegExp(r'[^a-z0-9\s]'), ' ');
-  }
-
-  ZoneModel? _findBestZoneMatch(String query, {bool prioritizeExact = false}) {
-    final zones = _latestZones;
-    if (zones.isEmpty) return null;
-    ZoneModel? best;
-    var bestScore = 0;
-    for (final zone in zones) {
-      final score = _scoreZoneMatch(
-        zone,
-        query,
-        prioritizeExact: prioritizeExact,
-      );
-      if (score > bestScore) {
-        best = zone;
-        bestScore = score;
-      }
-    }
-    return bestScore > 0 ? best : null;
-  }
-
-  int _scoreZoneMatch(
-    ZoneModel zone,
-    String query, {
-    bool prioritizeExact = false,
-  }) {
-    final terms = query.split(RegExp(r'\s+')).where((t) => t.isNotEmpty).toList();
-    if (terms.isEmpty) return 0;
-    final normalizedName = _normalizeSearchText(zone.displayName);
-    final searchable = _normalizeSearchText(
-      [
-        zone.displayName,
-        zone.summary ?? '',
-        zone.liveStatus,
-        zone.functionType,
-        zone.zoneType,
-        zone.behaviorType,
-        zone.travelerType,
-      ].join(' '),
-    );
-    if (searchable.isEmpty) return 0;
-    if (normalizedName == query) return prioritizeExact ? 1200 : 250;
-    if (prioritizeExact && normalizedName.startsWith(query)) return 900;
-    if (normalizedName.contains(query)) return prioritizeExact ? 720 : 180;
-    if (searchable.contains(query)) return 100 + terms.length;
-    var score = 0;
-    for (final term in terms) {
-      if (searchable.contains(term)) {
-        score += term.length >= 4 ? 3 : 1;
-      }
-    }
-    return score;
-  }
-
-  Future<ZoneModel?> _findBestZoneMatchAcrossCebu(
-    String query, {
-    bool prioritizeExact = false,
-  }) async {
-    try {
-      final dio = ref.read(dioProvider);
-      final response = await dio.get(
-        '/zones',
-        queryParameters: {
-          'min_lat': _cebuCityCenter.latitude - 0.65,
-          'min_lng': _cebuCityCenter.longitude - 0.75,
-          'max_lat': _cebuCityCenter.latitude + 0.65,
-          'max_lng': _cebuCityCenter.longitude + 0.75,
-          'zoom': 11,
-        },
-      );
-      final zones = (response.data as List)
-          .map((item) => ZoneModel.fromJson(item as Map<String, dynamic>))
-          .toList();
-      ZoneModel? best;
-      var bestScore = 0;
-      for (final zone in zones) {
-        final score = _scoreZoneMatch(
-          zone,
-          query,
-          prioritizeExact: prioritizeExact,
-        );
-        if (score > bestScore) {
-          bestScore = score;
-          best = zone;
-        }
-      }
-      return bestScore > 0 ? best : null;
-    } catch (_) {
-      return null;
-    }
-  }
-
-  Future<List<_PlaceSearchResult>> _findPlacesInCebu(String query) async {
-    try {
-      final dio = ref.read(dioProvider);
-      final response = await dio.get(
-        'https://nominatim.openstreetmap.org/search',
-        queryParameters: {
-          'q': '$query, Cebu, Philippines',
-          'format': 'jsonv2',
-          'limit': 5,
-          'viewbox': _cebuViewBox,
-          'bounded': 1,
-          'countrycodes': 'ph',
-        },
-        options: Options(
-          headers: const {
-            'User-Agent': 'Strollwise/1.0 (explore-search)',
-            'Accept-Language': 'en',
-          },
-        ),
-      );
-      final data = response.data;
-      if (data is! List || data.isEmpty) return const [];
-      return data
-          .whereType<Map<String, dynamic>>()
-          .map((item) {
-            final lat = double.tryParse((item['lat'] ?? '').toString());
-            final lng = double.tryParse((item['lon'] ?? '').toString());
-            if (lat == null || lng == null) return null;
-            final point = LatLng(lat, lng);
-            if (!_isWithinCebuRegion(point)) return null;
-            final name = (item['name'] ?? '').toString().trim();
-            final display = (item['display_name'] ?? '').toString().trim();
-            final title = name.isEmpty ? display : name;
-            return _PlaceSearchResult(
-              title: title.isEmpty ? 'Unnamed place' : title,
-              subtitle: display.isEmpty ? null : display,
-              location: point,
-            );
-          })
-          .whereType<_PlaceSearchResult>()
-          .toList(growable: false);
-    } catch (_) {
-      return const [];
-    }
-  }
-
-  Future<_PlaceSearchResult?> _pickPlaceResult(
-    List<_PlaceSearchResult> results,
-  ) async {
-    return showModalBottomSheet<_PlaceSearchResult>(
-      context: context,
-      backgroundColor: Colors.white,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (context) {
-        return SafeArea(
-          top: false,
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Center(
-                  child: SizedBox(
-                    width: 44,
-                    child: Divider(thickness: 3.4, color: AppColors.border),
-                  ),
-                ),
-                const SizedBox(height: 10),
-                const Text(
-                  'Pick a location',
-                  style: TextStyle(
-                    color: AppColors.primaryText,
-                    fontSize: 16,
-                    fontWeight: FontWeight.w900,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Flexible(
-                  child: ListView.separated(
-                    shrinkWrap: true,
-                    itemCount: results.length,
-                    separatorBuilder: (_, _) => const Divider(height: 1),
-                    itemBuilder: (context, index) {
-                      final item = results[index];
-                      return ListTile(
-                        dense: true,
-                        contentPadding: EdgeInsets.zero,
-                        leading: const Icon(
-                          Icons.place_outlined,
-                          color: AppColors.secondaryText,
-                        ),
-                        title: Text(
-                          item.title,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(fontWeight: FontWeight.w700),
-                        ),
-                        subtitle: item.subtitle == null
-                            ? null
-                            : Text(
-                                item.subtitle!,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                        onTap: () => Navigator.of(context).pop(item),
-                      );
-                    },
-                  ),
-                ),
-              ],
-            ),
-          ),
-        );
-      },
-    );
   }
 
   void _applyTopTagFilter(String? filterKey) {
@@ -1171,7 +1116,9 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
           final hexRings = zone.sourceH3Rings;
           if (hexRings.isNotEmpty) {
             return hexRings.map((ring) {
-              final points = ring.map((point) => ll.LatLng(point[1], point[0])).toList();
+              final points = ring
+                  .map((point) => ll.LatLng(point[1], point[0]))
+                  .toList();
               return fm.Polygon(
                 points: points,
                 // Outline-only zones so roads remain completely plain.
@@ -1286,6 +1233,7 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
     final selectedZone = ref.watch(selectedZoneProvider);
     final currentUserLocation = ref.watch(currentUserLocationProvider);
     final currentZoneOverview = ref.watch(currentZoneOverviewProvider);
+    final zoneDataNotice = ref.watch(zoneDataNoticeProvider);
     currentZoneOverview.whenData((overview) {
       if (_didApplyCurrentZone || overview?.currentZone == null) return;
       _didApplyCurrentZone = true;
@@ -1326,6 +1274,7 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
                   if (controller == null) return;
                   await _applyBaseMapVisualTuning(controller);
                   _zoneBelowLayerId = await _resolveRoadLayerId(controller);
+                  _consumeExploreFocus();
                   final zones = ref.read(visibleZonesProvider).valueOrNull;
                   if (zones != null) {
                     unawaited(_drawZones(zones));
@@ -1340,7 +1289,7 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
                     LatLng(latLng.latitude, latLng.longitude),
                     zones,
                   );
-                  if (selected != null) _selectZone(selected);
+                  if (selected != null) _handleZoneTap(selected);
                 },
               ),
               IgnorePointer(
@@ -1361,13 +1310,6 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
                   child: const SizedBox.expand(),
                 ),
               ),
-              if (_mapMode == ExploreMapMode.navigating)
-                IgnorePointer(
-                  child: CustomPaint(
-                    painter: _RoutePreviewPainter(),
-                    child: const SizedBox.expand(),
-                  ),
-                ),
               SafeArea(
                 bottom: false,
                 child: Column(
@@ -1378,37 +1320,65 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
                         data: (zones) => zones.length,
                         orElse: () => null,
                       ),
-                      searchController: _searchController,
-                      onSearchChanged: _applySearchFilter,
-                      onSearchSubmitted: _runSubmittedSearch,
-                      onClearSearch: _clearSearch,
-                      isSearching: _isSearching,
+                      onSearchTap: _toggleSearch,
                       onNotificationTap: () {},
                     ),
                     const SizedBox(height: 10),
                     _LocationStatusBanner(
                       state: _locationState,
                       usingManualLocation: _usingManualLocation,
-                      importantZoneIssue: currentZoneOverview.asData?.value
+                      importantZoneIssue: currentZoneOverview
+                          .asData
+                          ?.value
                           ?.currentZone
                           ?.liveStatus,
                       onRetry: () => _bootstrapCurrentLocation(force: true),
                       onManualLocation: _promptManualLocation,
                     ),
+                    if (zoneDataNotice != null) ...[
+                      const SizedBox(height: 8),
+                      _CacheNoticeBanner(message: zoneDataNotice),
+                    ],
                     const SizedBox(height: 8),
                     _TopTagFilterRow(onTagSelected: _applyTopTagFilter),
-                    if (_searchFeedback != null) ...[
-                      const SizedBox(height: 6),
+                    if (_showSearch) ...[
+                      const SizedBox(height: 10),
                       Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 24),
-                        child: Align(
-                          alignment: Alignment.centerLeft,
-                          child: Text(
-                            _searchFeedback!,
-                            style: const TextStyle(
-                              color: AppColors.secondaryText,
-                              fontSize: 12,
-                              fontWeight: FontWeight.w600,
+                        padding: const EdgeInsets.symmetric(horizontal: 18),
+                        child: Container(
+                          height: 52,
+                          decoration: BoxDecoration(
+                            color: Colors.white.withValues(alpha: 0.96),
+                            borderRadius: BorderRadius.circular(18),
+                            border: Border.all(color: AppColors.border),
+                            boxShadow: const [
+                              BoxShadow(
+                                color: Color(0x100F172A),
+                                blurRadius: 18,
+                                offset: Offset(0, 8),
+                              ),
+                            ],
+                          ),
+                          child: TextField(
+                            controller: _searchController,
+                            onChanged: _applySearchFilter,
+                            decoration: InputDecoration(
+                              hintText: 'Search Cebu (IT Park food...)',
+                              prefixIcon: const Icon(
+                                Icons.search_rounded,
+                                color: AppColors.primaryText,
+                              ),
+                              suffixIcon: IconButton(
+                                icon: const Icon(
+                                  Icons.close_rounded,
+                                  color: AppColors.mutedText,
+                                ),
+                                onPressed: _toggleSearch,
+                              ),
+                              border: InputBorder.none,
+                              enabledBorder: InputBorder.none,
+                              focusedBorder: InputBorder.none,
+                              filled: false,
                             ),
                           ),
                         ),
@@ -1431,6 +1401,11 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
                     else
                       Column(
                         children: [
+                          _ZoomControl(
+                            onZoomIn: () => _adjustZoom(1),
+                            onZoomOut: () => _adjustZoom(-1),
+                          ),
+                          const SizedBox(height: 10),
                           _MapFab(
                             heroTag: 'location-btn',
                             icon: _followUser
@@ -1483,18 +1458,28 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
                       if (_mapMode == ExploreMapMode.navigating) {
                         return _NavigationCard(
                           zone: previewZone,
-                          metrics: _buildNavigationMetrics(
-                            userLocation: currentUserLocation,
-                            targetZone: previewZone,
-                            routeSteps: _activeRouteSteps,
-                            isRouting: _isRouting,
-                            mode: _transportMode,
-                          ),
+                          metrics:
+                              _navigationMetrics ??
+                              _buildNavigationMetrics(
+                                userLocation: currentUserLocation,
+                                targetZone: previewZone,
+                              ),
+                          isFetchingRoute: _isFetchingRoute,
                           followUser: _followUser,
-                          mode: _transportMode,
-                          onModeChanged: (mode) => unawaited(_setTransportMode(mode)),
-                          isRouting: _isRouting,
-                          onToggleFollow: () => unawaited(_toggleNavigationFollow()),
+                          onToggleFollow: () {
+                            if (_usingManualLocation) {
+                              setState(() {
+                                _usingManualLocation = false;
+                                _followUser = true;
+                              });
+                              _bootstrapCurrentLocation(force: true);
+                              unawaited(
+                                _refreshRoadRoute(previewZone, force: true),
+                              );
+                              return;
+                            }
+                            setState(() => _followUser = !_followUser);
+                          },
                           onExit: _exitNavigation,
                           onDetails: () => showModalBottomSheet<void>(
                             context: context,
@@ -1558,57 +1543,13 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
 _NavigationMetrics _buildNavigationMetrics({
   required LatLng? userLocation,
   required ZoneModel targetZone,
-  required List<_RouteStep> routeSteps,
-  required bool isRouting,
-  required _TransportMode mode,
 }) {
-  if (isRouting && routeSteps.isEmpty) {
-    final modeLabel = switch (mode) {
-      _TransportMode.driving => 'driving',
-      _TransportMode.biking => 'biking',
-      _ => 'walking',
-    };
-    return _NavigationMetrics(
-      distanceText: 'Routing...',
-      etaText: '--',
-      maneuverIcon: Icons.route_rounded,
-      maneuverLabel: 'Finding shortest $modeLabel route',
-      nextStep: 'Building road-based directions',
-    );
-  }
-  if (routeSteps.isNotEmpty) {
-    final totalMeters = routeSteps.fold<double>(
-      0,
-      (sum, step) => sum + step.distanceMeters,
-    );
-    final totalSeconds = routeSteps.fold<double>(
-      0,
-      (sum, step) => sum + step.durationSeconds,
-    );
-    final lead = routeSteps.first;
-    final distanceText = totalMeters >= 1000
-        ? '${(totalMeters / 1000).toStringAsFixed(1)} km'
-        : '${totalMeters.round()} m';
-    final etaMinutes = (totalSeconds / 60).ceil().clamp(1, 180);
-    return _NavigationMetrics(
-      distanceText: distanceText,
-      etaText: '$etaMinutes min',
-      maneuverIcon: _iconForManeuver(lead.maneuverType, lead.maneuverModifier),
-      maneuverLabel: _labelForManeuver(lead.maneuverType, lead.maneuverModifier),
-      nextStep: switch (mode) {
-        _TransportMode.driving => 'Drive: ${lead.instruction}',
-        _TransportMode.biking => 'Bike: ${lead.instruction}',
-        _ => 'Walk: ${lead.instruction}',
-      },
-    );
-  }
   if (userLocation == null) {
     return const _NavigationMetrics(
       distanceText: 'Locating...',
       etaText: '--',
-      maneuverIcon: Icons.gps_not_fixed_rounded,
-      maneuverLabel: 'Preparing route',
       nextStep: 'Getting your live location',
+      routeStatus: 'Preparing route',
     );
   }
   final target = LatLng(targetZone.centroidLat, targetZone.centroidLng);
@@ -1621,98 +1562,59 @@ _NavigationMetrics _buildNavigationMetrics({
   final distanceText = meters >= 1000
       ? '${(meters / 1000).toStringAsFixed(1)} km'
       : '${meters.round()} m';
-  final metersPerMinute = switch (mode) {
-    _TransportMode.driving => 320.0,
-    _TransportMode.biking => 220.0,
-    _ => 78.0,
-  };
-  final etaMinutes = (meters / metersPerMinute).ceil().clamp(1, 120);
-  if (meters <= 35) {
-    return const _NavigationMetrics(
-      distanceText: 'Arriving',
-      etaText: '<1 min',
-      maneuverIcon: Icons.flag_circle_rounded,
-      maneuverLabel: 'Destination',
-      nextStep: 'You are at the destination zone',
-    );
-  }
-  final bearing = _bearingDegrees(
-    userLocation.latitude,
-    userLocation.longitude,
-    target.latitude,
-    target.longitude,
+  final etaMinutes = (meters / 78).ceil().clamp(1, 120);
+  final heading = _directionFromBearing(
+    _bearingDegrees(
+      userLocation.latitude,
+      userLocation.longitude,
+      target.latitude,
+      target.longitude,
+    ),
   );
-  final heading = _directionFromBearing(bearing);
-  final maneuver = _maneuverFromBearing(bearing);
   return _NavigationMetrics(
     distanceText: distanceText,
     etaText: '$etaMinutes min',
-    maneuverIcon: maneuver.$1,
-    maneuverLabel: maneuver.$2,
-    nextStep: switch (mode) {
-      _TransportMode.driving =>
-        '${maneuver.$2} and drive $heading toward ${_zoneTitle(targetZone)}',
-      _TransportMode.biking =>
-        '${maneuver.$2} and bike $heading toward ${_zoneTitle(targetZone)}',
-      _ =>
-        '${maneuver.$2} and walk $heading toward ${_zoneTitle(targetZone)}',
-    },
+    nextStep: 'Head $heading toward ${_zoneTitle(targetZone)}',
+    routeStatus: 'Direct preview until road route loads',
   );
 }
 
-IconData _iconForManeuver(String type, String modifier) {
-  final t = type.toLowerCase();
-  final m = modifier.toLowerCase();
-  if (t == 'arrive') return Icons.flag_circle_rounded;
-  if (t == 'roundabout') return Icons.roundabout_right_rounded;
-  if (t == 'uturn') return Icons.u_turn_left_rounded;
-  if (m.contains('sharp left')) return Icons.turn_sharp_left_rounded;
-  if (m.contains('sharp right')) return Icons.turn_sharp_right_rounded;
-  if (m.contains('slight left')) return Icons.turn_slight_left_rounded;
-  if (m.contains('slight right')) return Icons.turn_slight_right_rounded;
-  if (m.contains('left')) return Icons.turn_left_rounded;
-  if (m.contains('right')) return Icons.turn_right_rounded;
-  return Icons.straight_rounded;
+String _formatDistance(double meters) {
+  if (meters <= 0) return '--';
+  return meters >= 1000
+      ? '${(meters / 1000).toStringAsFixed(1)} km'
+      : '${meters.round()} m';
 }
 
-String _labelForManeuver(String type, String modifier) {
-  final t = type.toLowerCase();
-  final m = modifier.toLowerCase();
-  if (t == 'arrive') return 'Destination ahead';
-  if (t == 'roundabout') return 'Roundabout';
-  if (t == 'uturn') return 'U-turn';
-  if (m.contains('sharp left')) return 'Sharp left';
-  if (m.contains('sharp right')) return 'Sharp right';
-  if (m.contains('slight left')) return 'Slight left';
-  if (m.contains('slight right')) return 'Slight right';
-  if (m.contains('left')) return 'Turn left';
-  if (m.contains('right')) return 'Turn right';
-  return 'Go straight';
+String _formatDuration(double seconds) {
+  if (seconds <= 0) return '--';
+  final minutes = (seconds / 60).ceil().clamp(1, 240);
+  if (minutes >= 60) {
+    final hours = minutes ~/ 60;
+    final remainder = minutes % 60;
+    return remainder == 0 ? '${hours}h' : '${hours}h ${remainder}m';
+  }
+  return '$minutes min';
 }
 
-(IconData, String) _maneuverFromBearing(double bearing) {
-  if (bearing >= 330 || bearing < 30) {
-    return (Icons.straight_rounded, 'Go straight');
+String _routeNextStep(Map route, ZoneModel zone) {
+  final legs = route['legs'];
+  if (legs is! List || legs.isEmpty || legs.first is! Map) {
+    return 'Follow fastest road route to ${_zoneTitle(zone)}';
   }
-  if (bearing >= 30 && bearing < 75) {
-    return (Icons.turn_slight_right_rounded, 'Slight right');
+  final steps = (legs.first as Map)['steps'];
+  if (steps is! List || steps.isEmpty || steps.first is! Map) {
+    return 'Follow fastest road route to ${_zoneTitle(zone)}';
   }
-  if (bearing >= 75 && bearing < 120) {
-    return (Icons.turn_right_rounded, 'Turn right');
-  }
-  if (bearing >= 120 && bearing < 165) {
-    return (Icons.turn_sharp_right_rounded, 'Sharp right');
-  }
-  if (bearing >= 165 && bearing < 210) {
-    return (Icons.u_turn_left_rounded, 'U-turn');
-  }
-  if (bearing >= 210 && bearing < 255) {
-    return (Icons.turn_sharp_left_rounded, 'Sharp left');
-  }
-  if (bearing >= 255 && bearing < 300) {
-    return (Icons.turn_left_rounded, 'Turn left');
-  }
-  return (Icons.turn_slight_left_rounded, 'Slight left');
+  final firstStep = steps.first as Map;
+  final name = (firstStep['name'] ?? '').toString().trim();
+  final maneuver = firstStep['maneuver'];
+  final modifier = maneuver is Map
+      ? (maneuver['modifier'] ?? '').toString()
+      : '';
+  if (name.isNotEmpty && modifier.isNotEmpty) return 'Head $modifier on $name';
+  if (name.isNotEmpty) return 'Continue on $name';
+  return 'Follow fastest road route to ${_zoneTitle(zone)}';
 }
 
 double _bearingDegrees(double lat1, double lon1, double lat2, double lon2) {
@@ -1775,7 +1677,11 @@ double _zoneFillOpacity({
   required bool selected,
   required bool hasSelection,
   required double confidenceScore,
+  required String lifecycle,
 }) {
+  if (lifecycle == 'decaying') {
+    return selected ? 0.18 : 0.12;
+  }
   if (mode == ExploreMapMode.navigating) {
     return selected ? 0.20 : 0.18;
   }
@@ -1785,6 +1691,9 @@ double _zoneFillOpacity({
   if (hasSelection) {
     return 0.18;
   }
+  if (lifecycle == 'emerging') {
+    return 0.16;
+  }
   if (confidenceScore >= 70) {
     return 0.30;
   }
@@ -1792,6 +1701,36 @@ double _zoneFillOpacity({
     return 0.24;
   }
   return 0.18;
+}
+
+String _zoneLifecycleState(ZoneModel zone) {
+  final live = zone.liveStatus.toLowerCase();
+  if (zone.zoneType == 'emerging' ||
+      zone.confidenceScore < 45 ||
+      zone.reportCount < 3) {
+    return 'emerging';
+  }
+  if ((live.contains('quiet') || live.contains('decay')) &&
+      zone.confidenceScore < 65) {
+    return 'decaying';
+  }
+  return 'defined';
+}
+
+double _zoneLifecycleLineWidth({
+  required bool selected,
+  required String lifecycle,
+}) {
+  if (selected) return 2.0;
+  if (lifecycle == 'defined') return 1.5;
+  if (lifecycle == 'emerging') return 1.25;
+  return 1.0;
+}
+
+double _zoneLifecycleLineOpacity(String lifecycle) {
+  if (lifecycle == 'defined') return 0.86;
+  if (lifecycle == 'emerging') return 0.62;
+  return 0.42;
 }
 
 String _zoneLayerKey(ZoneModel zone) {
@@ -1950,18 +1889,6 @@ class _ZonePalette {
   final Color accent;
 }
 
-class _PlaceSearchResult {
-  const _PlaceSearchResult({
-    required this.title,
-    required this.location,
-    this.subtitle,
-  });
-
-  final String title;
-  final String? subtitle;
-  final LatLng location;
-}
-
 class _LocationStatusBanner extends StatelessWidget {
   const _LocationStatusBanner({
     required this.state,
@@ -1979,8 +1906,8 @@ class _LocationStatusBanner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final showZoneIssue = importantZoneIssue == 'caution_now' ||
-        importantZoneIssue == 'peak_now';
+    final showZoneIssue =
+        importantZoneIssue == 'caution_now' || importantZoneIssue == 'peak_now';
     if (state == _LocationBootstrapState.ready &&
         !usingManualLocation &&
         !showZoneIssue) {
@@ -2006,8 +1933,8 @@ class _LocationStatusBanner extends StatelessWidget {
       ),
       _LocationBootstrapState.permissionDenied => (
         Icons.location_disabled_rounded,
-        "Location Access 'Always' needed. Go to Settings to fix it.",
-        'Open settings',
+        'Location access is off. Search a street, building, or landmark instead.',
+        'Search place',
       ),
       _LocationBootstrapState.serviceDisabled => (
         Icons.location_off_rounded,
@@ -2033,7 +1960,9 @@ class _LocationStatusBanner extends StatelessWidget {
             Icon(
               icon,
               size: 16,
-              color: showZoneIssue ? AppColors.safetyAccent : AppColors.mutedText,
+              color: showZoneIssue
+                  ? AppColors.safetyAccent
+                  : AppColors.mutedText,
             ),
             const SizedBox(width: 8),
             Expanded(
@@ -2049,7 +1978,7 @@ class _LocationStatusBanner extends StatelessWidget {
             if (action != null) ...[
               TextButton(
                 onPressed: state == _LocationBootstrapState.permissionDenied
-                    ? Geolocator.openAppSettings
+                    ? onManualLocation
                     : onRetry,
                 child: Text(
                   action,
@@ -2072,23 +2001,56 @@ class _LocationStatusBanner extends StatelessWidget {
   }
 }
 
+class _CacheNoticeBanner extends StatelessWidget {
+  const _CacheNoticeBanner({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 18),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+          color: const Color(0xFFFFF8EE).withValues(alpha: 0.96),
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(color: const Color(0xFFF0A127)),
+        ),
+        child: Row(
+          children: [
+            const Icon(
+              Icons.offline_bolt_rounded,
+              size: 16,
+              color: Color(0xFFB7791F),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                message,
+                style: const TextStyle(
+                  color: AppColors.mutedText,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _MapTopBar extends StatelessWidget {
   const _MapTopBar({
     required this.zoneCount,
-    required this.searchController,
-    required this.onSearchChanged,
-    required this.onSearchSubmitted,
-    required this.onClearSearch,
-    required this.isSearching,
+    required this.onSearchTap,
     required this.onNotificationTap,
   });
 
   final int? zoneCount;
-  final TextEditingController searchController;
-  final ValueChanged<String> onSearchChanged;
-  final ValueChanged<String> onSearchSubmitted;
-  final VoidCallback onClearSearch;
-  final bool isSearching;
+  final VoidCallback onSearchTap;
   final VoidCallback onNotificationTap;
 
   @override
@@ -2108,72 +2070,42 @@ class _MapTopBar extends StatelessWidget {
           ),
           const SizedBox(width: 10),
           Expanded(
-            child: Container(
-              height: 46,
-              padding: const EdgeInsets.symmetric(horizontal: 4),
-              decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: 0.95),
-                borderRadius: BorderRadius.circular(18),
-                border: Border.all(color: AppColors.border),
-                boxShadow: const [
-                  BoxShadow(
-                    color: Color(0x140F172A),
-                    blurRadius: 14,
-                    offset: Offset(0, 6),
-                  ),
-                ],
-              ),
-              child: TextField(
-                controller: searchController,
-                onChanged: onSearchChanged,
-                onSubmitted: onSearchSubmitted,
-                style: const TextStyle(
-                  color: AppColors.primaryText,
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
+            child: GestureDetector(
+              onTap: onSearchTap,
+              child: Container(
+                height: 46,
+                padding: const EdgeInsets.symmetric(horizontal: 14),
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.95),
+                  borderRadius: BorderRadius.circular(18),
+                  border: Border.all(color: AppColors.border),
+                  boxShadow: const [
+                    BoxShadow(
+                      color: Color(0x140F172A),
+                      blurRadius: 14,
+                      offset: Offset(0, 6),
+                    ),
+                  ],
                 ),
-                decoration: InputDecoration(
-                  hintText: zoneCount == null
-                      ? 'Search places or zones...'
-                      : 'Search $zoneCount zones',
-                  hintStyle: const TextStyle(
-                    color: AppColors.mutedText,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                  ),
-                  prefixIcon: const Icon(
-                    Icons.search_rounded,
-                    size: 18,
-                    color: AppColors.mutedText,
-                  ),
-                  suffixIcon: ValueListenableBuilder<TextEditingValue>(
-                    valueListenable: searchController,
-                    builder: (context, value, _) {
-                      if (isSearching) {
-                        return const Padding(
-                          padding: EdgeInsets.all(12),
-                          child: SizedBox(
-                            width: 16,
-                            height: 16,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          ),
-                        );
-                      }
-                      if (value.text.trim().isEmpty) return const SizedBox.shrink();
-                      return IconButton(
-                        icon: const Icon(
-                          Icons.close_rounded,
-                          size: 18,
-                          color: AppColors.mutedText,
-                        ),
-                        onPressed: onClearSearch,
-                      );
-                    },
-                  ),
-                  border: InputBorder.none,
-                  enabledBorder: InputBorder.none,
-                  focusedBorder: InputBorder.none,
-                  filled: false,
+                child: Row(
+                  children: [
+                    const Icon(
+                      Icons.search_rounded,
+                      size: 18,
+                      color: AppColors.mutedText,
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      zoneCount == null
+                          ? 'Search places or zones...'
+                          : 'Search $zoneCount zones',
+                      style: const TextStyle(
+                        color: AppColors.mutedText,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ),
@@ -2989,10 +2921,8 @@ class _NavigationCard extends StatelessWidget {
   const _NavigationCard({
     required this.zone,
     required this.metrics,
+    required this.isFetchingRoute,
     required this.followUser,
-    required this.mode,
-    required this.onModeChanged,
-    required this.isRouting,
     required this.onToggleFollow,
     required this.onExit,
     required this.onDetails,
@@ -3000,10 +2930,8 @@ class _NavigationCard extends StatelessWidget {
 
   final ZoneModel zone;
   final _NavigationMetrics metrics;
+  final bool isFetchingRoute;
   final bool followUser;
-  final _TransportMode mode;
-  final ValueChanged<_TransportMode> onModeChanged;
-  final bool isRouting;
   final VoidCallback onToggleFollow;
   final VoidCallback onExit;
   final VoidCallback onDetails;
@@ -3034,8 +2962,8 @@ class _NavigationCard extends StatelessWidget {
               color: AppColors.primaryAction,
               borderRadius: BorderRadius.circular(18),
             ),
-            child: Icon(
-              metrics.maneuverIcon,
+            child: const Icon(
+              Icons.navigation_rounded,
               color: Colors.white,
               size: 25,
             ),
@@ -3057,11 +2985,7 @@ class _NavigationCard extends StatelessWidget {
                 ),
                 const SizedBox(height: 3),
                 Text(
-                  '${switch (mode) {
-                    _TransportMode.driving => 'Driving',
-                    _TransportMode.biking => 'Biking',
-                    _ => 'Walking',
-                  }} • ${_zoneIdentity(zone)}',
+                  '${_zoneIdentity(zone)} • ${metrics.routeStatus}',
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
                     color: palette.accent,
@@ -3070,40 +2994,6 @@ class _NavigationCard extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 3),
-                Wrap(
-                  spacing: 6,
-                  children: [
-                    _ModeChip(
-                      label: 'Walk',
-                      selected: mode == _TransportMode.walking,
-                      enabled: !isRouting,
-                      onTap: () => onModeChanged(_TransportMode.walking),
-                    ),
-                    _ModeChip(
-                      label: 'Bike',
-                      selected: mode == _TransportMode.biking,
-                      enabled: !isRouting,
-                      onTap: () => onModeChanged(_TransportMode.biking),
-                    ),
-                    _ModeChip(
-                      label: 'Drive',
-                      selected: mode == _TransportMode.driving,
-                      enabled: !isRouting,
-                      onTap: () => onModeChanged(_TransportMode.driving),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  metrics.maneuverLabel,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: palette.accent,
-                    fontWeight: FontWeight.w900,
-                    fontSize: 12,
-                  ),
-                ),
-                const SizedBox(height: 2),
                 Text(
                   '${metrics.distanceText} • ${metrics.etaText}',
                   overflow: TextOverflow.ellipsis,
@@ -3123,13 +3013,18 @@ class _NavigationCard extends StatelessWidget {
                     fontSize: 11,
                   ),
                 ),
+                if (isFetchingRoute) ...[
+                  const SizedBox(height: 5),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(999),
+                    child: const LinearProgressIndicator(minHeight: 3),
+                  ),
+                ],
               ],
             ),
           ),
           IconButton(
-            tooltip: followUser
-                ? 'Follow mode enabled (tap to free pan)'
-                : 'Recenter and follow me',
+            tooltip: followUser ? 'Disable follow mode' : 'Enable follow mode',
             onPressed: onToggleFollow,
             icon: Icon(
               followUser
@@ -3157,129 +3052,14 @@ class _NavigationMetrics {
   const _NavigationMetrics({
     required this.distanceText,
     required this.etaText,
-    required this.maneuverIcon,
-    required this.maneuverLabel,
     required this.nextStep,
+    required this.routeStatus,
   });
 
   final String distanceText;
   final String etaText;
-  final IconData maneuverIcon;
-  final String maneuverLabel;
   final String nextStep;
-}
-
-class _ModeChip extends StatelessWidget {
-  const _ModeChip({
-    required this.label,
-    required this.selected,
-    required this.enabled,
-    required this.onTap,
-  });
-
-  final String label;
-  final bool selected;
-  final bool enabled;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Opacity(
-      opacity: enabled ? 1 : 0.72,
-      child: ChoiceChip(
-        label: Text(
-          label,
-          style: TextStyle(
-            fontWeight: FontWeight.w800,
-            color: selected ? AppColors.primaryAction : AppColors.primaryText,
-          ),
-        ),
-        selected: selected,
-        onSelected: enabled ? (_) => onTap() : null,
-        backgroundColor: Colors.white,
-        selectedColor: AppColors.primaryAction.withValues(alpha: 0.14),
-        side: BorderSide(
-          color: selected
-              ? AppColors.primaryAction.withValues(alpha: 0.8)
-              : AppColors.border,
-        ),
-        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-        visualDensity: const VisualDensity(horizontal: -2, vertical: -2),
-      ),
-    );
-  }
-}
-
-class _RouteStep {
-  const _RouteStep({
-    required this.instruction,
-    required this.distanceMeters,
-    required this.durationSeconds,
-    required this.maneuverType,
-    required this.maneuverModifier,
-  });
-
-  final String instruction;
-  final double distanceMeters;
-  final double durationSeconds;
-  final String maneuverType;
-  final String maneuverModifier;
-}
-
-class _RoutePreviewPainter extends CustomPainter {
-  @override
-  void paint(Canvas canvas, Size size) {
-    final shadowPaint = Paint()
-      ..color = AppColors.primaryText.withValues(alpha: 0.18)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 13
-      ..strokeCap = StrokeCap.round
-      ..strokeJoin = StrokeJoin.round;
-    final routePaint = Paint()
-      ..color = AppColors.secondaryAction
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 7
-      ..strokeCap = StrokeCap.round
-      ..strokeJoin = StrokeJoin.round;
-    final path = Path()
-      ..moveTo(size.width * 0.18, size.height * 0.70)
-      ..cubicTo(
-        size.width * 0.32,
-        size.height * 0.58,
-        size.width * 0.42,
-        size.height * 0.62,
-        size.width * 0.52,
-        size.height * 0.49,
-      )
-      ..cubicTo(
-        size.width * 0.62,
-        size.height * 0.36,
-        size.width * 0.76,
-        size.height * 0.46,
-        size.width * 0.84,
-        size.height * 0.32,
-      );
-    canvas.drawPath(path, shadowPaint);
-    canvas.drawPath(path, routePaint);
-    canvas.drawCircle(
-      Offset(size.width * 0.18, size.height * 0.70),
-      8,
-      Paint()..color = AppColors.primaryAction,
-    );
-    canvas.drawCircle(
-      Offset(size.width * 0.84, size.height * 0.32),
-      10,
-      Paint()..color = AppColors.secondaryAction,
-    );
-    canvas.drawCircle(
-      Offset(size.width * 0.84, size.height * 0.32),
-      4,
-      Paint()..color = Colors.white,
-    );
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+  final String routeStatus;
 }
 
 class _MetricCell extends StatelessWidget {
@@ -3540,6 +3320,71 @@ class _MapFab extends StatelessWidget {
         backgroundColor: Colors.white.withValues(alpha: 0.96),
         onPressed: onPressed,
         child: Icon(icon, color: const Color(0xFF2563EB), size: 24),
+      ),
+    );
+  }
+}
+
+class _ZoomControl extends StatelessWidget {
+  const _ZoomControl({required this.onZoomIn, required this.onZoomOut});
+
+  final VoidCallback onZoomIn;
+  final VoidCallback onZoomOut;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.96),
+        borderRadius: BorderRadius.circular(18),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x140F172A),
+            blurRadius: 14,
+            offset: Offset(0, 6),
+          ),
+        ],
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _ZoomButton(label: '+', onTap: onZoomIn),
+          Container(width: 26, height: 1, color: const Color(0xFFE2E8F0)),
+          _ZoomButton(label: '-', onTap: onZoomOut),
+        ],
+      ),
+    );
+  }
+}
+
+class _ZoomButton extends StatelessWidget {
+  const _ZoomButton({required this.label, required this.onTap});
+
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(18),
+        onTap: onTap,
+        child: SizedBox(
+          width: 42,
+          height: 38,
+          child: Center(
+            child: Text(
+              label,
+              style: const TextStyle(
+                color: Color(0xFF2563EB),
+                fontSize: 24,
+                fontWeight: FontWeight.w900,
+                height: 1,
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }

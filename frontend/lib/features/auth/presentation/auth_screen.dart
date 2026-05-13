@@ -19,6 +19,7 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
   final _displayNameController = TextEditingController();
   AuthMode _mode = AuthMode.login;
   bool _obscurePassword = true;
+  bool _acceptedResearchConsent = false;
 
   @override
   void dispose() {
@@ -45,6 +46,16 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
       );
       return;
     }
+    if (_mode == AuthMode.register && !_acceptedResearchConsent) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Please accept the privacy and research consent notice.',
+          ),
+        ),
+      );
+      return;
+    }
     if (_mode == AuthMode.login &&
         email.toLowerCase() == 'demo@strollwise.local' &&
         (password == 'demo12345' || password.toLowerCase() == 'demo')) {
@@ -61,6 +72,7 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
             email: email,
             password: password,
             displayName: _displayNameController.text,
+            acceptedResearchConsent: _acceptedResearchConsent,
           );
       if (!mounted) return;
       context.go('/explore');
@@ -239,6 +251,15 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
                             ),
                           ),
                         ),
+                        if (isRegister) ...[
+                          const SizedBox(height: 12),
+                          _ResearchConsentCard(
+                            value: _acceptedResearchConsent,
+                            onChanged: (value) => setState(
+                              () => _acceptedResearchConsent = value ?? false,
+                            ),
+                          ),
+                        ],
                         const SizedBox(height: 14),
                         SizedBox(
                           width: double.infinity,
@@ -323,9 +344,14 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
                               onPressed: isLoading
                                   ? null
                                   : () => setState(
-                                      () => _mode = isRegister
-                                          ? AuthMode.login
-                                          : AuthMode.register,
+                                      () {
+                                        _mode = isRegister
+                                            ? AuthMode.login
+                                            : AuthMode.register;
+                                        if (_mode == AuthMode.login) {
+                                          _acceptedResearchConsent = false;
+                                        }
+                                      },
                                     ),
                               child: Text(isRegister ? 'Log in' : 'Register'),
                             ),
@@ -336,6 +362,59 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
                   ),
                 ),
               ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ResearchConsentCard extends StatelessWidget {
+  const _ResearchConsentCard({
+    required this.value,
+    required this.onChanged,
+  });
+
+  final bool value;
+  final ValueChanged<bool?> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Checkbox(value: value, onChanged: onChanged),
+          const SizedBox(width: 6),
+          const Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Privacy + research consent',
+                  style: TextStyle(
+                    color: AppColors.primaryText,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                SizedBox(height: 4),
+                Text(
+                  'I agree that my submitted tags may be converted into aggregated H3 zone signals for thesis research. Exact GPS is not shown publicly; StrollWise displays zone-level behavior patterns.',
+                  style: TextStyle(
+                    color: AppColors.secondaryText,
+                    height: 1.35,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
             ),
           ),
         ],

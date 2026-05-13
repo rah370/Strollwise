@@ -2,8 +2,7 @@
 
 FastAPI + PostgreSQL (PostGIS) + Redis backend for StrollWise, a
 crowd-sourced travel intelligence platform. H3 is used internally as the
-spatial framework for aggregating user activity into merged, frontend-ready
-zones (Local Area, Tourist Area, Food Hotspot, Student Area, etc.).
+wilzones (Local Area, Tourist Area, Food Hotspot, Student Area, etc.).
 
 ## Tech stack
 
@@ -146,9 +145,10 @@ column types so no Postgres instance is required.
 4. Approved pending submissions are promoted to `visible`, then
    `AggregationService.recompute_cells` updates cell counts and
    `ClassificationService` assigns `behavior_type` / `function_type`.
-5. `ZoneMergeService.recompute_near` merges connected similar cells and
-   writes merged polygons to `merged_zones`; map caches are refreshed so
-   Explore renders approved overlays only.
+5. `ZoneMergeService.recompute_near` writes **one zone per active H3 cell**
+   (single-hex polygons, no multi-cell merge) to `merged_zones`, replacing
+   any prior zones that touched those cells; map caches refresh so Explore
+   renders approved overlays only.
 
 ## Caching
 

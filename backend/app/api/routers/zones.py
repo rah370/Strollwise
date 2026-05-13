@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.core.cache import (
     build_viewport_cache_key,
+    build_zone_feed_cache_key,
     cache_get,
     cache_set,
 )
@@ -71,6 +72,38 @@ def zones_in_viewport(
         cache_key,
         [item.model_dump(mode="json") for item in response],
         settings.cache_ttl_zones_seconds,
+    )
+    return response
+
+
+@router.get("/feed", response_model=list[ZoneListItem])
+def zones_feed(
+    limit: int = Query(40, ge=1, le=100),
+    filter: str | None = Query(default=None, max_length=32),
+    user_lat: float | None = Query(default=None, ge=-90.0, le=90.0),
+    user_lng: float | None = Query(default=None, ge=-180.0, le=180.0),
+    db: Session = Depends(get_db),
+) -> list[ZoneListItem]:
+    """Ranked zone list for the feed (global city list, not viewport-clipped)."""
+    cache_key = build_zone_feed_cache_key(limit, filter, user_lat, user_lng)
+    cached = cache_get(cache_key)
+    if cached is not None:
+        return [ZoneListItem.model_validate(item) for item in cached]
+
+    repo = ZoneRepository(db)
+    all_zones = repo.list_active()
+    ranked = RankingService.rank(
+        all_zones,
+        filter_key=filter,
+        user_lat=user_lat,
+        user_lng=user_lng,
+        limit=limit,
+    )
+    response = [_to_list_item(z) for z in ranked]
+    cache_set(
+        cache_key,
+        [item.model_dump(mode="json") for item in response],
+        settings.cache_ttl_zone_feed_seconds,
     )
     return response
 

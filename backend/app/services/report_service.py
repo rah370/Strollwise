@@ -1,6 +1,7 @@
 """Handles the full lifecycle of a user report submission."""
 from __future__ import annotations
 
+from dataclasses import dataclass
 from uuid import UUID
 
 from sqlalchemy.orm import Session
@@ -26,6 +27,72 @@ class ReportValidationError(Exception):
     pass
 
 
+@dataclass(frozen=True)
+class AggregationFeedback:
+    h3_index: str
+    pending_count: int
+    matching_count: int
+    threshold: int
+    remaining_to_threshold: int
+    threshold_met: bool
+    public_zone_update: str
+
+
+@dataclass(frozen=True)
+class ReportSubmissionResult:
+    report: Report
+    aggregation: AggregationFeedback
+
+
+@dataclass(frozen=True)
+class _RestrictedArea:
+    name: str
+    kind: str
+    min_lat: float
+    max_lat: float
+    min_lng: float
+    max_lng: float
+
+    def contains(self, lat: float, lng: float) -> bool:
+        return self.min_lat <= lat <= self.max_lat and self.min_lng <= lng <= self.max_lng
+
+
+_RESTRICTED_AREAS = (
+    _RestrictedArea(
+        "Cebu City Medical Center",
+        "hospital",
+        10.2950,
+        10.3010,
+        123.8910,
+        123.8985,
+    ),
+    _RestrictedArea(
+        "Cebu City Hall and government center",
+        "government",
+        10.2915,
+        10.2950,
+        123.8995,
+        123.9040,
+    ),
+    _RestrictedArea(
+        "Camp Sergio Osmena police area",
+        "police",
+        10.3090,
+        10.3145,
+        123.8900,
+        123.8960,
+    ),
+    _RestrictedArea(
+        "private residential cluster",
+        "private residential",
+        10.3320,
+        10.3385,
+        123.8880,
+        123.8965,
+    ),
+)
+
+
 class ReportService:
     def __init__(self, db: Session) -> None:
         self.db = db
@@ -33,8 +100,9 @@ class ReportService:
         self.media = MediaRepository(db)
         self.audit = AuditService(db)
 
-    def create_report(self, payload: ReportCreate, user: User) -> Report:
+    def create_report(self, payload: ReportCreate, user: User) -> ReportSubmissionResult:
         self._validate(payload)
+        self._validate_not_restricted(payload.latitude, payload.longitude)
         h3_index = h3_service.latlng_to_cell(
             payload.latitude, payload.longitude, settings.h3_resolution
         )
@@ -83,8 +151,20 @@ class ReportService:
         self.db.commit()
         self.db.refresh(report)
         self._write_pending_cache(h3_index)
-        self._approve_if_threshold_met(h3_index)
-        return report
+        cache_delete_pattern("zones:feed*")
+        aggregation = self._build_aggregation_feedback(h3_index, report.category)
+        threshold_met = self._approve_if_threshold_met(h3_index)
+        if threshold_met:
+            aggregation = AggregationFeedback(
+                h3_index=aggregation.h3_index,
+                pending_count=aggregation.pending_count,
+                matching_count=aggregation.matching_count,
+                threshold=aggregation.threshold,
+                remaining_to_threshold=0,
+                threshold_met=True,
+                public_zone_update="Zone will update now that the threshold is met.",
+            )
+        return ReportSubmissionResult(report=report, aggregation=aggregation)
 
     # --- helpers ---------------------------------------------------------
 
@@ -101,6 +181,15 @@ class ReportService:
         for tag in payload.tags:
             if len(tag) > 32:
                 raise ReportValidationError("Tags must be 32 characters or fewer")
+
+    @staticmethod
+    def _validate_not_restricted(latitude: float, longitude: float) -> None:
+        for area in _RESTRICTED_AREAS:
+            if area.contains(latitude, longitude):
+                raise ReportValidationError(
+                    "This location is inside a sensitive "
+                    f"{area.kind} area. Choose a nearby public area instead."
+                )
 
     def recent_feed(self, limit: int = 50) -> list[Report]:
         return self.reports.list_recent(limit)
@@ -123,17 +212,40 @@ class ReportService:
             settings.pending_cache_ttl_seconds,
         )
 
-    def _approve_if_threshold_met(self, h3_index: str) -> None:
+    def _build_aggregation_feedback(
+        self, h3_index: str, category: str
+    ) -> AggregationFeedback:
+        pending_reports = self.reports.list_pending_by_h3_index(h3_index)
+        min_reports = max(settings.pending_min_reports_per_cell, 1)
+        matching_count = sum(
+            1 for report in pending_reports if (report.category or "").lower() == category
+        )
+        remaining = max(min_reports - matching_count, 0)
+        return AggregationFeedback(
+            h3_index=h3_index,
+            pending_count=len(pending_reports),
+            matching_count=matching_count,
+            threshold=min_reports,
+            remaining_to_threshold=remaining,
+            threshold_met=remaining == 0,
+            public_zone_update=(
+                "Zone will update after the threshold is reached."
+                if remaining
+                else "Zone will update after approval finishes."
+            ),
+        )
+
+    def _approve_if_threshold_met(self, h3_index: str) -> bool:
         pending_reports = self.reports.list_pending_by_h3_index(h3_index)
         min_reports = max(settings.pending_min_reports_per_cell, 1)
         if len(pending_reports) < min_reports:
-            return
+            return False
 
         category_counts = Counter((r.category or "").lower() for r in pending_reports)
         top_count = max(category_counts.values(), default=0)
         agreement = (top_count / len(pending_reports)) if pending_reports else 0.0
         if agreement < settings.pending_agreement_ratio:
-            return
+            return False
 
         for report in pending_reports:
             report.visibility_status = VisibilityStatus.VISIBLE.value
@@ -147,5 +259,7 @@ class ReportService:
         ZoneMergeService(self.db).recompute_near([h3_index])
 
         cache_delete_pattern("zones:vp:*")
+        cache_delete_pattern("zones:feed*")
         cache_delete_pattern("city:pulse:*")
         cache_delete_pattern(f"reports:pending:{h3_index}")
+        return True

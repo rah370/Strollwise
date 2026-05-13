@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import Optional
 
 from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
@@ -16,7 +17,7 @@ class Report(Base):
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
-    user_id: Mapped[uuid.UUID | None] = mapped_column(
+    user_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
@@ -33,11 +34,11 @@ class Report(Base):
     tags_json: Mapped[list[str]] = mapped_column(
         JSONB, nullable=False, default=list, server_default="[]"
     )
-    note_text: Mapped[str | None] = mapped_column(String(1000), nullable=True)
-    image_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    note_text: Mapped[Optional[str]] = mapped_column(String(1000), nullable=True)
+    image_url: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
 
     source_type: Mapped[str] = mapped_column(String(16), nullable=False, default="user")
-    traveler_type_snapshot: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    traveler_type_snapshot: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     visibility_status: Mapped[str] = mapped_column(
         String(16), nullable=False, default="visible"
     )

@@ -9,25 +9,34 @@ from app.api.deps import get_current_user
 from app.core.database import get_db
 from app.models.user import User
 from app.repositories.zone_repository import ZoneRepository
-from app.schemas.report import ReportCreate, ReportPublic
+from app.schemas.report import AggregationFeedback, ReportCreate, ReportPublic
+from app.schemas.report import ReportSubmissionResponse
 from app.services.report_service import ReportService, ReportValidationError
 
 router = APIRouter(prefix="/reports", tags=["reports"])
 
 
-@router.post("", response_model=ReportPublic, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "",
+    response_model=ReportSubmissionResponse,
+    status_code=status.HTTP_201_CREATED,
+)
 def submit_report(
     payload: ReportCreate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
-) -> ReportPublic:
+) -> ReportSubmissionResponse:
     try:
-        report = ReportService(db).create_report(payload, current_user)
+        result = ReportService(db).create_report(payload, current_user)
     except ReportValidationError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
         )
-    return ReportPublic.model_validate(report)
+    report_data = ReportPublic.model_validate(result.report).model_dump(by_alias=True)
+    return ReportSubmissionResponse(
+        **report_data,
+        aggregation=AggregationFeedback.model_validate(result.aggregation),
+    )
 
 
 @router.get("/feed", response_model=list[ReportPublic])

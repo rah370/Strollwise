@@ -37,6 +37,22 @@ def _compile_geometry_sqlite(element, compiler, **kw):  # type: ignore[no-redef]
     return "TEXT"
 
 
+def _patch_geoalchemy_sqlite_for_in_memory_tests() -> None:
+    """SpatiaLite helpers are not available on plain SQLite; skip GeoAlchemy DDL."""
+    try:
+        import geoalchemy2.admin.dialects.sqlite as ga_sqlite
+    except ImportError:
+        return
+
+    def _noop_after_create(table, bind, **kw):  # type: ignore[no-untyped-def]
+        return
+
+    ga_sqlite.after_create = _noop_after_create  # type: ignore[assignment]
+
+
+_patch_geoalchemy_sqlite_for_in_memory_tests()
+
+
 def _build_engine():
     # StaticPool is important: a single shared in-memory DB across sessions.
     from sqlalchemy.pool import StaticPool

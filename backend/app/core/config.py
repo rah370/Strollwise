@@ -35,6 +35,7 @@ class Settings(BaseSettings):
     city_center_lng: float = Field(default=123.8854)
 
     cache_ttl_zones_seconds: int = Field(default=60)
+    cache_ttl_zone_feed_seconds: int = Field(default=25)
     cache_ttl_pulse_seconds: int = Field(default=120)
     pending_cache_ttl_seconds: int = Field(default=900)
     pending_min_reports_per_cell: int = Field(default=2)

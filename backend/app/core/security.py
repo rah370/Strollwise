@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import UUID
 
@@ -25,14 +25,15 @@ def create_access_token(
     expires_delta: timedelta | None = None,
     extra_claims: dict[str, Any] | None = None,
 ) -> str:
-    expire = datetime.now(UTC) + (
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    expire = now + (
         expires_delta
         or timedelta(minutes=settings.access_token_expire_minutes)
     )
     payload: dict[str, Any] = {
         "sub": str(subject),
         "exp": expire,
-        "iat": datetime.now(UTC),
+        "iat": now,
     }
     if extra_claims:
         payload.update(extra_claims)

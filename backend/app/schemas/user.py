@@ -18,6 +18,8 @@ class UserPublic(ORMModel):
     gender: str | None = None
     avatar_url: str | None = None
     is_admin: bool = False
+    accepted_research_consent: bool = False
+    accepted_privacy_terms_at: datetime | None = None
     created_at: datetime
 
 

@@ -36,12 +36,18 @@ class PolygonService:
         return (lats / count, lngs / count)
 
     @staticmethod
-    def geojson_to_postgis_geometry(geojson: dict[str, Any]) -> object | None:
+    def geojson_to_postgis_geometry(
+        geojson: dict[str, Any],
+        *,
+        dialect_name: str | None = None,
+    ) -> object | None:
         """Turn a GeoJSON Polygon/MultiPolygon into a GeoAlchemy2 WKTElement.
 
-        Returns None on any failure (e.g. running against SQLite where the
-        Geometry column is compiled to TEXT and we keep the GeoJSON only).
+        Returns None on any failure, on SQLite (no PostGIS functions), or when
+        the Geometry column is compiled to TEXT in tests.
         """
+        if dialect_name == "sqlite":
+            return None
         try:
             from geoalchemy2.elements import WKTElement  # type: ignore
             from shapely.geometry import shape  # type: ignore

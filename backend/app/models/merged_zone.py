@@ -2,17 +2,37 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import Optional
 
-from geoalchemy2 import Geometry
-from sqlalchemy import Boolean, DateTime, Float, Integer, String, func
+from geoalchemy2 import Geometry as _PostGISGeometry
+from sqlalchemy import Boolean, DateTime, Float, Integer, String, Text, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.types import TypeDecorator
 
 from app.core.database import Base
 
 
+class _PostGISMultiPolygon(TypeDecorator):
+    """PostGIS `Geometry` in production; plain `TEXT` on SQLite (no SpatiaLite)."""
+
+    impl = Text
+    cache_ok = True
+
+    def load_dialect_impl(self, dialect):
+        if dialect.name == "postgresql":
+            return dialect.type_descriptor(
+                _PostGISGeometry(
+                    geometry_type="MULTIPOLYGON",
+                    srid=4326,
+                    spatial_index=True,
+                )
+            )
+        return dialect.type_descriptor(Text())
+
+
 class MergedZone(Base):
-    """Frontend-facing zone produced by merging adjacent similar H3 cells."""
+    """Frontend-facing zone: one row per active H3 cell (single-hex footprint)."""
 
     __tablename__ = "merged_zones"
 
@@ -25,13 +45,13 @@ class MergedZone(Base):
     behavior_type: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
     function_type: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
 
-    summary: Mapped[str | None] = mapped_column(String(600), nullable=True)
+    summary: Mapped[Optional[str]] = mapped_column(String(600), nullable=True)
     live_status: Mapped[str] = mapped_column(String(24), nullable=False, default="quiet_now")
 
     polygon_geojson: Mapped[dict] = mapped_column(JSONB, nullable=False)
     # Optional PostGIS geometry for fast spatial queries. Stored as MultiPolygon.
-    polygon_geometry: Mapped[object | None] = mapped_column(
-        Geometry(geometry_type="MULTIPOLYGON", srid=4326, spatial_index=True),
+    polygon_geometry: Mapped[Optional[object]] = mapped_column(
+        _PostGISMultiPolygon(),
         nullable=True,
     )
 
@@ -44,7 +64,7 @@ class MergedZone(Base):
 
     crowd_level: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     local_presence_percent: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
-    peak_time_label: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    peak_time_label: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
     top_activities_json: Mapped[list[str]] = mapped_column(
         JSONB, nullable=False, default=list, server_default="[]"
     )
