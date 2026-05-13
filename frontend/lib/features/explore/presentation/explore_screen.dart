@@ -520,22 +520,6 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
             lineColor: ['get', 'line'],
             lineWidth: ['get', 'line_width'],
             lineOpacity: ['get', 'line_opacity'],
-            lineDasharray: [
-              'case',
-              [
-                'boolean',
-                ['get', 'dashed'],
-                false,
-              ],
-              [
-                'literal',
-                [1.6, 1.2],
-              ],
-              [
-                'literal',
-                [1.0, 0.0],
-              ],
-            ],
           ),
           belowLayerId: belowLayerId,
         );
@@ -768,34 +752,19 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
     _selectZone(zone);
     if (_sameZoneTapCount >= 3) {
       _sameZoneTapCount = 0;
-      _showZoneTypeMessage(zone);
+      _showZoneInformation();
     }
   }
 
-  void _showZoneTypeMessage(ZoneModel zone) {
-    final type = zone.zoneType.replaceAll('_', ' ');
-    final traveler = zone.travelerType;
-    final confidence = zone.confidenceScore.toStringAsFixed(0);
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(
-          behavior: SnackBarBehavior.floating,
-          content: Text(
-            '${zone.displayName}: $traveler $type zone · $confidence% confidence',
-          ),
-          action: SnackBarAction(
-            label: 'Details',
-            onPressed: () => showModalBottomSheet<void>(
-              context: context,
-              isScrollControlled: true,
-              backgroundColor: Colors.transparent,
-              barrierColor: Colors.black.withValues(alpha: 0.35),
-              builder: (_) => const ZoneDetailSheet(),
-            ),
-          ),
-        ),
-      );
+  void _showZoneInformation() {
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      barrierColor: Colors.black.withValues(alpha: 0.35),
+      builder: (_) => const ZoneDetailSheet(),
+    );
   }
 
   Future<void> _adjustZoom(double delta) async {
