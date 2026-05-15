@@ -25,10 +25,11 @@ class ReportPublic(ORMModel):
     h3_index: str
     resolution: int
     category: str
-    tags: list[str] = Field(alias="tags_json")
+    tags_json: list[str] = Field(default_factory=list)
     note_text: str | None = None
     image_url: str | None = None
     source_type: str
+    visibility_status: str = "visible"
     created_at: datetime
 
 
@@ -44,3 +45,12 @@ class AggregationFeedback(ORMModel):
 
 class ReportSubmissionResponse(ReportPublic):
     aggregation: AggregationFeedback
+
+
+class PlaceTagMarker(ORMModel):
+    """Map pin for a tagged report (e.g. USPF campus tags)."""
+
+    id: UUID
+    latitude: float
+    longitude: float
+    validated: bool

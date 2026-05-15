@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import logging
+import uuid
+from types import SimpleNamespace
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -15,10 +18,13 @@ from app.core.config import settings
 from app.core.database import get_db
 from app.repositories.zone_repository import ZoneRepository
 from app.schemas.common import Centroid
+from app.models.enums import BehaviorType, FunctionType, LiveStatus
 from app.schemas.zone import CurrentZoneOverview, ZoneDetail, ZoneLaunchContext, ZoneListItem
 from app.services.ranking_service import RankingService
 from app.services import h3_service
 from app.utils.geo_utils import haversine_km, polygon_intersects_bbox
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/zones", tags=["zones"])
 
@@ -132,11 +138,17 @@ def current_zone_overview(
         )
 
     current = _find_current_zone(zones, lat=lat, lng=lng)
+    exclude_nearby: set[UUID] = set()
+    if current is not None:
+        exclude_nearby.add(current.zone_id)
+        mixed_ids = getattr(current, "_mixed_component_zone_ids", None)
+        if mixed_ids:
+            exclude_nearby.update(mixed_ids)
     nearby = _nearby_ranked(
         zones,
         lat=lat,
         lng=lng,
-        include_zone_id=current.zone_id if current is not None else None,
+        exclude_zone_ids=exclude_nearby,
         limit=limit,
         radius_km=2.4 if ring == 1 else 4.8,
     )
@@ -190,6 +202,7 @@ def zone_detail(zone_id: UUID, db: Session = Depends(get_db)) -> ZoneDetail:
         source_h3_indexes=list(zone.source_h3_indexes_json or []),
         source_h3_rings=_display_h3_rings(zone),
         report_count=zone.report_count,
+        updated_at=zone.updated_at,
     )
 
 
@@ -234,6 +247,7 @@ def _to_list_item(zone) -> ZoneListItem:
         confidence_score=zone.confidence_score,
         priority_score=zone.priority_score,
         source_h3_rings=_display_h3_rings(zone),
+        updated_at=zone.updated_at,
     )
 
 
@@ -266,10 +280,49 @@ def _display_h3_rings(zone) -> list[list[list[float]]]:
     return [_close_ring(h3_service.cell_to_lnglat_ring(idx)) for idx in unique]
 
 
+def _ring_bbox_area_deg2(ring: list[list[float]]) -> float:
+    if len(ring) < 3:
+        return 1e9
+    lngs = [p[0] for p in ring]
+    lats = [p[1] for p in ring]
+    w = max(lngs) - min(lngs)
+    h = max(lats) - min(lats)
+    return max(w * h, 1e-12)
+
+
+def _geojson_bbox_area_deg2(geojson: dict | None) -> float:
+    """Rough footprint of zone geometry; smaller = more local / street-scale."""
+    if not geojson or not isinstance(geojson, dict):
+        return 1e9
+    geom_type = geojson.get("type")
+    coords = geojson.get("coordinates", [])
+    if geom_type == "Polygon" and coords and coords[0]:
+        return _ring_bbox_area_deg2(coords[0])
+    if geom_type == "MultiPolygon":
+        total = 0.0
+        for poly in coords:
+            if poly and poly[0]:
+                total += _ring_bbox_area_deg2(poly[0])
+        return total if total > 0 else 1e9
+    return 1e9
+
+
 def _find_current_zone(zones: list, *, lat: float, lng: float):
     containing = [z for z in zones if _zone_contains_point(z.polygon_geojson, lat=lat, lng=lng)]
     if containing:
-        containing.sort(key=lambda z: float(z.priority_score or 0), reverse=True)
+        if len(containing) >= 2:
+            overlap_geojson = _polygon_intersection_geojson(containing)
+            if overlap_geojson is not None and _zone_contains_point(overlap_geojson, lat=lat, lng=lng):
+                return _synthetic_mixed_overlap_zone(containing, overlap_geojson, lat=lat, lng=lng)
+        # Single zone, or overlap geometry degenerate / unavailable: pick one polygon.
+        # Prefer the tightest footprint so a street-scale zone wins over a
+        # broad campus/region polygon that also contains the same point.
+        def sort_key(z):
+            area = _geojson_bbox_area_deg2(z.polygon_geojson)
+            d = haversine_km(lat, lng, z.centroid_lat, z.centroid_lng)
+            return (area, d)
+
+        containing.sort(key=sort_key)
         return containing[0]
     distances = [
         (
@@ -287,19 +340,164 @@ def _nearby_ranked(
     *,
     lat: float,
     lng: float,
-    include_zone_id: UUID | None,
+    exclude_zone_ids: set[UUID],
     limit: int,
     radius_km: float,
 ) -> list:
     ranked: list[tuple[float, object]] = []
     for zone in zones:
-        if include_zone_id is not None and zone.zone_id == include_zone_id:
+        if zone.zone_id in exclude_zone_ids:
             continue
         distance_km = haversine_km(lat, lng, zone.centroid_lat, zone.centroid_lng)
         if distance_km <= radius_km:
             ranked.append((distance_km, zone))
     ranked.sort(key=lambda pair: pair[0])
     return [z for _, z in ranked[:limit]]
+
+
+def _polygon_intersection_geojson(zones: list) -> dict | None:
+    """Return GeoJSON for the geometric intersection of all zone polygons."""
+    try:
+        from shapely.geometry import mapping  # type: ignore
+        from shapely.geometry import shape  # type: ignore
+        from shapely.ops import unary_union  # type: ignore
+    except ImportError:
+        log.debug("shapely unavailable; cannot compute zone overlap")
+        return None
+
+    geoms = []
+    for z in zones:
+        try:
+            g = shape(z.polygon_geojson)
+        except Exception:
+            return None
+        if g.is_empty:
+            return None
+        geoms.append(g)
+
+    inter = geoms[0]
+    for g in geoms[1:]:
+        inter = inter.intersection(g)
+    if inter.is_empty:
+        return None
+
+    if inter.geom_type == "GeometryCollection":
+        polys = [x for x in inter.geoms if x.geom_type in ("Polygon", "MultiPolygon")]
+        if not polys:
+            return None
+        inter = unary_union(polys)
+
+    if inter.geom_type not in ("Polygon", "MultiPolygon"):
+        return None
+
+    try:
+        area = float(inter.area)
+    except Exception:
+        area = 0.0
+    if area <= 1e-20:
+        return None
+
+    try:
+        return mapping(inter)
+    except Exception:
+        return None
+
+
+def _synthetic_mixed_overlap_zone(containing: list, overlap_geojson: dict, *, lat: float, lng: float):
+    """Overlay zone for pins inside two or more independent polygons simultaneously."""
+    ids_sorted = sorted([z.zone_id for z in containing], key=lambda zid: str(zid))
+    synthetic_id = uuid.uuid5(
+        uuid.NAMESPACE_URL,
+        "strollwise:zone_overlap:" + ":".join(str(zid) for zid in ids_sorted),
+    )
+    names = sorted({z.display_name for z in containing})
+    display_name = " · ".join(names) + " overlap"
+
+    summaries = [s for z in containing if (s := (z.summary or "").strip())]
+    summary = (
+        "Mixed area where " + ", ".join(names) + " meet."
+        if len(names) > 1
+        else (summaries[0] if summaries else None)
+    )
+
+    crowd = max(float(z.crowd_level or 0) for z in containing)
+    local_pct = sum(float(z.local_presence_percent or 0) for z in containing) / len(containing)
+    confidence = sum(float(z.confidence_score or 0) for z in containing) / len(containing)
+    priority = max(float(z.priority_score or 0) for z in containing)
+
+    live_rank = {
+        LiveStatus.PEAK_NOW.value: 4,
+        LiveStatus.BUSY_NOW.value: 3,
+        LiveStatus.ACTIVE_NOW.value: 2,
+        LiveStatus.CAUTION_NOW.value: 2,
+        LiveStatus.QUIET_NOW.value: 1,
+    }
+    live_status = max(
+        (z.live_status for z in containing),
+        key=lambda s: live_rank.get(str(s), 0),
+        default=LiveStatus.QUIET_NOW.value,
+    )
+
+    peak_labels = [z.peak_time_label for z in containing if z.peak_time_label]
+    peak_time_label = peak_labels[0] if peak_labels else None
+
+    h3_union: list[str] = []
+    seen: set[str] = set()
+    for z in containing:
+        for idx in z.source_h3_indexes_json or []:
+            if idx and idx not in seen:
+                seen.add(idx)
+                h3_union.append(idx)
+
+    top_lists = [list(z.top_activities_json or []) for z in containing]
+    merged_top: list[str] = []
+    top_seen: set[str] = set()
+    for lst in top_lists:
+        for act in lst:
+            if act and act not in top_seen:
+                top_seen.add(act)
+                merged_top.append(act)
+                if len(merged_top) >= 12:
+                    break
+        if len(merged_top) >= 12:
+            break
+
+    centroid_lat = sum(z.centroid_lat for z in containing) / len(containing)
+    centroid_lng = sum(z.centroid_lng for z in containing) / len(containing)
+
+    return SimpleNamespace(
+        zone_id=synthetic_id,
+        display_name=display_name,
+        behavior_type=BehaviorType.MIXED_AREA.value,
+        function_type=FunctionType.EMERGING_ZONE.value,
+        summary=summary,
+        live_status=live_status,
+        polygon_geojson=overlap_geojson,
+        centroid_lat=centroid_lat,
+        centroid_lng=centroid_lng,
+        crowd_level=crowd,
+        local_presence_percent=local_pct,
+        peak_time_label=peak_time_label,
+        confidence_score=confidence,
+        priority_score=priority,
+        source_h3_indexes_json=h3_union,
+        top_activities_json=merged_top,
+        updated_at=None,
+        _mixed_component_zone_ids=ids_sorted,
+    )
+
+
+def _polygon_rings_contain_point(rings: list, *, lat: float, lng: float) -> bool:
+    """True if point lies inside exterior ring and outside every hole ring."""
+    if not rings or not rings[0]:
+        return False
+    outer = rings[0]
+    if not _point_in_ring(outer, lat=lat, lng=lng):
+        return False
+    for hole in rings[1:]:
+        if hole and _point_in_ring(hole, lat=lat, lng=lng):
+            return False
+    return True
 
 
 def _zone_contains_point(geojson: dict, *, lat: float, lng: float) -> bool:
@@ -316,8 +514,7 @@ def _zone_contains_point(geojson: dict, *, lat: float, lng: float) -> bool:
     for polygon in polygons:
         if not polygon:
             continue
-        outer_ring = polygon[0]
-        if _point_in_ring(outer_ring, lat=lat, lng=lng):
+        if _polygon_rings_contain_point(polygon, lat=lat, lng=lng):
             return True
     return False
 

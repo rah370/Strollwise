@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import Boolean, DateTime, String, func
+from sqlalchemy import Boolean, DateTime, Float, String, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -20,6 +20,8 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(320), unique=True, nullable=False, index=True)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     display_name: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
+    manual_map_lat: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    manual_map_lng: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     traveler_type: Mapped[str] = mapped_column(String(32), nullable=False, default="mixed")
     nationality: Mapped[Optional[str]] = mapped_column(String(8), nullable=True)
     age_range: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)

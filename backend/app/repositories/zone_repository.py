@@ -54,10 +54,10 @@ class ZoneRepository:
             )
         )
         try:
-            return list(self.db.execute(stmt).scalars())
+            with self.db.begin_nested():
+                return list(self.db.execute(stmt).scalars())
         except SQLAlchemyError as exc:
             log.debug("PostGIS viewport query unavailable, falling back: %s", exc)
-            self.db.rollback()
             return None
 
     def list_by_slug(self, slug: str) -> MergedZone | None:

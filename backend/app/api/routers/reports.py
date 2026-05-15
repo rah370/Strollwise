@@ -9,7 +9,8 @@ from app.api.deps import get_current_user
 from app.core.database import get_db
 from app.models.user import User
 from app.repositories.zone_repository import ZoneRepository
-from app.schemas.report import AggregationFeedback, ReportCreate, ReportPublic
+from app.models.enums import VisibilityStatus
+from app.schemas.report import AggregationFeedback, PlaceTagMarker, ReportCreate, ReportPublic
 from app.schemas.report import ReportSubmissionResponse
 from app.services.report_service import ReportService, ReportValidationError
 
@@ -37,6 +38,62 @@ def submit_report(
         **report_data,
         aggregation=AggregationFeedback.model_validate(result.aggregation),
     )
+
+
+@router.get("/my-pending-pins", response_model=list[PlaceTagMarker])
+def my_pending_tag_pins(
+    min_lat: float = Query(..., ge=-90.0, le=90.0),
+    max_lat: float = Query(..., ge=-90.0, le=90.0),
+    min_lng: float = Query(..., ge=-180.0, le=180.0),
+    max_lng: float = Query(..., ge=-180.0, le=180.0),
+    limit: int = Query(80, ge=1, le=200),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> list[PlaceTagMarker]:
+    """Your pending tags in the viewport (shown only to you until validated)."""
+    reports = ReportService(db).list_own_pending_pins(
+        current_user.id,
+        min_lat,
+        max_lat,
+        min_lng,
+        max_lng,
+        limit=limit,
+    )
+    return [
+        PlaceTagMarker(
+            id=r.id,
+            latitude=r.latitude_raw,
+            longitude=r.longitude_raw,
+            validated=False,
+        )
+        for r in reports
+    ]
+
+
+@router.get("/place-markers", response_model=list[PlaceTagMarker])
+def place_tag_markers(
+    min_lat: float = Query(..., ge=-90.0, le=90.0),
+    max_lat: float = Query(..., ge=-90.0, le=90.0),
+    min_lng: float = Query(..., ge=-180.0, le=180.0),
+    max_lng: float = Query(..., ge=-180.0, le=180.0),
+    tag: str = Query("uspf", min_length=1, max_length=32),
+    limit: int = Query(120, ge=1, le=300),
+    db: Session = Depends(get_db),
+) -> list[PlaceTagMarker]:
+    """Map pins for reports that include a tag token (default USPF campus)."""
+    tag_key = tag.strip().lower()
+    reports = ReportService(db).list_place_markers(
+        min_lat, max_lat, min_lng, max_lng, tag_key, limit=limit
+    )
+    return [
+        PlaceTagMarker(
+            id=r.id,
+            latitude=r.latitude_raw,
+            longitude=r.longitude_raw,
+            validated=r.visibility_status == VisibilityStatus.VISIBLE.value,
+        )
+        for r in reports
+    ]
 
 
 @router.get("/feed", response_model=list[ReportPublic])

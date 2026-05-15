@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from collections import Counter
 from collections.abc import Iterable
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.orm import Session
 
@@ -13,7 +13,7 @@ from app.models.report import Report
 from app.repositories.h3_repository import H3Repository
 from app.repositories.report_repository import ReportRepository
 from app.services.classification_service import ClassificationService
-from app.utils.time_utils import hour_of, utcnow
+from app.utils.time_utils import as_utc_aware, hour_of
 
 
 class AggregationService:
@@ -139,9 +139,15 @@ class AggregationService:
         """Score 0..1 based on how recently and densely the cell has been tagged."""
         if not reports:
             return 0.0
-        now = utcnow()
+        # Use timezone-aware "now" so comparisons work with Postgres
+        # DateTime(timezone=True) while utcnow() stays naive for legacy callers.
+        now = datetime.now(timezone.utc)
         window = now - timedelta(hours=12)
-        recent = [r for r in reports if r.created_at and r.created_at >= window]
+        recent = [
+            r
+            for r in reports
+            if r.created_at and as_utc_aware(r.created_at) >= window
+        ]
         base = min(len(recent) / 12, 1.0)
         return round(base, 3)
 
@@ -157,7 +163,11 @@ class AggregationService:
         if not reports:
             return 0.0
         count_score = min(len(reports) / 20.0, 1.0)
-        timestamps = [r.created_at for r in reports if r.created_at is not None]
+        timestamps = [
+            as_utc_aware(r.created_at)
+            for r in reports
+            if r.created_at is not None
+        ]
         spread_score = 0.0
         if timestamps:
             timestamps.sort()

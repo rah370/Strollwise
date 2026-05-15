@@ -16,6 +16,7 @@ import '../../../app/theme/colors.dart';
 import '../../../shared/models/zone.dart';
 import '../../../shared/network/api_client.dart';
 import '../../../shared/providers/app_providers.dart';
+import '../../../shared/user_manual_map_location.dart';
 import '../../zones/presentation/zone_detail_sheet.dart';
 
 enum ExploreMapMode { discovery, zoneSelected, navigating }
@@ -37,6 +38,8 @@ class ExploreScreen extends ConsumerStatefulWidget {
 class _ExploreScreenState extends ConsumerState<ExploreScreen> {
   MapLibreMapController? _controller;
   StreamSubscription<Position>? _positionSubscription;
+  Timer? _exploreFlashClearTimer;
+  bool _showMap = false;
   bool _isUpdatingViewport = false;
   bool _didBootstrapLocation = false;
   bool _didApplyCurrentZone = false;
@@ -70,6 +73,8 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
   ExploreMapMode _mapMode = ExploreMapMode.discovery;
   bool _showSearch = false;
   final TextEditingController _searchController = TextEditingController();
+  List<ZoneModel> _searchMatches = const [];
+  String? _searchFeedback;
   static const _cebuCityCenter = LatLng(10.3157, 123.8854);
   static const _defaultZoom = 14.7;
   static const _cebuRegionRadiusMeters = 120000.0;
@@ -102,6 +107,13 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
     'j solon': LatLng(10.3181, 123.9021),
     'usc': LatLng(10.3006, 123.8989),
     'university of san carlos': LatLng(10.3006, 123.8989),
+    'uspf': LatLng(10.3382, 123.9014),
+    'university of southern philippines foundation': LatLng(10.3382, 123.9014),
+    'salinas drive': LatLng(10.3370, 123.9025),
+    'salinas': LatLng(10.3370, 123.9025),
+    'jy square': LatLng(10.3359, 123.9023),
+    'jy square lahug': LatLng(10.3359, 123.9023),
+    'jy': LatLng(10.3359, 123.9023),
     'cebu doctors': LatLng(10.3099, 123.8916),
   };
 
@@ -109,6 +121,18 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          setState(() => _showMap = true);
+        }
+      });
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final postCue = ref.read(explorePostSubmitCueProvider);
+      if (postCue != null) {
+        _applyPostSubmitCue(postCue);
+        return;
+      }
       if (_consumeExploreFocus()) return;
       _ensureDefaultCebuViewport();
       _bootstrapCurrentLocation();
@@ -132,6 +156,33 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
     return true;
   }
 
+  void _applyPostSubmitCue(ExplorePostSubmitCue cue) {
+    ref.read(explorePostSubmitCueProvider.notifier).state = null;
+    ref.read(exploreFocusLocationProvider.notifier).state = cue.focus;
+    ref.read(exploreFlashPinProvider.notifier).state = cue.focus;
+    _exploreFlashClearTimer?.cancel();
+    _exploreFlashClearTimer = Timer(const Duration(seconds: 14), () {
+      if (!mounted) return;
+      ref.read(exploreFlashPinProvider.notifier).state = null;
+      final zones = ref.read(visibleZonesProvider).valueOrNull ?? _latestZones;
+      unawaited(_drawZones(zones));
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+      _consumeExploreFocus();
+      await _moveCameraToLocation(cue.focus, zoom: 16.4);
+      final zones = ref.read(visibleZonesProvider).valueOrNull ?? _latestZones;
+      await _drawZones(zones);
+      if (!mounted) return;
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+        SnackBar(
+          content: Text(cue.summary),
+          duration: const Duration(seconds: 5),
+        ),
+      );
+    });
+  }
+
   Future<void> _bootstrapCurrentLocation({bool force = false}) async {
     if (_didBootstrapLocation && !force) return;
     _didBootstrapLocation = true;
@@ -142,7 +193,8 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
     try {
       final serviceEnabled = await Geolocator.isLocationServiceEnabled();
       if (!serviceEnabled) {
-        if (mounted) {
+        final applied = await _applyServerManualLocationIfAvailable();
+        if (!applied && mounted) {
           setState(
             () => _locationState = _LocationBootstrapState.serviceDisabled,
           );
@@ -156,7 +208,8 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
       }
       if (permission == LocationPermission.denied ||
           permission == LocationPermission.deniedForever) {
-        if (mounted) {
+        final applied = await _applyServerManualLocationIfAvailable();
+        if (!applied && mounted) {
           setState(
             () => _locationState = _LocationBootstrapState.permissionDenied,
           );
@@ -173,13 +226,16 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
       final detectedLocation = LatLng(position.latitude, position.longitude);
 
       if (!_isWithinCebuRegion(detectedLocation)) {
-        setState(() {
-          _isLocationEnabledForMap = false;
-          _usingManualLocation = false;
-          _locationState = _LocationBootstrapState.ready;
-        });
-        ref.read(currentUserLocationProvider.notifier).state = _cebuCityCenter;
-        await _moveCameraToLocation(_cebuCityCenter, zoom: _defaultZoom);
+        final applied = await _applyServerManualLocationIfAvailable();
+        if (!applied && mounted) {
+          setState(() {
+            _isLocationEnabledForMap = false;
+            _usingManualLocation = false;
+            _locationState = _LocationBootstrapState.ready;
+          });
+          ref.read(currentUserLocationProvider.notifier).state = _cebuCityCenter;
+          await _moveCameraToLocation(_cebuCityCenter, zoom: _defaultZoom);
+        }
         return;
       }
 
@@ -192,11 +248,36 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
       _startLiveLocationTracking();
       await _moveCameraToLocation(detectedLocation, zoom: 13.5);
     } catch (_) {
-      if (mounted) {
+      final applied = await _applyServerManualLocationIfAvailable();
+      if (!applied && mounted) {
         setState(
           () => _locationState = _LocationBootstrapState.serviceDisabled,
         );
       }
+    }
+  }
+
+  /// Uses [userMeProvider] manual map coordinates when GPS is unavailable.
+  Future<bool> _applyServerManualLocationIfAvailable() async {
+    try {
+      final token = ref.read(authTokenProvider);
+      if (token == null || token == 'demo-token-local') return false;
+      final me = await ref.read(userMeProvider.future);
+      final lat = me?.manualMapLat;
+      final lng = me?.manualMapLng;
+      if (lat == null || lng == null || !mounted) return false;
+      final here = LatLng(lat, lng);
+      if (!_isWithinCebuRegion(here)) return false;
+      ref.read(currentUserLocationProvider.notifier).state = here;
+      setState(() {
+        _isLocationEnabledForMap = false;
+        _usingManualLocation = true;
+        _locationState = _LocationBootstrapState.ready;
+      });
+      await _moveCameraToLocation(here, zoom: 14.5);
+      return true;
+    } catch (_) {
+      return false;
     }
   }
 
@@ -323,6 +404,21 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
       },
     );
     if (result == null) return;
+    await Future<void>.delayed(Duration.zero);
+    if (!mounted) return;
+    final token = ref.read(authTokenProvider);
+    if (token != null && token != 'demo-token-local') {
+      final ok = await persistUserManualMapLocation(ref, result);
+      if (mounted && !ok) {
+        ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Place updated on the map. Could not sync to your account yet.',
+            ),
+          ),
+        );
+      }
+    }
     ref.read(currentUserLocationProvider.notifier).state = result;
     _positionSubscription?.cancel();
     if (mounted) {
@@ -590,6 +686,38 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
           );
         }
       }
+      final ownPins = ref.read(ownPendingTagPinsProvider).valueOrNull ?? [];
+      for (final m in ownPins) {
+        await controller.addSymbol(
+          SymbolOptions(
+            geometry: LatLng(m.latitude, m.longitude),
+            textField: '\u{1F4CD}',
+            textSize: 22,
+            textAnchor: 'bottom',
+            textOpacity: 0.94,
+            textColor: '#0F172A',
+            textHaloColor: '#FFFFFF',
+            textHaloWidth: 1.2,
+            zIndex: 6,
+          ),
+        );
+      }
+      final flashPin = ref.read(exploreFlashPinProvider);
+      if (flashPin != null) {
+        await controller.addSymbol(
+          SymbolOptions(
+            geometry: flashPin,
+            textField: '\u{1F4CD}',
+            textSize: 26,
+            textAnchor: 'bottom',
+            textOpacity: 1,
+            textColor: '#000000',
+            textHaloColor: '#FFFFFF',
+            textHaloWidth: 1.6,
+            zIndex: 9,
+          ),
+        );
+      }
       if (userLocation != null) {
         await controller.addCircle(
           CircleOptions(
@@ -693,20 +821,65 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
   }
 
   ZoneModel? _findNearestZone(LatLng tap, List<ZoneModel> zones) {
+    for (final zone in zones.reversed) {
+      if (_tapInsideZone(tap, zone)) {
+        return zone;
+      }
+    }
+
     ZoneModel? selected;
     var bestDistance = double.infinity;
     for (final zone in zones) {
       final center = _zoneCenter(zone);
-      final distance =
-          (tap.latitude - center.latitude) * (tap.latitude - center.latitude) +
-          (tap.longitude - center.longitude) *
-              (tap.longitude - center.longitude);
+      final distance = Geolocator.distanceBetween(
+        tap.latitude,
+        tap.longitude,
+        center.latitude,
+        center.longitude,
+      );
       if (distance < bestDistance) {
         bestDistance = distance;
         selected = zone;
       }
     }
-    return selected;
+    return bestDistance <= 750 ? selected : null;
+  }
+
+  bool _tapInsideZone(LatLng tap, ZoneModel zone) {
+    final point = [tap.longitude, tap.latitude];
+    for (final ring in zone.sourceH3Rings) {
+      if (_pointInRing(point, ring)) return true;
+    }
+    for (final part in zone.polygonParts) {
+      if (part.isEmpty) continue;
+      if (!_pointInRing(point, part.first)) continue;
+      final inHole = part.skip(1).any((hole) => _pointInRing(point, hole));
+      if (!inHole) return true;
+    }
+    if (zone.boundary.isNotEmpty && _pointInRing(point, zone.boundary)) {
+      return true;
+    }
+    return false;
+  }
+
+  bool _pointInRing(List<double> point, List<List<double>> ring) {
+    if (ring.length < 3) return false;
+    final x = point[0];
+    final y = point[1];
+    var inside = false;
+    var j = ring.length - 1;
+    for (var i = 0; i < ring.length; i += 1) {
+      final xi = ring[i][0];
+      final yi = ring[i][1];
+      final xj = ring[j][0];
+      final yj = ring[j][1];
+      final intersects =
+          ((yi > y) != (yj > y)) &&
+          (x < (xj - xi) * (y - yi) / ((yj - yi) == 0 ? 1e-12 : yj - yi) + xi);
+      if (intersects) inside = !inside;
+      j = i;
+    }
+    return inside;
   }
 
   Future<void> _refreshViewportZones() async {
@@ -1009,6 +1182,7 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
 
   @override
   void dispose() {
+    _exploreFlashClearTimer?.cancel();
     _positionSubscription?.cancel();
     _searchController.dispose();
     super.dispose();
@@ -1019,6 +1193,8 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
       _showSearch = !_showSearch;
       if (!_showSearch) {
         _searchController.clear();
+        _searchMatches = const [];
+        _searchFeedback = null;
       }
     });
     if (!_showSearch) {
@@ -1026,11 +1202,24 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
     }
   }
 
-  void _applySearchFilter(String value) {
+  void _applySearchFilter(String value, List<ZoneModel> zones) {
     final q = value.trim().toLowerCase();
     if (q.isEmpty) {
       ref.read(activeZoneFilterProvider.notifier).state = null;
+      if (mounted) {
+        setState(() {
+          _searchMatches = const [];
+          _searchFeedback = null;
+        });
+      }
       return;
+    }
+    final matches = zones.where((zone) => _zoneMatchesQuery(zone, q)).toList();
+    if (mounted) {
+      setState(() {
+        _searchMatches = matches.take(6).toList(growable: false);
+        _searchFeedback = null;
+      });
     }
     if (q.contains('food')) {
       ref.read(activeZoneFilterProvider.notifier).state = 'food';
@@ -1049,6 +1238,71 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
       return;
     }
     ref.read(activeZoneFilterProvider.notifier).state = null;
+  }
+
+  bool _zoneMatchesQuery(ZoneModel zone, String query) {
+    final haystack = <String>[
+      zone.displayName,
+      _zoneTitle(zone),
+      _zoneIdentity(zone),
+      zone.behaviorType,
+      zone.functionType,
+      zone.summary ?? '',
+      ...zone.topActivities,
+    ].join(' ').toLowerCase();
+    final terms = query.split(RegExp(r'\s+')).where((term) => term.isNotEmpty);
+    return terms.every(haystack.contains);
+  }
+
+  Future<void> _submitSearch(List<ZoneModel> zones, {String? rawQuery}) async {
+    final query = (rawQuery ?? _searchController.text).trim();
+    if (query.isEmpty) {
+      setState(() {
+        _searchMatches = const [];
+        _searchFeedback = 'Enter a place or zone name.';
+      });
+      return;
+    }
+
+    final normalized = query.toLowerCase();
+    final zoneMatch = zones.cast<ZoneModel?>().firstWhere(
+      (zone) => zone != null && _zoneMatchesQuery(zone, normalized),
+      orElse: () => null,
+    );
+    if (zoneMatch != null) {
+      await _focusZoneFromSearch(zoneMatch);
+      return;
+    }
+
+    final placeMatch =
+        _knownCebuPlaceLookup(query) ?? await _lookupManualPlace(query);
+    if (placeMatch != null) {
+      if (!mounted) return;
+      ref.read(selectedZoneProvider.notifier).state = null;
+      setState(() {
+        _mapMode = ExploreMapMode.discovery;
+        _searchFeedback = 'Moved to "$query".';
+        _searchMatches = const [];
+      });
+      await _moveCameraToLocation(placeMatch, zoom: 15.2);
+      return;
+    }
+
+    if (!mounted) return;
+    setState(() {
+      _searchFeedback = 'No matching Cebu zone or place found for "$query".';
+    });
+  }
+
+  Future<void> _focusZoneFromSearch(ZoneModel zone) async {
+    _selectZone(zone);
+    final center = _zoneCenter(zone);
+    await _moveCameraToLocation(center, zoom: 15.2);
+    if (!mounted) return;
+    setState(() {
+      _searchFeedback = 'Showing ${_zoneTitle(zone)}.';
+      _searchMatches = const [];
+    });
   }
 
   void _applyTopTagFilter(String? filterKey) {
@@ -1181,40 +1435,46 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
         .toList();
   }
 
-  Color _streetZoneColor(ZoneModel zone) {
-    return switch (_zoneLayerKey(zone)) {
-      'local' => const Color(0xFF5FAF7A),
-      'commercial' => const Color(0xFFE96F7D),
-      'food' => const Color(0xFFEFA15C),
-      'transport' => const Color(0xFFE4BF38),
-      'school' => const Color(0xFF8B6FE8),
-      'tourist' => const Color(0xFF57B6C2),
-      'hotel' => const Color(0xFFE592B8),
-      'safety' => const Color(0xFFEF5350),
-      'international' => const Color(0xFF57B6C2),
-      _ => const Color(0xFF8B6FE8),
-    };
-  }
-
   @override
   Widget build(BuildContext context) {
+    ref.listen(ownPendingTagPinsProvider, (prev, next) {
+      if (next.isLoading) return;
+      next.whenData((_) {
+        final zones = ref.read(visibleZonesProvider).valueOrNull ?? [];
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          unawaited(_drawZones(zones));
+        });
+      });
+    });
+
+    // Do not use AsyncValue.whenData() here: it runs on every rebuild while
+    // data is present and queues endless post-frame redraws (wrong build scope,
+    // _dependents.isEmpty on dispose). Listen only fires when the provider
+    // notifies with a new state.
+    ref.listen<AsyncValue<List<ZoneModel>>>(visibleZonesProvider, (prev, next) {
+      if (next.isLoading) return;
+      next.whenData((zones) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          unawaited(_drawZones(zones));
+        });
+      });
+    });
+
     final zonesValue = ref.watch(visibleZonesProvider);
+    ref.watch(ownPendingTagPinsProvider);
     final selectedZone = ref.watch(selectedZoneProvider);
     final currentUserLocation = ref.watch(currentUserLocationProvider);
     final currentZoneOverview = ref.watch(currentZoneOverviewProvider);
     final zoneDataNotice = ref.watch(zoneDataNoticeProvider);
+    final zones = zonesValue.valueOrNull ?? _latestZones;
     currentZoneOverview.whenData((overview) {
       if (_didApplyCurrentZone || overview?.currentZone == null) return;
       _didApplyCurrentZone = true;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
         ref.read(selectedZoneProvider.notifier).state = overview!.currentZone;
-      });
-    });
-    zonesValue.whenData((zones) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted) return;
-        unawaited(_drawZones(zones));
       });
     });
 
@@ -1224,43 +1484,49 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
           final compact = constraints.maxWidth < 520;
           return Stack(
             children: [
-              MapLibreMap(
-                styleString:
-                    'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json',
-                initialCameraPosition: const CameraPosition(
-                  target: _cebuCityCenter,
-                  zoom: 14.7,
+              if (!_showMap)
+                const ColoredBox(color: Color(0xFFF1F2F4))
+              else
+                ExcludeSemantics(
+                  excluding: true,
+                  child: MapLibreMap(
+                    styleString:
+                        'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json',
+                    initialCameraPosition: const CameraPosition(
+                      target: _cebuCityCenter,
+                      zoom: 14.7,
+                    ),
+                    minMaxZoomPreference: const MinMaxZoomPreference(7.8, 18),
+                    rotateGesturesEnabled: false,
+                    onMapCreated: (controller) {
+                      _controller = controller;
+                    },
+                    onStyleLoadedCallback: () async {
+                      _mapStyleLoaded = true;
+                      _zoneLayersAdded = false;
+                      final controller = _controller;
+                      if (controller == null) return;
+                      await _applyBaseMapVisualTuning(controller);
+                      _zoneBelowLayerId = await _resolveRoadLayerId(controller);
+                      _consumeExploreFocus();
+                      final zones = ref.read(visibleZonesProvider).valueOrNull;
+                      if (zones != null) {
+                        unawaited(_drawZones(zones));
+                      }
+                    },
+                    onCameraIdle: _refreshViewportZones,
+                    onMapClick: (point, latLng) {
+                      if (_mapMode == ExploreMapMode.navigating) return;
+                      final zones = _latestZones;
+                      if (zones.isEmpty) return;
+                      final selected = _findNearestZone(
+                        LatLng(latLng.latitude, latLng.longitude),
+                        zones,
+                      );
+                      if (selected != null) _handleZoneTap(selected);
+                    },
+                  ),
                 ),
-                minMaxZoomPreference: const MinMaxZoomPreference(7.8, 18),
-                rotateGesturesEnabled: false,
-                onMapCreated: (controller) {
-                  _controller = controller;
-                },
-                onStyleLoadedCallback: () async {
-                  _mapStyleLoaded = true;
-                  _zoneLayersAdded = false;
-                  final controller = _controller;
-                  if (controller == null) return;
-                  await _applyBaseMapVisualTuning(controller);
-                  _zoneBelowLayerId = await _resolveRoadLayerId(controller);
-                  _consumeExploreFocus();
-                  final zones = ref.read(visibleZonesProvider).valueOrNull;
-                  if (zones != null) {
-                    unawaited(_drawZones(zones));
-                  }
-                },
-                onCameraIdle: _refreshViewportZones,
-                onMapClick: (point, latLng) {
-                  if (_mapMode == ExploreMapMode.navigating) return;
-                  final zones = _latestZones;
-                  if (zones.isEmpty) return;
-                  final selected = _findNearestZone(
-                    LatLng(latLng.latitude, latLng.longitude),
-                    zones,
-                  );
-                  if (selected != null) _handleZoneTap(selected);
-                },
-              ),
               IgnorePointer(
                 child: DecoratedBox(
                   decoration: BoxDecoration(
@@ -1330,7 +1596,10 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
                           ),
                           child: TextField(
                             controller: _searchController,
-                            onChanged: _applySearchFilter,
+                            textInputAction: TextInputAction.search,
+                            onChanged: (value) =>
+                                _applySearchFilter(value, zones),
+                            onSubmitted: (_) => _submitSearch(zones),
                             decoration: InputDecoration(
                               hintText: 'Search Cebu (IT Park food...)',
                               prefixIcon: const Icon(
@@ -1352,6 +1621,18 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
                           ),
                         ),
                       ),
+                      if (_searchController.text.trim().isNotEmpty ||
+                          _searchFeedback != null) ...[
+                        const SizedBox(height: 8),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 18),
+                          child: _SearchResultsCard(
+                            matches: _searchMatches,
+                            feedback: _searchFeedback,
+                            onSelect: _focusZoneFromSearch,
+                          ),
+                        ),
+                      ],
                     ],
                   ],
                 ),
@@ -1714,6 +1995,21 @@ String _zoneLayerKey(ZoneModel zone) {
   if (zone.travelerType == 'Local') return 'local';
   if (zone.travelerType == 'International') return 'international';
   return 'mixed';
+}
+
+Color _streetZoneColor(ZoneModel zone) {
+  return switch (_zoneLayerKey(zone)) {
+    'local' => const Color(0xFF5FAF7A),
+    'commercial' => const Color(0xFFE96F7D),
+    'food' => const Color(0xFFEFA15C),
+    'transport' => const Color(0xFFE4BF38),
+    'school' => const Color(0xFF8B6FE8),
+    'tourist' => const Color(0xFF57B6C2),
+    'hotel' => const Color(0xFFE592B8),
+    'safety' => const Color(0xFFEF5350),
+    'international' => const Color(0xFF57B6C2),
+    _ => const Color(0xFF8B6FE8),
+  };
 }
 
 String _zoneSubtitle(ZoneModel zone) {
@@ -2257,6 +2553,82 @@ class _TopTagFilterRow extends ConsumerWidget {
   }
 }
 
+class _SearchResultsCard extends StatelessWidget {
+  const _SearchResultsCard({
+    required this.matches,
+    required this.feedback,
+    required this.onSelect,
+  });
+
+  final List<ZoneModel> matches;
+  final String? feedback;
+  final Future<void> Function(ZoneModel zone) onSelect;
+
+  @override
+  Widget build(BuildContext context) {
+    if (matches.isEmpty && feedback == null) {
+      return const SizedBox.shrink();
+    }
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.97),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: AppColors.border),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x100F172A),
+            blurRadius: 18,
+            offset: Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (feedback != null)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(14, 12, 14, 6),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  feedback!,
+                  style: const TextStyle(
+                    color: AppColors.mutedText,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ),
+          if (matches.isNotEmpty)
+            ...matches.map(
+              (zone) => ListTile(
+                dense: true,
+                leading: Icon(
+                  _zoneIcon(zone),
+                  color: _streetZoneColor(zone),
+                  size: 18,
+                ),
+                title: Text(
+                  _zoneTitle(zone),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontWeight: FontWeight.w800),
+                ),
+                subtitle: Text(
+                  _zoneIdentity(zone),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                onTap: () => onSelect(zone),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
 class _SearchFilterRow extends StatelessWidget {
   const _SearchFilterRow();
 
@@ -2681,6 +3053,66 @@ class _ZoneToggle extends StatelessWidget {
   }
 }
 
+class _LifecycleLegendItem extends StatelessWidget {
+  const _LifecycleLegendItem({
+    required this.color,
+    required this.title,
+    required this.detail,
+    this.opacity = 1,
+  });
+
+  final Color color;
+  final String title;
+  final String detail;
+  final double opacity;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 7),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 18,
+            height: 18,
+            margin: const EdgeInsets.only(top: 2),
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: opacity),
+              borderRadius: BorderRadius.circular(5),
+              border: Border.all(color: color, width: 1.4),
+            ),
+          ),
+          const SizedBox(width: 9),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: const TextStyle(
+                    color: AppColors.primaryText,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                Text(
+                  detail,
+                  style: const TextStyle(
+                    color: AppColors.mutedText,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _SelectedZoneCard extends StatelessWidget {
   const _SelectedZoneCard({
     required this.zone,
@@ -2824,6 +3256,8 @@ class _SelectedZoneCard extends StatelessWidget {
                 ),
               ],
             ),
+            const SizedBox(height: 10),
+            _ValidationMiniDashboard(zone: zone, palette: palette),
             const SizedBox(height: 12),
             Row(
               children: [
@@ -2884,6 +3318,116 @@ String _localPresence(ZoneModel zone) {
   if (zone.travelerType == 'Local') return '72%';
   if (zone.travelerType == 'International') return '38%';
   return '55%';
+}
+
+int _matchingSignalCount(ZoneModel zone) {
+  final total = zone.reportCount < 1 ? 1 : zone.reportCount;
+  return math.max(1, (total * (zone.confidenceScore / 100)).round());
+}
+
+String _topAgreedCategory(ZoneModel zone) {
+  final raw = zone.functionType.replaceAll('_', ' ');
+  return raw
+      .split(' ')
+      .where((part) => part.isNotEmpty)
+      .map((part) => '${part[0].toUpperCase()}${part.substring(1)}')
+      .join(' ');
+}
+
+String _lastUpdatedLabel(ZoneModel zone) {
+  final updated = zone.updatedAt;
+  if (updated == null) return 'Recent';
+  final local = updated.toLocal();
+  final now = DateTime.now();
+  final diff = now.difference(local);
+  if (diff.inMinutes < 1) return 'Just now';
+  if (diff.inHours < 1) return '${diff.inMinutes}m ago';
+  if (diff.inDays < 1) return '${diff.inHours}h ago';
+  return '${local.month}/${local.day} ${local.hour.toString().padLeft(2, '0')}:${local.minute.toString().padLeft(2, '0')}';
+}
+
+class _ValidationMiniDashboard extends StatelessWidget {
+  const _ValidationMiniDashboard({required this.zone, required this.palette});
+
+  final ZoneModel zone;
+  final _ZonePalette palette;
+
+  @override
+  Widget build(BuildContext context) {
+    final matching = _matchingSignalCount(zone);
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: palette.fill.withValues(alpha: 0.55),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: palette.border.withValues(alpha: 0.22)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.fact_check_outlined, size: 15, color: palette.accent),
+              const SizedBox(width: 6),
+              const Text(
+                'Validation dashboard',
+                style: TextStyle(
+                  color: AppColors.primaryText,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [
+              _ValidationPill(label: 'Signals', value: '${zone.reportCount}'),
+              _ValidationPill(label: 'Matching', value: '$matching'),
+              _ValidationPill(
+                label: 'Confidence',
+                value: '${zone.confidenceScore.toStringAsFixed(0)}%',
+              ),
+              _ValidationPill(
+                label: 'Category',
+                value: _topAgreedCategory(zone),
+              ),
+              _ValidationPill(label: 'Updated', value: _lastUpdatedLabel(zone)),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ValidationPill extends StatelessWidget {
+  const _ValidationPill({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.82),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(
+        '$label: $value',
+        style: const TextStyle(
+          color: AppColors.secondaryText,
+          fontSize: 10.5,
+          fontWeight: FontWeight.w800,
+        ),
+      ),
+    );
+  }
 }
 
 class _NavigationCard extends StatelessWidget {
@@ -3248,6 +3792,38 @@ class _ZoneLegendPanel extends StatelessWidget {
                       materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
                     );
                   }).toList(),
+                ),
+                const Divider(height: 18),
+                const Text(
+                  'Lifecycle',
+                  style: TextStyle(
+                    color: AppColors.primaryText,
+                    fontWeight: FontWeight.w800,
+                    fontSize: 12,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                const _LifecycleLegendItem(
+                  color: Color(0xFFCBD5E1),
+                  title: 'Emerging / low confidence',
+                  detail: 'Few matching signals',
+                  opacity: 0.45,
+                ),
+                const _LifecycleLegendItem(
+                  color: Color(0xFF22C55E),
+                  title: 'Validated zone',
+                  detail: 'Consensus threshold met',
+                ),
+                const _LifecycleLegendItem(
+                  color: AppColors.safetyAccent,
+                  title: 'Safety concern',
+                  detail: 'Recent caution tags',
+                ),
+                const _LifecycleLegendItem(
+                  color: Color(0xFF94A3B8),
+                  title: 'Decaying / old signal',
+                  detail: 'Fading confidence',
+                  opacity: 0.35,
                 ),
               ],
             )

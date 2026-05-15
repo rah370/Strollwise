@@ -38,7 +38,9 @@ class Settings(BaseSettings):
     cache_ttl_zone_feed_seconds: int = Field(default=25)
     cache_ttl_pulse_seconds: int = Field(default=120)
     pending_cache_ttl_seconds: int = Field(default=900)
-    pending_min_reports_per_cell: int = Field(default=2)
+    # Require more than 5 pins in the same H3 cell before approval (same-cell
+    # quorum plus category agreement ratio in report_service).
+    pending_min_reports_per_cell: int = Field(default=6)
     pending_agreement_ratio: float = Field(default=0.6)
 
     s3_bucket_name: str | None = Field(default=None)

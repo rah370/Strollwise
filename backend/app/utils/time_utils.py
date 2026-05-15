@@ -10,6 +10,13 @@ def utcnow() -> datetime:
     return datetime.now(_UTC).replace(tzinfo=None)
 
 
+def as_utc_aware(dt: datetime) -> datetime:
+    """Normalize DB datetimes for comparisons (Postgres: aware UTC; SQLite tests: often naive)."""
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=_UTC)
+    return dt.astimezone(_UTC)
+
+
 def hour_of(dt: datetime) -> int:
     if dt.tzinfo is not None:
         return int(dt.astimezone(_UTC).hour)

@@ -1,12 +1,13 @@
 """Handles the full lifecycle of a user report submission."""
 from __future__ import annotations
 
+import logging
+from collections import Counter
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from uuid import UUID
 
 from sqlalchemy.orm import Session
-
-from collections import Counter
 
 from app.core.cache import cache_delete_pattern, cache_set
 from app.core.config import settings
@@ -21,6 +22,8 @@ from app.services import h3_service
 from app.services.aggregation_service import AggregationService
 from app.services.audit_service import AuditService
 from app.services.zone_merge_service import ZoneMergeService
+
+log = logging.getLogger(__name__)
 
 
 class ReportValidationError(Exception):
@@ -93,6 +96,13 @@ _RESTRICTED_AREAS = (
 )
 
 
+def _tags_refer_to_uspf(tags: list[str] | None) -> bool:
+    """True when any tag mentions USPF (e.g. Flutter sends 'uspf campus' as one token)."""
+    if not tags:
+        return False
+    return any("uspf" in str(t).lower() for t in tags)
+
+
 class ReportService:
     def __init__(self, db: Session) -> None:
         self.db = db
@@ -148,6 +158,8 @@ class ReportService:
             },
         )
 
+        user.updated_at = datetime.now(timezone.utc)
+        self.db.add(user)
         self.db.commit()
         self.db.refresh(report)
         self._write_pending_cache(h3_index)
@@ -200,6 +212,44 @@ class ReportService:
     def report_by_id(self, report_id: UUID) -> Report | None:
         return self.reports.get_by_id(report_id)
 
+    def list_place_markers(
+        self,
+        min_lat: float,
+        max_lat: float,
+        min_lng: float,
+        max_lng: float,
+        tag: str,
+        *,
+        limit: int = 120,
+    ) -> list[Report]:
+        return self.reports.list_in_viewport_with_tag(
+            min_lat,
+            max_lat,
+            min_lng,
+            max_lng,
+            tag,
+            limit=limit,
+        )
+
+    def list_own_pending_pins(
+        self,
+        user_id: UUID,
+        min_lat: float,
+        max_lat: float,
+        min_lng: float,
+        max_lng: float,
+        *,
+        limit: int = 80,
+    ) -> list[Report]:
+        return self.reports.list_own_pending_in_viewport(
+            user_id,
+            min_lat,
+            max_lat,
+            min_lng,
+            max_lng,
+            limit=limit,
+        )
+
     def _write_pending_cache(self, h3_index: str) -> None:
         pending_reports = self.reports.list_pending_by_h3_index(h3_index)
         cache_set(
@@ -216,7 +266,12 @@ class ReportService:
         self, h3_index: str, category: str
     ) -> AggregationFeedback:
         pending_reports = self.reports.list_pending_by_h3_index(h3_index)
-        min_reports = max(settings.pending_min_reports_per_cell, 1)
+        has_uspf = any(_tags_refer_to_uspf(r.tags_json) for r in pending_reports)
+        min_reports = (
+            1
+            if has_uspf
+            else max(settings.pending_min_reports_per_cell, 1)
+        )
         matching_count = sum(
             1 for report in pending_reports if (report.category or "").lower() == category
         )
@@ -237,7 +292,14 @@ class ReportService:
 
     def _approve_if_threshold_met(self, h3_index: str) -> bool:
         pending_reports = self.reports.list_pending_by_h3_index(h3_index)
-        min_reports = max(settings.pending_min_reports_per_cell, 1)
+        has_uspf = any(_tags_refer_to_uspf(r.tags_json) for r in pending_reports)
+        # Campus "USPF" tags: one submission in the cell is enough to validate and
+        # publish the zone (still subject to duplicate checks elsewhere).
+        min_reports = (
+            1
+            if has_uspf
+            else max(settings.pending_min_reports_per_cell, 1)
+        )
         if len(pending_reports) < min_reports:
             return False
 
@@ -254,12 +316,22 @@ class ReportService:
 
         affected = {h3_index}
         affected.update(h3_service.get_neighbors(h3_index, ring_size=1))
-        AggregationService(self.db).recompute_cells(affected)
-        self.db.commit()
-        ZoneMergeService(self.db).recompute_near([h3_index])
+        try:
+            AggregationService(self.db).recompute_cells(affected)
+            self.db.commit()
+            ZoneMergeService(self.db).recompute_near([h3_index])
 
-        cache_delete_pattern("zones:vp:*")
-        cache_delete_pattern("zones:feed*")
-        cache_delete_pattern("city:pulse:*")
-        cache_delete_pattern(f"reports:pending:{h3_index}")
+            cache_delete_pattern("zones:vp:*")
+            cache_delete_pattern("zones:feed*")
+            cache_delete_pattern("city:pulse:*")
+            cache_delete_pattern(f"reports:pending:{h3_index}")
+        except Exception:
+            # Reports are already visible; do not fail the HTTP request if
+            # derived data (aggregates / merged zones) fails to refresh.
+            log.exception(
+                "aggregation or zone merge failed after approving reports "
+                "for h3_index=%s",
+                h3_index,
+            )
+            self.db.rollback()
         return True

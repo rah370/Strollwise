@@ -132,6 +132,28 @@ CITY_DISTRICTS = [
         "peak_hours": [7, 12, 16, 17, 18],
     },
     {
+        "name": "USPF Salinas Drive & JY",
+        "center": (10.3372, 123.9028),
+        "radius": 0.0028,
+        "traveler_bias": "local",
+        "categories": ["school", "food", "transport"],
+        "tags": [
+            "uspf",
+            "student",
+            "campus",
+            "salinas",
+            "jy",
+            "study",
+            "library",
+            "commute",
+        ],
+        "notes": [
+            "USPF campus corridor along Salinas Drive and the JY Square retail strip.",
+            "Student movement between classes, study spots, and nearby food.",
+        ],
+        "peak_hours": [8, 9, 11, 12, 13, 15, 16, 17, 18],
+    },
+    {
         "name": "Pier / Port Area",
         "center": (10.2925, 123.9160),
         "radius": 0.003,

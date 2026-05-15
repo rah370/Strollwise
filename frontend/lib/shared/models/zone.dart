@@ -28,6 +28,7 @@ class ZoneModel {
     this.whyVisit,
     this.liveUpdate,
     this.nearbyZoneIds = const [],
+    this.updatedAt,
   });
 
   /// Stable UUID identifier returned by the backend.
@@ -87,6 +88,7 @@ class ZoneModel {
   final String? whyVisit;
   final String? liveUpdate;
   final List<String> nearbyZoneIds;
+  final DateTime? updatedAt;
 
   // --- Legacy-compat getters used throughout the UI ----------------------
 
@@ -256,6 +258,7 @@ class ZoneModel {
       nearbyZoneIds: ((json['nearby_zone_ids'] as List?) ?? const [])
           .map((e) => e.toString())
           .toList(),
+      updatedAt: _parseDateTime(json['updated_at']),
     );
   }
 
@@ -310,5 +313,10 @@ class ZoneModel {
   static int _approxReports(double crowd, double confidence) {
     final approx = (crowd * 40) + (confidence / 2);
     return approx < 1 ? 1 : approx.round();
+  }
+
+  static DateTime? _parseDateTime(Object? value) {
+    if (value == null) return null;
+    return DateTime.tryParse(value.toString());
   }
 }

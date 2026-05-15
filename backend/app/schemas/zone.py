@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 from uuid import UUID
 
@@ -23,6 +24,7 @@ class ZoneListItem(ORMModel):
     confidence_score: float
     priority_score: float
     source_h3_rings: list[list[list[float]]] = Field(default_factory=list)
+    updated_at: datetime | None = None
 
 
 class ZoneDetail(ORMModel):
@@ -45,6 +47,7 @@ class ZoneDetail(ORMModel):
     source_h3_indexes: list[str] = Field(default_factory=list)
     source_h3_rings: list[list[list[float]]] = Field(default_factory=list)
     report_count: int = 0
+    updated_at: datetime | None = None
 
 
 class ZoneLaunchContext(ORMModel):

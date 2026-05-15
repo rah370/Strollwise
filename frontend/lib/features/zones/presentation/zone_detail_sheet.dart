@@ -354,6 +354,16 @@ class _ZoneBody extends ConsumerWidget {
         const SizedBox(height: 8),
         _TravelerMixBar(zone: zone),
         const SizedBox(height: 20),
+        _SectionHeading(title: 'Validation Dashboard'),
+        const SizedBox(height: 10),
+        _ZoneValidationDashboard(
+          totalSignals: zone.reportCount,
+          matchingSignals: _matchingSignalCount(zone),
+          confidence: zone.confidenceScore,
+          topCategory: _topAgreedCategory(zone),
+          lastUpdated: _lastUpdatedLabel(zone),
+        ),
+        const SizedBox(height: 20),
         _SectionHeading(title: 'About this Zone'),
         const SizedBox(height: 8),
         Text(
@@ -363,6 +373,15 @@ class _ZoneBody extends ConsumerWidget {
             color: Color(0xFF334155),
             fontSize: 14,
           ),
+        ),
+        const SizedBox(height: 20),
+        _SectionHeading(title: 'Local vs Tourist Insight'),
+        const SizedBox(height: 10),
+        _LocalTouristInsightPanel(
+          localsKnow: _localsKnow(zone),
+          touristsMiss: _touristsMiss(zone),
+          bestTime: zone.peakTimeLabel ?? 'Varies by day',
+          safetyContext: _safetyContext(zone),
         ),
         const SizedBox(height: 20),
         _SectionHeading(title: 'Top Activities'),
@@ -496,6 +515,69 @@ class _ZoneBody extends ConsumerWidget {
     return 'This zone shows $traveler $behavior. Confidence is $confidence% based on recent community tags, with $peak activity.';
   }
 
+  int _matchingSignalCount(ZoneModel zone) {
+    final total = zone.reportCount < 1 ? 1 : zone.reportCount;
+    return math.max(1, (total * (zone.confidenceScore / 100)).round());
+  }
+
+  String _topAgreedCategory(ZoneModel zone) => _titleize(zone.functionType);
+
+  String _lastUpdatedLabel(ZoneModel zone) {
+    final updated = zone.updatedAt;
+    if (updated == null) return 'Recent';
+    final local = updated.toLocal();
+    final diff = DateTime.now().difference(local);
+    if (diff.inMinutes < 1) return 'Just now';
+    if (diff.inHours < 1) return '${diff.inMinutes}m ago';
+    if (diff.inDays < 1) return '${diff.inHours}h ago';
+    return '${local.month}/${local.day} ${local.hour.toString().padLeft(2, '0')}:${local.minute.toString().padLeft(2, '0')}';
+  }
+
+  String _localsKnow(ZoneModel zone) {
+    switch (zone.functionType) {
+      case 'food_hotspot':
+        return 'Local tags point to budget meals, repeat vendors, and side-street food movement.';
+      case 'student_area':
+        return 'Students use this area for study stops, budget food, and campus-edge errands.';
+      case 'transport_zone':
+        return 'Locals treat this as a pickup, transfer, and quick-errand zone.';
+      case 'commercial_zone':
+        return 'Local activity clusters around work breaks, shopping shortcuts, and evening dining.';
+      case 'safety_concern':
+        return 'Community tags suggest extra awareness around timing, lighting, and crowd conditions.';
+      default:
+        return 'Local contributions describe practical movement patterns, not just named places.';
+    }
+  }
+
+  String _touristsMiss(ZoneModel zone) {
+    switch (zone.functionType) {
+      case 'food_hotspot':
+        return 'Visitors may only see the landmark, while locals know when food activity is strongest.';
+      case 'student_area':
+        return 'Tourists may miss that this is mostly student-paced and budget-oriented.';
+      case 'transport_zone':
+        return 'Visitors may underestimate transfer time, traffic pressure, and pickup behavior.';
+      case 'commercial_zone':
+        return 'Tourists may miss quieter local routes behind malls and office clusters.';
+      case 'safety_concern':
+        return 'Visitors may not know which times or exits need extra caution.';
+      default:
+        return 'Tourists may miss local routines, shortcuts, and timing patterns behind the zone.';
+    }
+  }
+
+  String _safetyContext(ZoneModel zone) {
+    if (zone.functionType == 'safety_concern' ||
+        zone.liveStatus == 'caution_now') {
+      return 'Recent safety-related signals are present. Stay in visible public areas and check current conditions.';
+    }
+    if (zone.crowdLevel >= 0.75) {
+      return 'High activity can mean crowds, traffic, and slower movement. Keep belongings secure.';
+    }
+    return 'No strong safety warning in the current signals; still use normal city awareness.';
+  }
+
   List<(IconData, String)> _activityChips(ZoneModel zone) {
     final source = zone.topActivities.isNotEmpty
         ? zone.topActivities
@@ -531,10 +613,10 @@ class _ZoneBody extends ConsumerWidget {
     List<ZoneModel> nearby,
     List<ZoneModel> alternatives,
   ) {
-    final candidates = [...nearby, ...alternatives]
-        .where((z) => z.zoneId != zone.zoneId)
-        .take(4)
-        .toList();
+    final candidates = [
+      ...nearby,
+      ...alternatives,
+    ].where((z) => z.zoneId != zone.zoneId).take(4).toList();
     if (candidates.isEmpty) {
       return const [
         (Icons.location_on_outlined, 'City Center'),
@@ -588,6 +670,260 @@ class _SectionHeading extends StatelessWidget {
         fontSize: 15,
         fontWeight: FontWeight.w800,
         color: Color(0xFF0F172A),
+      ),
+    );
+  }
+}
+
+class _ZoneValidationDashboard extends StatelessWidget {
+  const _ZoneValidationDashboard({
+    required this.totalSignals,
+    required this.matchingSignals,
+    required this.confidence,
+    required this.topCategory,
+    required this.lastUpdated,
+  });
+
+  final int totalSignals;
+  final int matchingSignals;
+  final double confidence;
+  final String topCategory;
+  final String lastUpdated;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+      ),
+      child: Column(
+        children: [
+          Row(
+            children: [
+              _ValidationTile(
+                label: 'Total signals',
+                value: '$totalSignals',
+                icon: Icons.tag_rounded,
+              ),
+              const SizedBox(width: 10),
+              _ValidationTile(
+                label: 'Matching',
+                value: '$matchingSignals',
+                icon: Icons.how_to_reg_rounded,
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              _ValidationTile(
+                label: 'Confidence',
+                value: '${confidence.toStringAsFixed(0)}%',
+                icon: Icons.verified_user_outlined,
+              ),
+              const SizedBox(width: 10),
+              _ValidationTile(
+                label: 'Updated',
+                value: lastUpdated,
+                icon: Icons.schedule_rounded,
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: const Color(0xFFE2E8F0)),
+            ),
+            child: Row(
+              children: [
+                const Icon(
+                  Icons.rule_folder_outlined,
+                  size: 18,
+                  color: AppColors.accent,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Top agreed category: $topCategory',
+                    style: const TextStyle(
+                      color: Color(0xFF334155),
+                      fontWeight: FontWeight.w800,
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ValidationTile extends StatelessWidget {
+  const _ValidationTile({
+    required this.label,
+    required this.value,
+    required this.icon,
+  });
+
+  final String label;
+  final String value;
+  final IconData icon;
+
+  @override
+  Widget build(BuildContext context) {
+    return Expanded(
+      child: Container(
+        padding: const EdgeInsets.all(10),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: const Color(0xFFE2E8F0)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(icon, size: 17, color: AppColors.accent),
+            const SizedBox(height: 6),
+            Text(
+              value,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: Color(0xFF0F172A),
+                fontWeight: FontWeight.w900,
+                fontSize: 16,
+              ),
+            ),
+            Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: Color(0xFF64748B),
+                fontWeight: FontWeight.w700,
+                fontSize: 11,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _LocalTouristInsightPanel extends StatelessWidget {
+  const _LocalTouristInsightPanel({
+    required this.localsKnow,
+    required this.touristsMiss,
+    required this.bestTime,
+    required this.safetyContext,
+  });
+
+  final String localsKnow;
+  final String touristsMiss;
+  final String bestTime;
+  final String safetyContext;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        _InsightRow(
+          icon: Icons.groups_rounded,
+          title: 'What locals know',
+          body: localsKnow,
+          color: AppColors.localAccent,
+        ),
+        const SizedBox(height: 10),
+        _InsightRow(
+          icon: Icons.travel_explore_rounded,
+          title: 'What tourists usually miss',
+          body: touristsMiss,
+          color: AppColors.touristAccent,
+        ),
+        const SizedBox(height: 10),
+        _InsightRow(
+          icon: Icons.access_time_rounded,
+          title: 'Best time to visit',
+          body: bestTime,
+          color: AppColors.accent,
+        ),
+        const SizedBox(height: 10),
+        _InsightRow(
+          icon: Icons.shield_outlined,
+          title: 'Safety/context note',
+          body: safetyContext,
+          color: AppColors.safetyAccent,
+        ),
+      ],
+    );
+  }
+}
+
+class _InsightRow extends StatelessWidget {
+  const _InsightRow({
+    required this.icon,
+    required this.title,
+    required this.body,
+    required this.color,
+  });
+
+  final IconData icon;
+  final String title;
+  final String body;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: color.withValues(alpha: 0.24)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, color: color, size: 20),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: TextStyle(
+                    color: color,
+                    fontWeight: FontWeight.w900,
+                    fontSize: 12,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  body,
+                  style: const TextStyle(
+                    color: Color(0xFF334155),
+                    fontWeight: FontWeight.w600,
+                    fontSize: 12.5,
+                    height: 1.35,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }

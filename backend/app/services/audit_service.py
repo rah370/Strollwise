@@ -39,8 +39,10 @@ class AuditService:
             payload_json=payload,
         )
         try:
-            self.db.add(entry)
-            self.db.flush()
+            # SAVEPOINT: never roll back the outer transaction (e.g. a pending
+            # report insert) when audit logging alone fails.
+            with self.db.begin_nested():
+                self.db.add(entry)
+                self.db.flush()
         except SQLAlchemyError as exc:
             log.warning("Failed to write audit log %s/%s: %s", entity_type, action_type, exc)
-            self.db.rollback()

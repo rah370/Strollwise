@@ -10,7 +10,10 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../shared/models/current_zone_overview.dart';
 import '../../shared/models/layer_settings.dart';
+import '../../shared/models/place_tag_marker.dart';
 import '../../shared/models/report.dart';
+import '../../shared/models/user_contributions.dart';
+import '../../shared/models/user_me.dart';
 import '../../shared/models/zone.dart';
 import '../../shared/network/api_client.dart';
 
@@ -20,6 +23,24 @@ final selectedZoneProvider = StateProvider<ZoneModel?>((ref) => null);
 final activeZoneFilterProvider = StateProvider<String?>((ref) => null);
 final currentUserLocationProvider = StateProvider<LatLng?>((ref) => null);
 final exploreFocusLocationProvider = StateProvider<LatLng?>((ref) => null);
+
+/// After a successful tag submit, Explore consumes this to fly the camera,
+/// show a temporary flash pin, and surface a short SnackBar summary.
+class ExplorePostSubmitCue {
+  const ExplorePostSubmitCue({
+    required this.focus,
+    required this.summary,
+  });
+
+  final LatLng focus;
+  final String summary;
+}
+
+final explorePostSubmitCueProvider =
+    StateProvider<ExplorePostSubmitCue?>((ref) => null);
+
+/// Temporary black pin on Explore; cleared automatically after a few seconds.
+final exploreFlashPinProvider = StateProvider<LatLng?>((ref) => null);
 final zoneDataNoticeProvider = StateProvider<String?>((ref) => null);
 final layerSettingsProvider = StateProvider<LayerSettings>(
   (ref) => const LayerSettings(),
@@ -76,6 +97,41 @@ final mapViewportProvider = StateProvider<MapViewport>(
   ),
 );
 
+/// Current user's pending tags in the viewport (private until validated).
+final ownPendingTagPinsProvider =
+    FutureProvider<List<PlaceTagMarker>>((ref) async {
+  final dio = ref.watch(dioProvider);
+  final viewport = ref.watch(mapViewportProvider);
+  final token = ref.watch(authTokenProvider);
+  if (token == null || token == 'demo-token-local') {
+    return const [];
+  }
+  try {
+    final response = await dio.get(
+      '/reports/my-pending-pins',
+      queryParameters: <String, dynamic>{
+        'min_lat': viewport.minLat,
+        'max_lat': viewport.maxLat,
+        'min_lng': viewport.minLng,
+        'max_lng': viewport.maxLng,
+        'limit': 80,
+      },
+      options: Options(headers: {'Authorization': 'Bearer $token'}),
+    );
+    final list = response.data;
+    if (list is! List) return const [];
+    return list
+        .map((e) => PlaceTagMarker.fromJson(e as Map<String, dynamic>))
+        .toList();
+  } on DioException {
+    return const [];
+  } on FormatException {
+    return const [];
+  } on TypeError {
+    return const [];
+  }
+});
+
 final visibleZonesProvider = FutureProvider<List<ZoneModel>>((ref) async {
   final dio = ref.watch(dioProvider);
   final viewport = ref.watch(mapViewportProvider);
@@ -122,6 +178,128 @@ final feedProvider = FutureProvider<List<ReportModel>>((ref) async {
     return _fallbackFeed();
   } on TypeError {
     return _fallbackFeed();
+  }
+});
+
+final userMeProvider = FutureProvider<UserMeModel?>((ref) async {
+  final token = ref.watch(authTokenProvider);
+  if (token == null || token == 'demo-token-local') {
+    return null;
+  }
+  final dio = ref.watch(dioProvider);
+  try {
+    final response = await dio.get(
+      '/users/me',
+      options: Options(
+        headers: {
+          'Cache-Control': 'no-cache',
+          'Pragma': 'no-cache',
+          'Authorization': 'Bearer $token',
+        },
+      ),
+    );
+    return UserMeModel.fromJson(response.data as Map<String, dynamic>);
+  } on DioException {
+    return null;
+  } on FormatException {
+    return null;
+  } on TypeError {
+    return null;
+  }
+});
+
+const _contributionsNoCacheHeaders = <String, String>{
+  'Cache-Control': 'no-cache',
+  'Pragma': 'no-cache',
+};
+
+/// Loads `/users/me/contributions` and exposes [refresh] so tag submit can
+/// await a refetch (FutureProvider + invalidate alone was not reliably
+/// updating "Tags submitted" on Profile).
+class UserContributionsNotifier
+    extends StateNotifier<AsyncValue<UserContributionsModel?>> {
+  UserContributionsNotifier(this.ref) : super(const AsyncLoading()) {
+    ref.listen<String?>(
+      authTokenProvider,
+      (previous, next) {
+        if (previous != next) {
+          unawaited(_load(initial: true));
+        }
+      },
+    );
+    unawaited(_load(initial: true));
+  }
+
+  final Ref ref;
+
+  Future<void> _load({required bool initial}) async {
+    final token = ref.read(authTokenProvider);
+    if (token == null || token == 'demo-token-local') {
+      state = const AsyncData(null);
+      return;
+    }
+    if (initial) {
+      state = const AsyncLoading();
+    }
+    try {
+      final dio = ref.read(dioProvider);
+      final response = await dio.get(
+        '/users/me/contributions',
+        options: Options(
+          headers: {
+            ..._contributionsNoCacheHeaders,
+            'Authorization': 'Bearer $token',
+          },
+        ),
+      );
+      state = AsyncData(
+        UserContributionsModel.fromJson(
+          response.data as Map<String, dynamic>,
+        ),
+      );
+    } on DioException {
+      state = const AsyncData(null);
+    } on FormatException {
+      state = const AsyncData(null);
+    } on TypeError {
+      state = const AsyncData(null);
+    } catch (e, st) {
+      state = AsyncError(e, st);
+    }
+  }
+
+  /// Refetch stats + recent tags (e.g. after submitting a report).
+  Future<void> refresh() => _load(initial: false);
+}
+
+final userContributionsProvider = StateNotifierProvider<
+    UserContributionsNotifier,
+    AsyncValue<UserContributionsModel?>>((ref) {
+  return UserContributionsNotifier(ref);
+});
+
+final savedZonesProfileProvider =
+    FutureProvider.autoDispose<List<ZoneModel>>((ref) async {
+  final token = ref.watch(authTokenProvider);
+  if (token == null || token == 'demo-token-local') {
+    return const [];
+  }
+  final dio = ref.watch(dioProvider);
+  try {
+    final response = await dio.get(
+      '/users/me/saved-zones',
+      options: Options(headers: {'Authorization': 'Bearer $token'}),
+    );
+    final list = response.data as List;
+    return list
+        .map((e) => ZoneModel.fromJson(e as Map<String, dynamic>))
+        .toList();
+  } on DioException {
+    return const [];
+  } on FormatException {
+    return const [];
+  } on TypeError {
+    return const [];
   }
 });
 
@@ -329,6 +507,128 @@ final currentZoneOverviewProvider = FutureProvider<CurrentZoneOverviewModel?>((
     return null;
   }
 });
+
+/// Pin chosen on Add Tag; when set, zone overview uses this instead of GPS.
+final tagSubmissionPinLocationProvider = StateProvider<LatLng?>(
+  (ref) => null,
+);
+
+/// Location used for `/zones/current` on the Add Tag screen (pin → GPS → Cebu default).
+/// Always returns a coordinate so zone lookup never blocks on a null location.
+final tagFlowZoneOverviewLocationProvider = Provider<LatLng>((ref) {
+  final pin = ref.watch(tagSubmissionPinLocationProvider);
+  if (pin != null) return pin;
+  final gps = ref.watch(currentUserLocationProvider);
+  if (gps != null) return gps;
+  return const LatLng(10.3157, 123.8854);
+});
+
+/// Add Tag zone overview: keeps last result while refreshing and cancels stale requests.
+class TagFlowZoneOverviewState {
+  const TagFlowZoneOverviewState({
+    this.overview,
+    this.refreshing = false,
+  });
+
+  final CurrentZoneOverviewModel? overview;
+  final bool refreshing;
+}
+
+class TagFlowZoneOverviewNotifier extends StateNotifier<TagFlowZoneOverviewState> {
+  TagFlowZoneOverviewNotifier(this.ref) : super(const TagFlowZoneOverviewState()) {
+    _locationSub = ref.listen<LatLng>(
+      tagFlowZoneOverviewLocationProvider,
+      (previous, next) {
+        unawaited(_fetchFor(next));
+      },
+      fireImmediately: true,
+    );
+  }
+
+  final Ref ref;
+  late final ProviderSubscription<LatLng> _locationSub;
+  CancelToken? _cancelToken;
+  bool _alive = true;
+
+  void teardown() {
+    _alive = false;
+    _cancelToken?.cancel();
+    _locationSub.close();
+  }
+
+  Future<void> _fetchFor(LatLng loc) async {
+    if (!_alive) {
+      return;
+    }
+    _cancelToken?.cancel();
+    final token = CancelToken();
+    _cancelToken = token;
+
+    final previous = state.overview;
+    if (_alive) {
+      state = TagFlowZoneOverviewState(overview: previous, refreshing: true);
+    }
+
+    try {
+      final dio = ref.read(dioProvider);
+      final response = await dio.get<Map<String, dynamic>>(
+        '/zones/current',
+        queryParameters: <String, dynamic>{
+          'lat': loc.latitude,
+          'lng': loc.longitude,
+          'ring': 2,
+          'limit': 8,
+        },
+        cancelToken: token,
+      );
+      if (!_alive || token.isCancelled) {
+        return;
+      }
+      final data = response.data;
+      if (data == null) {
+        if (!_alive) {
+          return;
+        }
+        state = TagFlowZoneOverviewState(overview: previous, refreshing: false);
+        return;
+      }
+      final overview = CurrentZoneOverviewModel.fromJson(data);
+      if (!_alive) {
+        return;
+      }
+      state = TagFlowZoneOverviewState(
+        overview: overview,
+        refreshing: false,
+      );
+    } on DioException catch (e) {
+      if (e.type == DioExceptionType.cancel || !_alive) {
+        return;
+      }
+      if (_alive) {
+        state = TagFlowZoneOverviewState(overview: previous, refreshing: false);
+      }
+    } on FormatException {
+      if (!_alive) {
+        return;
+      }
+      state = TagFlowZoneOverviewState(overview: previous, refreshing: false);
+    } on TypeError {
+      if (!_alive) {
+        return;
+      }
+      state = TagFlowZoneOverviewState(overview: previous, refreshing: false);
+    }
+  }
+}
+
+final tagFlowZoneOverviewNotifierProvider =
+    StateNotifierProvider.autoDispose<TagFlowZoneOverviewNotifier, TagFlowZoneOverviewState>(
+  (ref) {
+    final notifier = TagFlowZoneOverviewNotifier(ref);
+    ref.onDispose(notifier.teardown);
+    return notifier;
+  },
+);
 
 /// Matches backend `h3_resolution` (8) and `_display_h3_rings` uncompact (+1).
 const int _kFallbackH3AggregateRes = 8;
@@ -900,44 +1200,49 @@ List<ReportModel> _fallbackFeed() {
   final now = DateTime.now();
   return [
     ReportModel(
-      id: 1,
+      id: '1',
       h3Index: '8928308280fffff',
       category: 'food',
       tags: const ['cafe', 'crowd'],
       note: 'Long line at lunch spots near IT Park.',
       createdAt: now.subtract(const Duration(minutes: 22)),
+      visibilityStatus: 'visible',
     ),
     ReportModel(
-      id: 2,
+      id: '2',
       h3Index: '89283082813ffff',
       category: 'transport',
       tags: const ['bus', 'traffic'],
       note: 'Heavy outbound traffic toward Ayala around rush hour.',
       createdAt: now.subtract(const Duration(hours: 1, minutes: 15)),
+      visibilityStatus: 'visible',
     ),
     ReportModel(
-      id: 3,
+      id: '3',
       h3Index: '89283082877ffff',
       category: 'crowd',
       tags: const ['event', 'busy'],
       note: 'Crowd building up near Fuente due to evening event.',
       createdAt: now.subtract(const Duration(hours: 3)),
+      visibilityStatus: 'visible',
     ),
     ReportModel(
-      id: 4,
+      id: '4',
       h3Index: '89283082887ffff',
       category: 'safety',
       tags: const ['rain', 'caution'],
       note: 'Slippery sidewalks reported in parts of Colon Street.',
       createdAt: now.subtract(const Duration(hours: 5)),
+      visibilityStatus: 'visible',
     ),
     ReportModel(
-      id: 5,
+      id: '5',
       h3Index: '892830828c7ffff',
       category: 'food',
       tags: const ['streetfood', 'local'],
       note: 'Night market stalls are now active near Carbon.',
       createdAt: now.subtract(const Duration(hours: 7)),
+      visibilityStatus: 'visible',
     ),
   ];
 }
@@ -1100,9 +1405,18 @@ class TagSubmissionController
         // responsive while still refreshing local fallback providers.
         await Future<void>.delayed(const Duration(milliseconds: 350));
         ref.invalidate(visibleZonesProvider);
+        ref.invalidate(ownPendingTagPinsProvider);
         ref.invalidate(feedProvider);
         ref.invalidate(zoneFeedProvider);
         ref.invalidate(cityPulseProvider);
+        try {
+          await ref.read(userContributionsProvider.notifier).refresh();
+        } catch (_) {}
+        ref.invalidate(userMeProvider);
+        try {
+          await ref.read(userMeProvider.future);
+        } catch (_) {}
+        ref.invalidate(savedZonesProfileProvider);
         final feedback = _demoFeedback(payload);
         state = AsyncData(feedback);
         return feedback;
@@ -1117,9 +1431,18 @@ class TagSubmissionController
         data['aggregation'] as Map<String, dynamic>,
       );
       ref.invalidate(visibleZonesProvider);
+      ref.invalidate(ownPendingTagPinsProvider);
       ref.invalidate(feedProvider);
       ref.invalidate(zoneFeedProvider);
       ref.invalidate(cityPulseProvider);
+      try {
+        await ref.read(userContributionsProvider.notifier).refresh();
+      } catch (_) {}
+      ref.invalidate(userMeProvider);
+      try {
+        await ref.read(userMeProvider.future);
+      } catch (_) {}
+      ref.invalidate(savedZonesProfileProvider);
       state = AsyncData(feedback);
       return feedback;
     } catch (error, stackTrace) {
@@ -1139,8 +1462,8 @@ class TagSubmissionController
         h3Index: cell.toString(),
         pendingCount: 1,
         matchingCount: 1,
-        threshold: 3,
-        remainingToThreshold: 2,
+        threshold: 6,
+        remainingToThreshold: 5,
         thresholdMet: false,
         publicZoneUpdate: 'Zone will update after the threshold is reached.',
       );
@@ -1149,8 +1472,8 @@ class TagSubmissionController
         h3Index: 'demo-h3-cell',
         pendingCount: 1,
         matchingCount: 1,
-        threshold: 3,
-        remainingToThreshold: 2,
+        threshold: 6,
+        remainingToThreshold: 5,
         thresholdMet: false,
         publicZoneUpdate: 'Zone will update after the threshold is reached.',
       );
@@ -1200,6 +1523,9 @@ class AuthActionController extends StateNotifier<AsyncValue<void>> {
       }
       ref.read(authTokenProvider.notifier).state = token;
       ref.read(authUserEmailProvider.notifier).state = email.trim();
+      ref.invalidate(userMeProvider);
+      ref.invalidate(userContributionsProvider);
+      ref.invalidate(savedZonesProfileProvider);
       state = const AsyncData(null);
     } catch (error, stackTrace) {
       state = AsyncError(error, stackTrace);
@@ -1210,6 +1536,26 @@ class AuthActionController extends StateNotifier<AsyncValue<void>> {
   void loginDemoUser() {
     ref.read(authTokenProvider.notifier).state = 'demo-token-local';
     ref.read(authUserEmailProvider.notifier).state = 'demo@strollwise.local';
+    ref.invalidate(userMeProvider);
+    ref.invalidate(userContributionsProvider);
+    ref.invalidate(savedZonesProfileProvider);
+    state = const AsyncData(null);
+  }
+
+  void logout() {
+    ref.read(authTokenProvider.notifier).state = null;
+    ref.read(authUserEmailProvider.notifier).state = null;
+    ref.read(selectedZoneProvider.notifier).state = null;
+    ref.read(activeZoneFilterProvider.notifier).state = null;
+    ref.read(currentUserLocationProvider.notifier).state = null;
+    ref.read(exploreFocusLocationProvider.notifier).state = null;
+    ref.read(explorePostSubmitCueProvider.notifier).state = null;
+    ref.read(exploreFlashPinProvider.notifier).state = null;
+    ref.read(zoneDataNoticeProvider.notifier).state = null;
+    ref.invalidate(userMeProvider);
+    ref.invalidate(userContributionsProvider);
+    ref.invalidate(savedZonesProfileProvider);
+    ref.invalidate(ownPendingTagPinsProvider);
     state = const AsyncData(null);
   }
 }
