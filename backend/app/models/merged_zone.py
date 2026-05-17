@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import Optional
 
 from geoalchemy2 import Geometry as _PostGISGeometry
-from sqlalchemy import Boolean, DateTime, Float, Integer, String, Text, func
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.types import TypeDecorator
@@ -32,7 +32,7 @@ class _PostGISMultiPolygon(TypeDecorator):
 
 
 class MergedZone(Base):
-    """Frontend-facing zone: one row per active H3 cell (single-hex footprint)."""
+    """Frontend-facing zone: one row per active place (traveler mix layer)."""
 
     __tablename__ = "merged_zones"
 
@@ -43,7 +43,15 @@ class MergedZone(Base):
     slug: Mapped[str] = mapped_column(String(180), nullable=False, unique=True, index=True)
 
     behavior_type: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
-    function_type: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    function_type: Mapped[Optional[str]] = mapped_column(String(32), nullable=True, index=True)
+    traveler_mix: Mapped[Optional[str]] = mapped_column(String(16), nullable=True, index=True)
+    place_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("places.place_id", ondelete="SET NULL"),
+        nullable=True,
+        unique=True,
+        index=True,
+    )
 
     summary: Mapped[Optional[str]] = mapped_column(String(600), nullable=True)
     live_status: Mapped[str] = mapped_column(String(24), nullable=False, default="quiet_now")

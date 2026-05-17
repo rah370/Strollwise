@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import uuid
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import DateTime, Float, Integer, String, func
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, func
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
@@ -44,6 +45,12 @@ class H3CellAggregate(Base):
     )
     function_type: Mapped[str] = mapped_column(
         String(32), nullable=False, default="unknown", index=True
+    )
+    place_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("places.place_id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
     )
 
     crowd_score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)

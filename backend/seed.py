@@ -40,7 +40,9 @@ from app.models import (
 )
 from app.services import h3_service
 from app.services.aggregation_service import AggregationService
+from app.services.place_service import PlaceService
 from app.services.zone_merge_service import ZoneMergeService
+from app.utils.user_type_utils import apply_user_type_to_user, traveler_type_from_user_type
 
 fake = Faker()
 random.seed(7)
@@ -132,12 +134,13 @@ CITY_DISTRICTS = [
         "peak_hours": [7, 12, 16, 17, 18],
     },
     {
-        "name": "USPF Salinas Drive & JY",
-        "center": (10.3372, 123.9028),
-        "radius": 0.0028,
+        "name": "USPF campus",
+        "center": (10.3373, 123.9029),
+        "radius": 0.0015,
         "traveler_bias": "local",
-        "categories": ["school", "food", "transport"],
+        "categories": ["school", "food"],
         "tags": [
+            "uspf campus",
             "uspf",
             "student",
             "campus",
@@ -332,6 +335,9 @@ def clear_tables(db: Session) -> None:
     db.execute(delete(AuditLog))
     db.execute(delete(Media))
     db.execute(delete(MergedZone))
+    from app.models.place import Place
+
+    db.execute(delete(Place))
     db.execute(delete(H3CellAggregate))
     db.execute(delete(Report))
     db.execute(delete(User))
@@ -340,17 +346,22 @@ def clear_tables(db: Session) -> None:
 
 def seed_users(db: Session, count: int = 30) -> list[User]:
     users: list[User] = []
-    traveler_types = ["local", "international", "mixed", "resident", "student", "visitor"]
+    thesis_user_types = ["local_resident", "international_visitor", "domestic_traveler"]
     for i in range(count):
         email = f"demo{i}@example.com"
+        ut = random.choice(thesis_user_types)
         user = User(
             email=email,
             password_hash=hash_password("supersecret123"),
             display_name=fake.name(),
-            traveler_type=random.choice(traveler_types),
+            traveler_type="mixed",
+            user_type=ut,
+            country_of_origin=fake.country(),
+            city_of_origin=fake.city(),
             nationality=random.choice(["PH", "US", "JP", "KR", "AU", "GB", "DE", None]),
             age_range=random.choice(["18-24", "25-34", "35-44", "45-54"]),
         )
+        apply_user_type_to_user(user)
         db.add(user)
         users.append(user)
     db.commit()
@@ -361,7 +372,7 @@ def seed_users(db: Session, count: int = 30) -> list[User]:
 
 def seed_reports(db: Session, users: list[User], target_count: int = 600) -> list[Report]:
     reports: list[Report] = []
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    now = datetime.now(timezone.utc).replace(tzinfo=None)  # noqa: UP017
     weight = len(CITY_DISTRICTS) * 20
     for _ in range(target_count):
         district = random.choices(
@@ -394,6 +405,11 @@ def seed_reports(db: Session, users: list[User], target_count: int = 600) -> lis
         h3_index = h3_service.latlng_to_cell(lat, lng, 8)
 
         user = random.choice(users)
+        tt_snap = (
+            traveler_type_from_user_type(user.user_type)
+            if user.user_type
+            else traveler_type
+        )
         report = Report(
             user_id=user.id,
             h3_index=h3_index,
@@ -404,7 +420,10 @@ def seed_reports(db: Session, users: list[User], target_count: int = 600) -> lis
             tags_json=tags,
             note_text=random.choice(district.get("notes", [None])),
             source_type="user",
-            traveler_type_snapshot=traveler_type,
+            traveler_type_snapshot=tt_snap,
+            user_type_snapshot=user.user_type,
+            country_of_origin_snapshot=user.country_of_origin,
+            city_of_origin_snapshot=user.city_of_origin,
             visibility_status="visible",
             created_at=created_at,
             updated_at=created_at,
@@ -419,6 +438,7 @@ def recompute_aggregates_and_zones(db: Session, reports: list[Report]) -> None:
     unique_indexes = {r.h3_index for r in reports}
     AggregationService(db).recompute_cells(unique_indexes)
     db.commit()
+    PlaceService(db).rebuild_all()
     ZoneMergeService(db).rebuild_all()
 
 

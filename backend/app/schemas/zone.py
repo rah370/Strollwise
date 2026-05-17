@@ -7,13 +7,18 @@ from uuid import UUID
 from pydantic import Field
 
 from app.schemas.common import Centroid, ORMModel
+from app.schemas.place import PlaceSummary
 
 
 class ZoneListItem(ORMModel):
     zone_id: UUID
     display_name: str
     behavior_type: str
-    function_type: str
+    traveler_mix: str
+    function_type: str | None = None
+    place_id: UUID | None = None
+    place_name: str | None = None
+    place_type: str | None = None
     summary: str | None = None
     live_status: str
     polygon_geojson: dict[str, Any]
@@ -31,7 +36,12 @@ class ZoneDetail(ORMModel):
     zone_id: UUID
     display_name: str
     behavior_type: str
-    function_type: str
+    traveler_mix: str
+    function_type: str | None = None
+    place_id: UUID | None = None
+    place_name: str | None = None
+    place_type: str | None = None
+    places: list[PlaceSummary] = Field(default_factory=list)
     summary: str | None = None
     live_status: str
     polygon_geojson: dict[str, Any]

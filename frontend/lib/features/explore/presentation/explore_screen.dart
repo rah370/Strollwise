@@ -1,22 +1,21 @@
-// ignore_for_file: unused_element, unused_import, unused_field
-
 import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_map/flutter_map.dart' as fm;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:go_router/go_router.dart';
-import 'package:latlong2/latlong.dart' as ll;
 import 'package:maplibre_gl/maplibre_gl.dart';
 
 import '../../../app/theme/colors.dart';
+import '../../../shared/models/layer_settings.dart';
+import '../../../shared/models/place_list_item.dart';
 import '../../../shared/models/zone.dart';
 import '../../../shared/network/api_client.dart';
 import '../../../shared/providers/app_providers.dart';
-import '../../../shared/user_manual_map_location.dart';
+import '../../../shared/zone_place_ui.dart';
+import 'explore_map_filters.dart';
 import '../../zones/presentation/zone_detail_sheet.dart';
 
 enum ExploreMapMode { discovery, zoneSelected, navigating }
@@ -43,7 +42,6 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
   bool _isUpdatingViewport = false;
   bool _didBootstrapLocation = false;
   bool _didApplyCurrentZone = false;
-  bool _isLocationEnabledForMap = false;
   bool _mapStyleLoaded = false;
   bool _zoneLayersAdded = false;
   String? _zoneBelowLayerId;
@@ -73,6 +71,7 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
   ExploreMapMode _mapMode = ExploreMapMode.discovery;
   bool _showSearch = false;
   final TextEditingController _searchController = TextEditingController();
+  final FocusNode _searchFocusNode = FocusNode();
   List<ZoneModel> _searchMatches = const [];
   String? _searchFeedback;
   static const _cebuCityCenter = LatLng(10.3157, 123.8854);
@@ -146,7 +145,6 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
     ref.read(currentUserLocationProvider.notifier).state = focus;
     if (mounted) {
       setState(() {
-        _isLocationEnabledForMap = false;
         _usingManualLocation = true;
         _followUser = false;
         _locationState = _LocationBootstrapState.ready;
@@ -229,7 +227,6 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
         final applied = await _applyServerManualLocationIfAvailable();
         if (!applied && mounted) {
           setState(() {
-            _isLocationEnabledForMap = false;
             _usingManualLocation = false;
             _locationState = _LocationBootstrapState.ready;
           });
@@ -240,7 +237,6 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
       }
 
       setState(() {
-        _isLocationEnabledForMap = true;
         _usingManualLocation = false;
         _locationState = _LocationBootstrapState.ready;
       });
@@ -270,7 +266,6 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
       if (!_isWithinCebuRegion(here)) return false;
       ref.read(currentUserLocationProvider.notifier).state = here;
       setState(() {
-        _isLocationEnabledForMap = false;
         _usingManualLocation = true;
         _locationState = _LocationBootstrapState.ready;
       });
@@ -320,116 +315,6 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
       _cebuCityCenter.longitude,
     );
     return distanceMeters <= _cebuRegionRadiusMeters;
-  }
-
-  Future<void> _promptManualLocation() async {
-    final placeController = TextEditingController();
-    final result = await showDialog<LatLng>(
-      context: context,
-      builder: (context) {
-        var isSearching = false;
-        String? errorText;
-        Future<void> resolvePlace(StateSetter setDialogState) async {
-          final query = placeController.text.trim();
-          if (query.isEmpty) {
-            setDialogState(() {
-              errorText = 'Enter a street, building, or landmark.';
-            });
-            return;
-          }
-          setDialogState(() {
-            isSearching = true;
-            errorText = null;
-          });
-          final resolved = await _lookupManualPlace(query);
-          if (!context.mounted) return;
-          if (resolved == null) {
-            setDialogState(() {
-              isSearching = false;
-              errorText =
-                  'Could not find that place in Cebu. Try a clearer landmark.';
-            });
-            return;
-          }
-          Navigator.of(context).pop(resolved);
-        }
-
-        return StatefulBuilder(
-          builder: (context, setDialogState) => AlertDialog(
-            title: const Text('Search your location'),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'Type a street, building, or landmark in Cebu. No GPS access needed.',
-                  style: TextStyle(fontSize: 13),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: placeController,
-                  enabled: !isSearching,
-                  autofocus: true,
-                  textInputAction: TextInputAction.search,
-                  onSubmitted: (_) => resolvePlace(setDialogState),
-                  decoration: InputDecoration(
-                    labelText: 'Street, building, or landmark',
-                    hintText: 'Ayala Center, IT Park, Colon Street...',
-                    prefixIcon: const Icon(Icons.search_rounded),
-                    errorText: errorText,
-                  ),
-                ),
-                if (isSearching) ...[
-                  const SizedBox(height: 12),
-                  const LinearProgressIndicator(minHeight: 3),
-                ],
-              ],
-            ),
-            actions: [
-              TextButton(
-                onPressed: isSearching
-                    ? null
-                    : () => Navigator.of(context).pop(),
-                child: const Text('Cancel'),
-              ),
-              FilledButton(
-                onPressed: isSearching
-                    ? null
-                    : () => resolvePlace(setDialogState),
-                child: Text(isSearching ? 'Searching...' : 'Use place'),
-              ),
-            ],
-          ),
-        );
-      },
-    );
-    if (result == null) return;
-    await Future<void>.delayed(Duration.zero);
-    if (!mounted) return;
-    final token = ref.read(authTokenProvider);
-    if (token != null && token != 'demo-token-local') {
-      final ok = await persistUserManualMapLocation(ref, result);
-      if (mounted && !ok) {
-        ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-          const SnackBar(
-            content: Text(
-              'Place updated on the map. Could not sync to your account yet.',
-            ),
-          ),
-        );
-      }
-    }
-    ref.read(currentUserLocationProvider.notifier).state = result;
-    _positionSubscription?.cancel();
-    if (mounted) {
-      setState(() {
-        _isLocationEnabledForMap = false;
-        _usingManualLocation = true;
-        _followUser = false;
-        _locationState = _LocationBootstrapState.ready;
-      });
-    }
-    await _moveCameraToLocation(result, zoom: 13.5);
   }
 
   Future<LatLng?> _lookupManualPlace(String query) async {
@@ -500,10 +385,14 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
       return;
     }
     _latestZones = zones;
+    final layerSettings = ref.read(layerSettingsProvider);
     final selectedZone = ref.read(selectedZoneProvider);
     final userLocation = ref.read(currentUserLocationProvider);
     final mapMode = _mapMode;
     final currentZoom = ref.read(mapViewportProvider).zoom;
+    final showTravelerFill = layerSettings.showTravelerLayer;
+    final showPlaceOutlines = layerSettings.showFunctionalOverlay;
+    final places = ref.read(visiblePlacesProvider).valueOrNull ?? const [];
     try {
       await controller.clearSymbols();
       await controller.clearCircles();
@@ -519,6 +408,9 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
         if (!_enabledLayerKeys.contains(layerKey) && !isSelected) continue;
         final color = _streetZoneColor(zone);
         final lifecycle = _zoneLifecycleState(zone);
+        if (!showTravelerFill && !isSelected) {
+          continue;
+        }
         final h3Rings = zone.sourceH3Rings;
         if (h3Rings.isNotEmpty) {
           for (final ring in h3Rings) {
@@ -622,6 +514,30 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
         _zoneLayersAdded = true;
       } else {
         await controller.setGeoJsonSource(_zonesSourceId, geoJson);
+      }
+
+      if (showPlaceOutlines && currentZoom >= 12) {
+        final placeColor = placeTypeAccentColor;
+        for (final place in places) {
+          final accent = placeColor(place.placeType);
+          final rings = place.sourceH3Rings;
+          if (rings.isEmpty) continue;
+          for (final ring in rings) {
+            if (ring.length < 3) continue;
+            final latLngs = ring
+                .map((p) => LatLng(p[1], p[0]))
+                .toList(growable: false);
+            if (latLngs.length < 3) continue;
+            await controller.addLine(
+              LineOptions(
+                geometry: latLngs,
+                lineColor: _hexFromColor(accent),
+                lineWidth: 2.2,
+                lineOpacity: 0.92,
+              ),
+            );
+          }
+        }
       }
 
       final labelZones = [...zones]
@@ -1185,19 +1101,25 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
     _exploreFlashClearTimer?.cancel();
     _positionSubscription?.cancel();
     _searchController.dispose();
+    _searchFocusNode.dispose();
     super.dispose();
   }
 
   void _toggleSearch() {
+    final opening = !_showSearch;
     setState(() {
-      _showSearch = !_showSearch;
-      if (!_showSearch) {
+      _showSearch = opening;
+      if (!opening) {
         _searchController.clear();
         _searchMatches = const [];
         _searchFeedback = null;
       }
     });
-    if (!_showSearch) {
+    if (opening) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _searchFocusNode.requestFocus();
+      });
+    } else {
       ref.read(activeZoneFilterProvider.notifier).state = null;
     }
   }
@@ -1222,15 +1144,28 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
       });
     }
     if (q.contains('food')) {
-      ref.read(activeZoneFilterProvider.notifier).state = 'food';
+      ref.read(activePlaceTypeFilterProvider.notifier).state = 'food';
+      ref.read(activeTravelerMixFilterProvider.notifier).state = null;
+      ref.read(activeZoneFilterProvider.notifier).state = null;
+      return;
+    }
+    if (q.contains('school') || q.contains('uspf') || q.contains('campus')) {
+      ref.read(activePlaceTypeFilterProvider.notifier).state = 'school';
+      ref.read(activeTravelerMixFilterProvider.notifier).state = null;
+      ref.read(activeZoneFilterProvider.notifier).state = null;
       return;
     }
     if (q.contains('local')) {
-      ref.read(activeZoneFilterProvider.notifier).state = 'local_picks';
+      ref.read(activeTravelerMixFilterProvider.notifier).state = 'local';
+      ref.read(activePlaceTypeFilterProvider.notifier).state = null;
+      ref.read(activeZoneFilterProvider.notifier).state = null;
       return;
     }
     if (q.contains('tour') || q.contains('international')) {
-      ref.read(activeZoneFilterProvider.notifier).state = 'tourist';
+      ref.read(activeTravelerMixFilterProvider.notifier).state =
+          'international';
+      ref.read(activePlaceTypeFilterProvider.notifier).state = null;
+      ref.read(activeZoneFilterProvider.notifier).state = null;
       return;
     }
     if (q.contains('popular') || q.contains('trend')) {
@@ -1246,7 +1181,7 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
       _zoneTitle(zone),
       _zoneIdentity(zone),
       zone.behaviorType,
-      zone.functionType,
+      zone.zoneType,
       zone.summary ?? '',
       ...zone.topActivities,
     ].join(' ').toLowerCase();
@@ -1305,10 +1240,6 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
     });
   }
 
-  void _applyTopTagFilter(String? filterKey) {
-    ref.read(activeZoneFilterProvider.notifier).state = filterKey;
-  }
-
   void _toggleLayerKey(String key) {
     setState(() {
       if (_enabledLayerKeys.contains(key)) {
@@ -1319,120 +1250,6 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
         _enabledLayerKeys.add(key);
       }
     });
-  }
-
-  List<fm.Polygon<Object>> _buildStreetZoomPolygons(
-    List<ZoneModel> zones,
-    ZoneModel? selectedZone,
-    double zoom,
-  ) {
-    return zones
-        .where((zone) {
-          final layerKey = _zoneLayerKey(zone);
-          return _enabledLayerKeys.contains(layerKey) ||
-              selectedZone?.h3Index == zone.h3Index;
-        })
-        .expand((zone) {
-          final color = _streetZoneColor(zone);
-          final selected = selectedZone?.h3Index == zone.h3Index;
-          final opacity = selected ? 0.30 : (zoom >= 14.2 ? 0.24 : 0.18);
-          final hexRings = zone.sourceH3Rings;
-          if (hexRings.isNotEmpty) {
-            return hexRings.map((ring) {
-              final points = ring
-                  .map((point) => ll.LatLng(point[1], point[0]))
-                  .toList();
-              return fm.Polygon(
-                points: points,
-                // Outline-only zones so roads remain completely plain.
-                color: Colors.transparent,
-                borderColor: color.withValues(alpha: selected ? 0.82 : 0.68),
-                borderStrokeWidth: selected ? 1.25 : 1.0,
-              );
-            });
-          }
-          return zone.polygonParts.expand((rings) {
-            if (rings.isEmpty) return const <fm.Polygon<Object>>[];
-            final outerRing = rings.first
-                .map((point) => ll.LatLng(point[1], point[0]))
-                .toList();
-            if (outerRing.length < 3) return const <fm.Polygon<Object>>[];
-            return [
-              fm.Polygon(
-                points: outerRing,
-                color: color.withValues(alpha: opacity),
-                borderColor: color.withValues(alpha: selected ? 0.80 : 0.66),
-                borderStrokeWidth: selected ? 1.45 : 1.2,
-              ),
-            ];
-          });
-        })
-        .toList();
-  }
-
-  List<fm.Marker> _buildStreetZoomLabels(
-    List<ZoneModel> zones,
-    ZoneModel? selectedZone,
-    double zoom,
-  ) {
-    if (zoom < 13.4) {
-      return const <fm.Marker>[];
-    }
-    final limit = zoom >= 15 ? 7 : 4;
-    final sorted = [...zones]
-      ..sort(
-        (a, b) => (b.reportCount + b.confidenceScore).compareTo(
-          a.reportCount + a.confidenceScore,
-        ),
-      );
-    final visibleIds = sorted.take(limit).map((z) => z.h3Index).toSet();
-    return zones
-        .where((zone) {
-          final layerKey = _zoneLayerKey(zone);
-          final selected = selectedZone?.h3Index == zone.h3Index;
-          return (_enabledLayerKeys.contains(layerKey) &&
-                  visibleIds.contains(zone.h3Index)) ||
-              selected;
-        })
-        .map((zone) {
-          final color = _streetZoneColor(zone);
-          return fm.Marker(
-            point: ll.LatLng(
-              _zoneCenter(zone).latitude,
-              _zoneCenter(zone).longitude,
-            ),
-            width: 170,
-            height: 74,
-            child: GestureDetector(
-              onTap: () => _selectZone(zone),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(_zoneIcon(zone), color: color, size: 17),
-                  Text(
-                    _zoneTitle(zone),
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      color: _darken(color, 0.18),
-                      fontWeight: FontWeight.w800,
-                      fontSize: zoom >= 15 ? 14 : 13,
-                    ),
-                  ),
-                  Text(
-                    _zoneIdentity(zone),
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      color: _darken(color, 0.12).withValues(alpha: 0.82),
-                      fontWeight: FontWeight.w600,
-                      fontSize: 10.5,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          );
-        })
-        .toList();
   }
 
   @override
@@ -1461,8 +1278,31 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
         });
       });
     });
+    ref.listen<AsyncValue<List<PlaceListItem>>>(visiblePlacesProvider, (
+      prev,
+      next,
+    ) {
+      if (next.isLoading) return;
+      next.whenData((_) {
+        final zones = ref.read(visibleZonesProvider).valueOrNull ?? [];
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          unawaited(_drawZones(zones));
+        });
+      });
+    });
+    ref.listen<LayerSettings>(layerSettingsProvider, (prev, next) {
+      if (prev == next) return;
+      final zones = ref.read(visibleZonesProvider).valueOrNull ?? [];
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        unawaited(_drawZones(zones));
+      });
+    });
 
     final zonesValue = ref.watch(visibleZonesProvider);
+    ref.watch(visiblePlacesProvider);
+    ref.watch(layerSettingsProvider);
     ref.watch(ownPendingTagPinsProvider);
     final selectedZone = ref.watch(selectedZoneProvider);
     final currentUserLocation = ref.watch(currentUserLocationProvider);
@@ -1555,85 +1395,41 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
                         data: (zones) => zones.length,
                         orElse: () => null,
                       ),
+                      searchExpanded: _showSearch,
+                      searchController: _searchController,
+                      searchFocusNode: _searchFocusNode,
                       onSearchTap: _toggleSearch,
+                      onSearchClose: _toggleSearch,
+                      onSearchChanged: (value) =>
+                          _applySearchFilter(value, zones),
+                      onSearchSubmitted: () => _submitSearch(zones),
                       onNotificationTap: () {},
                     ),
+                    if (_showSearch &&
+                        (_searchController.text.trim().isNotEmpty ||
+                            _searchFeedback != null)) ...[
+                      const SizedBox(height: 8),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        child: _SearchResultsCard(
+                          matches: _searchMatches,
+                          feedback: _searchFeedback,
+                          onSelect: _focusZoneFromSearch,
+                        ),
+                      ),
+                    ],
                     const SizedBox(height: 10),
                     _LocationStatusBanner(
                       state: _locationState,
-                      usingManualLocation: _usingManualLocation,
-                      importantZoneIssue: currentZoneOverview
-                          .asData
-                          ?.value
-                          ?.currentZone
-                          ?.liveStatus,
                       onRetry: () => _bootstrapCurrentLocation(force: true),
-                      onManualLocation: _promptManualLocation,
+                      onOpenProfile: () => context.go('/profile'),
                     ),
                     if (zoneDataNotice != null) ...[
                       const SizedBox(height: 8),
                       _CacheNoticeBanner(message: zoneDataNotice),
                     ],
                     const SizedBox(height: 8),
-                    _TopTagFilterRow(onTagSelected: _applyTopTagFilter),
-                    if (_showSearch) ...[
-                      const SizedBox(height: 10),
-                      Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 18),
-                        child: Container(
-                          height: 52,
-                          decoration: BoxDecoration(
-                            color: Colors.white.withValues(alpha: 0.96),
-                            borderRadius: BorderRadius.circular(18),
-                            border: Border.all(color: AppColors.border),
-                            boxShadow: const [
-                              BoxShadow(
-                                color: Color(0x100F172A),
-                                blurRadius: 18,
-                                offset: Offset(0, 8),
-                              ),
-                            ],
-                          ),
-                          child: TextField(
-                            controller: _searchController,
-                            textInputAction: TextInputAction.search,
-                            onChanged: (value) =>
-                                _applySearchFilter(value, zones),
-                            onSubmitted: (_) => _submitSearch(zones),
-                            decoration: InputDecoration(
-                              hintText: 'Search Cebu (IT Park food...)',
-                              prefixIcon: const Icon(
-                                Icons.search_rounded,
-                                color: AppColors.primaryText,
-                              ),
-                              suffixIcon: IconButton(
-                                icon: const Icon(
-                                  Icons.close_rounded,
-                                  color: AppColors.mutedText,
-                                ),
-                                onPressed: _toggleSearch,
-                              ),
-                              border: InputBorder.none,
-                              enabledBorder: InputBorder.none,
-                              focusedBorder: InputBorder.none,
-                              filled: false,
-                            ),
-                          ),
-                        ),
-                      ),
-                      if (_searchController.text.trim().isNotEmpty ||
-                          _searchFeedback != null) ...[
-                        const SizedBox(height: 8),
-                        Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 18),
-                          child: _SearchResultsCard(
-                            matches: _searchMatches,
-                            feedback: _searchFeedback,
-                            onSelect: _focusZoneFromSearch,
-                          ),
-                        ),
-                      ],
-                    ],
+                    const ExploreMapFilters(),
                   ],
                 ),
               ),
@@ -1662,11 +1458,16 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
                                 ? Icons.my_location_rounded
                                 : Icons.location_searching_rounded,
                             onPressed: () {
-                              if (_usingManualLocation) {
-                                _promptManualLocation();
+                              setState(() => _followUser = true);
+                              final here = ref.read(currentUserLocationProvider);
+                              if (_usingManualLocation &&
+                                  here != null &&
+                                  _isWithinCebuRegion(here)) {
+                                unawaited(_moveCameraToLocation(here, zoom: 14.5));
                               } else {
-                                setState(() => _followUser = true);
-                                _bootstrapCurrentLocation(force: true);
+                                unawaited(
+                                  _bootstrapCurrentLocation(force: true),
+                                );
                               }
                             },
                           ),
@@ -1896,31 +1697,7 @@ String _shortError(Object error) {
   return '${msg.substring(0, 77)}...';
 }
 
-String _zoneTitle(ZoneModel zone) {
-  // Prefer the landmark portion of the backend's display name
-  // ("Food Hotspot near Colon Street" -> "Colon Street").
-  final name = zone.displayName.trim();
-  if (name.isNotEmpty) {
-    final nearIdx = name.toLowerCase().lastIndexOf(' near ');
-    if (nearIdx >= 0 && nearIdx + 6 < name.length) {
-      return name.substring(nearIdx + 6).trim();
-    }
-    return name;
-  }
-  // Fallback when the API didn't set a display name.
-  final traveler = zone.travelerType.toLowerCase();
-  final type = zone.zoneType.toLowerCase();
-  if (type.contains('food')) return 'Colon Street';
-  if (type.contains('transport')) return 'Port Area';
-  if (type.contains('school')) return 'University Zone';
-  if (type.contains('tourist')) return 'IT Park';
-  if (type.contains('commercial')) return 'Ayala Center';
-  if (type.contains('residential')) return 'Lahug';
-  if (type.contains('safety')) return 'Alert Area';
-  if (traveler.contains('local')) return 'Lahug';
-  if (traveler.contains('international')) return 'IT Park';
-  return 'Ayala Center';
-}
+String _zoneTitle(ZoneModel zone) => zoneDisplayTitle(zone);
 
 double _zoneFillOpacity({
   required ExploreMapMode mode,
@@ -1984,57 +1761,28 @@ double _zoneLifecycleLineOpacity(String lifecycle) {
 }
 
 String _zoneLayerKey(ZoneModel zone) {
-  final type = zone.zoneType.toLowerCase();
-  if (type.contains('food')) return 'food';
-  if (type.contains('transport')) return 'transport';
-  if (type.contains('school') || type.contains('student')) return 'school';
-  if (type.contains('safety') || type.contains('issue')) return 'safety';
-  if (type.contains('hotel')) return 'hotel';
-  if (type.contains('tourist')) return 'tourist';
-  if (type.contains('commercial')) return 'commercial';
-  if (zone.travelerType == 'Local') return 'local';
-  if (zone.travelerType == 'International') return 'international';
-  return 'mixed';
+  return switch (zone.travelerMix) {
+    'local' => 'local',
+    'international' => 'international',
+    _ => 'mixed',
+  };
 }
 
 Color _streetZoneColor(ZoneModel zone) {
   return switch (_zoneLayerKey(zone)) {
-    'local' => const Color(0xFF5FAF7A),
-    'commercial' => const Color(0xFFE96F7D),
-    'food' => const Color(0xFFEFA15C),
-    'transport' => const Color(0xFFE4BF38),
-    'school' => const Color(0xFF8B6FE8),
-    'tourist' => const Color(0xFF57B6C2),
-    'hotel' => const Color(0xFFE592B8),
-    'safety' => const Color(0xFFEF5350),
-    'international' => const Color(0xFF57B6C2),
-    _ => const Color(0xFF8B6FE8),
+    'local' => AppColors.travelerLocal,
+    'international' => AppColors.travelerInternational,
+    _ => AppColors.travelerMixed,
   };
 }
 
 String _zoneSubtitle(ZoneModel zone) {
   if (zone.reportCount >= 45) return 'Busy now';
   if (zone.confidenceScore >= 70) return 'Popular';
-  if (zone.travelerType == 'Local') return 'Mostly locals';
-  if (zone.travelerType == 'International') return 'Popular with tourists';
-  return 'Balanced city activity';
+  return zoneMapSubtitle(zone);
 }
 
-String _zoneIdentity(ZoneModel zone) {
-  final type = zone.zoneType.toLowerCase();
-  if (type.contains('food')) return 'Food Hotspot';
-  if (type.contains('transport')) return 'Transport Zone';
-  if (type.contains('school')) return 'Student Area';
-  if (type.contains('commercial')) return 'Commercial Zone';
-  if (type.contains('residential')) return 'Local Area';
-  if (type.contains('safety')) return 'Safety Concern';
-  if (type.contains('tourist')) return 'Tourist Area';
-  return switch (zone.travelerType) {
-    'Local' => 'Local Area',
-    'International' => 'Tourist Area',
-    _ => 'Mixed Area',
-  };
-}
+String _zoneIdentity(ZoneModel zone) => zoneMapSubtitle(zone);
 
 String _zoneSummary(ZoneModel zone) {
   final identity = _zoneIdentity(zone);
@@ -2067,69 +1815,14 @@ String _hexFromColor(Color color) {
   return '#${value.toRadixString(16).padLeft(6, '0').toUpperCase()}';
 }
 
-Color _darken(Color color, [double amount = 0.25]) {
-  final hsl = HSLColor.fromColor(color);
-  return hsl.withLightness((hsl.lightness - amount).clamp(0.0, 1.0)).toColor();
-}
-
 _ZonePalette _zonePalette(ZoneModel zone) {
-  final type = zone.zoneType.toLowerCase();
-  if (type.contains('food')) {
-    return const _ZonePalette(
-      fill: AppColors.foodFill,
-      border: AppColors.zoneFood,
-      accent: AppColors.foodAccent,
-    );
-  }
-  if (type.contains('school')) {
-    return const _ZonePalette(
-      fill: AppColors.studentFill,
-      border: AppColors.zoneSchool,
-      accent: AppColors.studentAccent,
-    );
-  }
-  if (type.contains('transport')) {
-    return const _ZonePalette(
-      fill: AppColors.transportFill,
-      border: AppColors.zoneTransport,
-      accent: AppColors.transportAccent,
-    );
-  }
-  if (type.contains('hotel')) {
-    return const _ZonePalette(
-      fill: AppColors.hotelFill,
-      border: AppColors.zoneCommercial,
-      accent: AppColors.hotelAccent,
-    );
-  }
-  if (type.contains('commercial')) {
-    return const _ZonePalette(
-      fill: AppColors.commercialFill,
-      border: AppColors.zoneCommercial,
-      accent: AppColors.commercialAccent,
-    );
-  }
-  if (type.contains('residential')) {
-    return const _ZonePalette(
-      fill: AppColors.residentialFill,
-      border: AppColors.zoneResidential,
-      accent: AppColors.secondaryText,
-    );
-  }
-  if (type.contains('safety') || type.contains('issue')) {
-    return const _ZonePalette(
-      fill: AppColors.safetyFill,
-      border: AppColors.safetyBorder,
-      accent: AppColors.safetyAccent,
-    );
-  }
-  return switch (zone.travelerType) {
-    'Local' => const _ZonePalette(
+  return switch (zone.travelerMix) {
+    'local' => const _ZonePalette(
       fill: AppColors.localFill,
       border: AppColors.travelerLocal,
       accent: AppColors.localAccent,
     ),
-    'International' => const _ZonePalette(
+    'international' => const _ZonePalette(
       fill: AppColors.touristFill,
       border: AppColors.travelerInternational,
       accent: AppColors.touristAccent,
@@ -2157,54 +1850,37 @@ class _ZonePalette {
 class _LocationStatusBanner extends StatelessWidget {
   const _LocationStatusBanner({
     required this.state,
-    required this.usingManualLocation,
-    required this.importantZoneIssue,
     required this.onRetry,
-    required this.onManualLocation,
+    required this.onOpenProfile,
   });
 
   final _LocationBootstrapState state;
-  final bool usingManualLocation;
-  final String? importantZoneIssue;
   final VoidCallback onRetry;
-  final VoidCallback onManualLocation;
+  final VoidCallback onOpenProfile;
 
   @override
   Widget build(BuildContext context) {
-    final showZoneIssue =
-        importantZoneIssue == 'caution_now' || importantZoneIssue == 'peak_now';
-    if (state == _LocationBootstrapState.ready &&
-        !usingManualLocation &&
-        !showZoneIssue) {
+    if (state == _LocationBootstrapState.ready) {
       return const SizedBox.shrink();
     }
-    final (icon, message, action) = switch (state) {
-      _LocationBootstrapState.ready when showZoneIssue => (
-        Icons.warning_amber_rounded,
-        importantZoneIssue == 'caution_now'
-            ? 'Safety warning reported in your current zone.'
-            : 'Current zone is at peak crowd level.',
-        null,
-      ),
-      _LocationBootstrapState.ready => (
-        Icons.edit_location_alt_rounded,
-        'Using your manual location. You can change it anytime.',
-        null,
-      ),
+    final (icon, message, action, onAction) = switch (state) {
       _LocationBootstrapState.locating => (
         Icons.gps_fixed_rounded,
         'Detecting your location...',
         null,
+        null,
       ),
       _LocationBootstrapState.permissionDenied => (
         Icons.location_disabled_rounded,
-        'Location access is off. Search a street, building, or landmark instead.',
-        'Search place',
+        'Location is off. Set a map location in Profile if you prefer not to share GPS.',
+        'Profile',
+        onOpenProfile,
       ),
-      _LocationBootstrapState.serviceDisabled => (
+      _ => (
         Icons.location_off_rounded,
-        'Location services are off. Turn on GPS for live zone context.',
+        'Location services are off. Turn on GPS or set a map location in Profile.',
         'Retry',
+        onRetry,
       ),
     };
     return Padding(
@@ -2212,23 +1888,13 @@ class _LocationStatusBanner extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         decoration: BoxDecoration(
-          color: showZoneIssue
-              ? AppColors.safetyFill.withValues(alpha: 0.95)
-              : Colors.white.withValues(alpha: 0.95),
+          color: Colors.white.withValues(alpha: 0.95),
           borderRadius: BorderRadius.circular(999),
-          border: Border.all(
-            color: showZoneIssue ? AppColors.safetyBorder : AppColors.border,
-          ),
+          border: Border.all(color: AppColors.border),
         ),
         child: Row(
           children: [
-            Icon(
-              icon,
-              size: 16,
-              color: showZoneIssue
-                  ? AppColors.safetyAccent
-                  : AppColors.mutedText,
-            ),
+            Icon(icon, size: 16, color: AppColors.mutedText),
             const SizedBox(width: 8),
             Expanded(
               child: Text(
@@ -2240,23 +1906,12 @@ class _LocationStatusBanner extends StatelessWidget {
                 ),
               ),
             ),
-            if (action != null) ...[
+            if (action != null && onAction != null)
               TextButton(
-                onPressed: state == _LocationBootstrapState.permissionDenied
-                    ? onManualLocation
-                    : onRetry,
+                onPressed: onAction,
                 child: Text(
                   action,
                   style: const TextStyle(fontWeight: FontWeight.w800),
-                ),
-              ),
-            ],
-            if (state == _LocationBootstrapState.ready && usingManualLocation)
-              TextButton(
-                onPressed: onManualLocation,
-                child: const Text(
-                  'Change',
-                  style: TextStyle(fontWeight: FontWeight.w800),
                 ),
               ),
           ],
@@ -2310,12 +1965,24 @@ class _CacheNoticeBanner extends StatelessWidget {
 class _MapTopBar extends StatelessWidget {
   const _MapTopBar({
     required this.zoneCount,
+    required this.searchExpanded,
+    required this.searchController,
+    required this.searchFocusNode,
     required this.onSearchTap,
+    required this.onSearchClose,
+    required this.onSearchChanged,
+    required this.onSearchSubmitted,
     required this.onNotificationTap,
   });
 
   final int? zoneCount;
+  final bool searchExpanded;
+  final TextEditingController searchController;
+  final FocusNode searchFocusNode;
   final VoidCallback onSearchTap;
+  final VoidCallback onSearchClose;
+  final ValueChanged<String> onSearchChanged;
+  final VoidCallback onSearchSubmitted;
   final VoidCallback onNotificationTap;
 
   @override
@@ -2335,45 +2002,104 @@ class _MapTopBar extends StatelessWidget {
           ),
           const SizedBox(width: 10),
           Expanded(
-            child: GestureDetector(
-              onTap: onSearchTap,
-              child: Container(
-                height: 46,
-                padding: const EdgeInsets.symmetric(horizontal: 14),
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.95),
-                  borderRadius: BorderRadius.circular(18),
-                  border: Border.all(color: AppColors.border),
-                  boxShadow: const [
-                    BoxShadow(
-                      color: Color(0x140F172A),
-                      blurRadius: 14,
-                      offset: Offset(0, 6),
+            child: searchExpanded
+                ? Container(
+                    height: 46,
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.95),
+                      borderRadius: BorderRadius.circular(18),
+                      border: Border.all(color: AppColors.border),
+                      boxShadow: const [
+                        BoxShadow(
+                          color: Color(0x140F172A),
+                          blurRadius: 14,
+                          offset: Offset(0, 6),
+                        ),
+                      ],
                     ),
-                  ],
-                ),
-                child: Row(
-                  children: [
-                    const Icon(
-                      Icons.search_rounded,
-                      size: 18,
-                      color: AppColors.mutedText,
-                    ),
-                    const SizedBox(width: 8),
-                    Text(
-                      zoneCount == null
-                          ? 'Search places or zones...'
-                          : 'Search $zoneCount zones',
+                    child: TextField(
+                      controller: searchController,
+                      focusNode: searchFocusNode,
+                      textInputAction: TextInputAction.search,
                       style: const TextStyle(
-                        color: AppColors.mutedText,
                         fontSize: 13,
                         fontWeight: FontWeight.w600,
                       ),
+                      onChanged: onSearchChanged,
+                      onSubmitted: (_) => onSearchSubmitted(),
+                      decoration: InputDecoration(
+                        hintText: 'Search Cebu (IT Park, USPF, food…)',
+                        hintStyle: const TextStyle(
+                          color: AppColors.mutedText,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                        ),
+                        prefixIcon: const Icon(
+                          Icons.search_rounded,
+                          size: 18,
+                          color: AppColors.mutedText,
+                        ),
+                        suffixIcon: IconButton(
+                          icon: const Icon(
+                            Icons.close_rounded,
+                            size: 18,
+                            color: AppColors.mutedText,
+                          ),
+                          onPressed: onSearchClose,
+                        ),
+                        border: InputBorder.none,
+                        enabledBorder: InputBorder.none,
+                        focusedBorder: InputBorder.none,
+                        filled: false,
+                        isDense: true,
+                        contentPadding: const EdgeInsets.symmetric(
+                          vertical: 12,
+                        ),
+                      ),
                     ),
-                  ],
-                ),
-              ),
-            ),
+                  )
+                : GestureDetector(
+                    onTap: onSearchTap,
+                    child: Container(
+                      height: 46,
+                      padding: const EdgeInsets.symmetric(horizontal: 14),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.95),
+                        borderRadius: BorderRadius.circular(18),
+                        border: Border.all(color: AppColors.border),
+                        boxShadow: const [
+                          BoxShadow(
+                            color: Color(0x140F172A),
+                            blurRadius: 14,
+                            offset: Offset(0, 6),
+                          ),
+                        ],
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(
+                            Icons.search_rounded,
+                            size: 18,
+                            color: AppColors.mutedText,
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              zoneCount == null
+                                  ? 'Search places or zones…'
+                                  : 'Search $zoneCount zones',
+                              style: const TextStyle(
+                                color: AppColors.mutedText,
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                              ),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
           ),
           const SizedBox(width: 10),
           _TopIconButton(
@@ -2435,119 +2161,6 @@ class _TopIconButton extends StatelessWidget {
             ],
           ),
         ),
-      ),
-    );
-  }
-}
-
-class _TopTagFilterRow extends ConsumerWidget {
-  const _TopTagFilterRow({required this.onTagSelected});
-
-  final ValueChanged<String?> onTagSelected;
-
-  static const _tags =
-      <
-        ({String label, String? filter, IconData icon, Color color, Color fill})
-      >[
-        (
-          label: 'Local',
-          filter: 'local_picks',
-          icon: Icons.groups_rounded,
-          color: AppColors.localAccent,
-          fill: AppColors.localFill,
-        ),
-        (
-          label: 'International',
-          filter: 'tourist',
-          icon: Icons.flight_takeoff_rounded,
-          color: AppColors.touristAccent,
-          fill: AppColors.touristFill,
-        ),
-        (
-          label: 'Mixed Zone',
-          filter: null,
-          icon: Icons.hub_outlined,
-          color: AppColors.mixedAccent,
-          fill: AppColors.mixedFill,
-        ),
-        (
-          label: 'Commercial',
-          filter: 'commercial',
-          icon: Icons.business_outlined,
-          color: AppColors.commercialAccent,
-          fill: AppColors.commercialFill,
-        ),
-        (
-          label: 'Food Hotspot',
-          filter: 'food',
-          icon: Icons.restaurant_rounded,
-          color: AppColors.foodAccent,
-          fill: AppColors.foodFill,
-        ),
-      ];
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final activeFilter = ref.watch(activeZoneFilterProvider);
-    return SizedBox(
-      height: 42,
-      child: ListView.separated(
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 16),
-        itemBuilder: (context, index) {
-          final tag = _tags[index];
-          final selected =
-              activeFilter == tag.filter ||
-              (tag.filter == null &&
-                  activeFilter != 'local_picks' &&
-                  activeFilter != 'tourist' &&
-                  activeFilter != 'commercial' &&
-                  activeFilter != 'food');
-          return Material(
-            color: selected
-                ? tag.fill.withValues(alpha: 0.50)
-                : Colors.white.withValues(alpha: 0.92),
-            borderRadius: BorderRadius.circular(999),
-            child: InkWell(
-              borderRadius: BorderRadius.circular(999),
-              onTap: () => onTagSelected(tag.filter),
-              child: Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 13,
-                  vertical: 9,
-                ),
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(999),
-                  border: Border.all(
-                    color: selected
-                        ? tag.color.withValues(alpha: 0.95)
-                        : AppColors.border,
-                  ),
-                ),
-                child: Row(
-                  children: [
-                    Icon(
-                      tag.icon,
-                      size: 14,
-                      color: selected ? tag.color : AppColors.secondaryText,
-                    ),
-                    const SizedBox(width: 6),
-                    Text(
-                      tag.label,
-                      style: TextStyle(
-                        color: selected ? tag.color : AppColors.primaryText,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          );
-        },
-        separatorBuilder: (_, _) => const SizedBox(width: 8),
-        itemCount: _tags.length,
       ),
     );
   }
@@ -2623,430 +2236,6 @@ class _SearchResultsCard extends StatelessWidget {
                 onTap: () => onSelect(zone),
               ),
             ),
-        ],
-      ),
-    );
-  }
-}
-
-class _SearchFilterRow extends StatelessWidget {
-  const _SearchFilterRow();
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 18),
-      child: Row(
-        children: [
-          Expanded(
-            child: Container(
-              height: 52,
-              decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: 0.96),
-                borderRadius: BorderRadius.circular(18),
-                border: Border.all(color: AppColors.border),
-                boxShadow: const [
-                  BoxShadow(
-                    color: Color(0x100F172A),
-                    blurRadius: 18,
-                    offset: Offset(0, 8),
-                  ),
-                ],
-              ),
-              child: const TextField(
-                decoration: InputDecoration(
-                  hintText: 'Search Cebu (IT Park, Ayala...)',
-                  prefixIcon: Icon(
-                    Icons.search_rounded,
-                    color: AppColors.primaryText,
-                  ),
-                  border: InputBorder.none,
-                  enabledBorder: InputBorder.none,
-                  focusedBorder: InputBorder.none,
-                  filled: false,
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(width: 10),
-          Container(
-            height: 52,
-            padding: const EdgeInsets.symmetric(horizontal: 14),
-            decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.96),
-              borderRadius: BorderRadius.circular(18),
-              border: Border.all(color: AppColors.border),
-            ),
-            child: const Row(
-              children: [
-                Icon(Icons.tune_rounded, color: AppColors.primaryText),
-                SizedBox(width: 8),
-                Text(
-                  'Filters',
-                  style: TextStyle(
-                    color: AppColors.primaryText,
-                    fontWeight: FontWeight.w900,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-/// A single filter option surfaced in the explore screen's chip rows.
-///
-/// [filterKey] is the value we send to the backend as `?filter=`. `null`
-/// means "no filter" (the default server ordering by `priority_score`).
-/// Keys here must match [RankingService.FILTERS] in the backend.
-///
-/// [accent] is the colour used to tint the chip when it's selected and is
-/// the same colour the matching zone uses on the map — so the chip row
-/// doubles as a legend.
-class _ExploreFilter {
-  const _ExploreFilter({
-    required this.label,
-    required this.icon,
-    required this.filterKey,
-    required this.accent,
-  });
-
-  final String label;
-  final IconData icon;
-  final String? filterKey;
-  final Color accent;
-}
-
-// Keep this list in sync with backend/app/services/ranking_service.py.
-// Each chip's accent matches the zone colour rendered on the map so the
-// chip row doubles as the legend — there is no separate legend card.
-const List<_ExploreFilter> _exploreFilters = [
-  _ExploreFilter(
-    label: 'For You',
-    icon: Icons.star_rounded,
-    filterKey: null,
-    accent: AppColors.primaryAction,
-  ),
-  _ExploreFilter(
-    label: 'Popular',
-    icon: Icons.local_fire_department_rounded,
-    filterKey: 'popular_now',
-    accent: AppColors.busyAccent,
-  ),
-  _ExploreFilter(
-    label: 'Local Picks',
-    icon: Icons.groups_rounded,
-    filterKey: 'local_picks',
-    accent: AppColors.travelerLocal,
-  ),
-  _ExploreFilter(
-    label: 'Tourist',
-    icon: Icons.flight_takeoff_rounded,
-    filterKey: 'tourist',
-    accent: AppColors.travelerInternational,
-  ),
-  _ExploreFilter(
-    label: 'Food',
-    icon: Icons.restaurant_rounded,
-    filterKey: 'food',
-    accent: AppColors.zoneFood,
-  ),
-  _ExploreFilter(
-    label: 'Transport',
-    icon: Icons.directions_bus_rounded,
-    filterKey: 'transport',
-    accent: AppColors.zoneTransport,
-  ),
-  _ExploreFilter(
-    label: 'Commercial',
-    icon: Icons.shopping_bag_rounded,
-    filterKey: 'commercial',
-    accent: AppColors.zoneCommercial,
-  ),
-];
-
-_ExploreFilter _activeFilter(String? key) {
-  for (final f in _exploreFilters) {
-    if (f.filterKey == key) return f;
-  }
-  return _exploreFilters.first;
-}
-
-class _RecommendedPill extends ConsumerWidget {
-  const _RecommendedPill();
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final activeKey = ref.watch(activeZoneFilterProvider);
-    final filter = _activeFilter(activeKey);
-    final isFiltered = activeKey != null;
-    final label = isFiltered
-        ? 'Showing: ${filter.label}'
-        : 'Showing: Recommended';
-    final accent = isFiltered ? filter.accent : AppColors.mapInk;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
-      decoration: BoxDecoration(
-        color: isFiltered
-            ? accent.withValues(alpha: 0.12)
-            : Colors.white.withValues(alpha: 0.94),
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(
-          color: isFiltered ? accent : AppColors.border,
-          width: isFiltered ? 1.4 : 1,
-        ),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(
-            isFiltered ? filter.icon : Icons.auto_awesome_rounded,
-            size: 15,
-            color: accent,
-          ),
-          const SizedBox(width: 7),
-          Text(
-            label,
-            style: const TextStyle(
-              color: AppColors.primaryText,
-              fontSize: 12,
-              fontWeight: FontWeight.w900,
-            ),
-          ),
-          if (isFiltered) ...[
-            const SizedBox(width: 6),
-            GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onTap: () =>
-                  ref.read(activeZoneFilterProvider.notifier).state = null,
-              child: Icon(Icons.close_rounded, size: 14, color: accent),
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-}
-
-class _MobileExploreChips extends ConsumerWidget {
-  const _MobileExploreChips();
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final active = ref.watch(activeZoneFilterProvider);
-    return SizedBox(
-      height: 38,
-      child: ListView.separated(
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 18),
-        itemCount: _exploreFilters.length,
-        separatorBuilder: (_, _) => const SizedBox(width: 8),
-        itemBuilder: (context, index) {
-          final filter = _exploreFilters[index];
-          final isSelected = filter.filterKey == active;
-          return _ExploreChip(
-            icon: filter.icon,
-            label: filter.label,
-            accent: filter.accent,
-            selected: isSelected,
-            onTap: () {
-              // Tapping the active chip (other than "For You") clears
-              // the filter and returns to the default ranking.
-              ref
-                  .read(activeZoneFilterProvider.notifier)
-                  .state = isSelected && filter.filterKey != null
-                  ? null
-                  : filter.filterKey;
-            },
-          );
-        },
-      ),
-    );
-  }
-}
-
-class _ExplorePanel extends ConsumerWidget {
-  const _ExplorePanel({required this.onClear});
-
-  final VoidCallback onClear;
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final active = ref.watch(activeZoneFilterProvider);
-
-    Widget buildChip(_ExploreFilter filter) {
-      final isSelected = filter.filterKey == active;
-      return _ExploreChip(
-        icon: filter.icon,
-        label: filter.label,
-        accent: filter.accent,
-        selected: isSelected,
-        onTap: () {
-          ref.read(activeZoneFilterProvider.notifier).state =
-              isSelected && filter.filterKey != null ? null : filter.filterKey;
-        },
-      );
-    }
-
-    return Container(
-      width: 226,
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.94),
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: AppColors.border),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            'Explore by',
-            style: TextStyle(
-              color: AppColors.primaryText,
-              fontWeight: FontWeight.w900,
-            ),
-          ),
-          const SizedBox(height: 10),
-          for (int i = 0; i < _exploreFilters.length; i++) ...[
-            buildChip(_exploreFilters[i]),
-            if (i != _exploreFilters.length - 1) const SizedBox(height: 7),
-          ],
-          const Divider(height: 22),
-          const _ZoneToggle(
-            label: 'Local Zone',
-            color: AppColors.travelerLocal,
-          ),
-          const _ZoneToggle(
-            label: 'International',
-            color: AppColors.travelerInternational,
-          ),
-          const _ZoneToggle(
-            label: 'Mixed Zone',
-            color: AppColors.travelerMixed,
-          ),
-          const _ZoneToggle(label: 'Food Zone', color: AppColors.zoneFood),
-          const _ZoneToggle(label: 'Transport', color: AppColors.zoneTransport),
-          Align(
-            alignment: Alignment.center,
-            child: TextButton(
-              onPressed: () {
-                ref.read(activeZoneFilterProvider.notifier).state = null;
-                onClear();
-              },
-              child: const Text('Clear All'),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _ExploreChip extends StatelessWidget {
-  const _ExploreChip({
-    required this.icon,
-    required this.label,
-    required this.accent,
-    this.selected = false,
-    this.onTap,
-  });
-
-  final IconData icon;
-  final String label;
-  final Color accent;
-  final bool selected;
-  final VoidCallback? onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    // Unselected chips still hint at the zone colour via a coloured dot
-    // and tinted icon, so the row reads as a legend even when no filter
-    // is active. Selected chips get a full accent tint + border.
-    final content = Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      decoration: BoxDecoration(
-        color: selected
-            ? accent.withValues(alpha: 0.14)
-            : Colors.white.withValues(alpha: 0.92),
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(
-          color: selected ? accent : AppColors.border,
-          width: selected ? 1.4 : 1,
-        ),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            width: 8,
-            height: 8,
-            decoration: BoxDecoration(color: accent, shape: BoxShape.circle),
-          ),
-          const SizedBox(width: 8),
-          Icon(icon, size: 17, color: accent),
-          const SizedBox(width: 7),
-          Text(
-            label,
-            style: TextStyle(
-              color: selected ? AppColors.primaryText : AppColors.secondaryText,
-              fontSize: 12,
-              fontWeight: FontWeight.w900,
-            ),
-          ),
-        ],
-      ),
-    );
-    if (onTap == null) return content;
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(999),
-        child: content,
-      ),
-    );
-  }
-}
-
-class _ZoneToggle extends StatelessWidget {
-  const _ZoneToggle({required this.label, required this.color});
-
-  final String label;
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Row(
-        children: [
-          Container(
-            width: 18,
-            height: 18,
-            decoration: BoxDecoration(
-              color: color,
-              borderRadius: BorderRadius.circular(5),
-            ),
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              label,
-              style: const TextStyle(
-                color: AppColors.primaryText,
-                fontSize: 12,
-                fontWeight: FontWeight.w800,
-              ),
-            ),
-          ),
-          const Icon(
-            Icons.check_box_rounded,
-            color: Color(0xFF16A34A),
-            size: 19,
-          ),
         ],
       ),
     );
@@ -3326,7 +2515,7 @@ int _matchingSignalCount(ZoneModel zone) {
 }
 
 String _topAgreedCategory(ZoneModel zone) {
-  final raw = zone.functionType.replaceAll('_', ' ');
+  final raw = (zone.placeName ?? zone.zoneType).replaceAll('_', ' ');
   return raw
       .split(' ')
       .where((part) => part.isNotEmpty)
@@ -3935,92 +3124,3 @@ class _ZoomButton extends StatelessWidget {
   }
 }
 
-class _BottomQuickActionBar extends StatelessWidget {
-  const _BottomQuickActionBar({
-    required this.onZoneAlert,
-    required this.onCommunity,
-    required this.onTrends,
-  });
-
-  final VoidCallback onZoneAlert;
-  final VoidCallback onCommunity;
-  final VoidCallback onTrends;
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-      children: [
-        _QuickActionBubble(
-          icon: Icons.warning_amber_rounded,
-          label: 'Zone Alert',
-          gradient: const [Color(0xFF3B82F6), Color(0xFF2563EB)],
-          onTap: onZoneAlert,
-        ),
-        _QuickActionBubble(
-          icon: Icons.groups_rounded,
-          label: 'Community',
-          gradient: const [Color(0xFF8B5CF6), Color(0xFF7C3AED)],
-          onTap: onCommunity,
-        ),
-        _QuickActionBubble(
-          icon: Icons.show_chart_rounded,
-          label: 'Trends',
-          gradient: const [Color(0xFF22D3EE), Color(0xFF06B6D4)],
-          onTap: onTrends,
-        ),
-      ],
-    );
-  }
-}
-
-class _QuickActionBubble extends StatelessWidget {
-  const _QuickActionBubble({
-    required this.icon,
-    required this.label,
-    required this.gradient,
-    required this.onTap,
-  });
-
-  final IconData icon;
-  final String label;
-  final List<Color> gradient;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            width: 64,
-            height: 64,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              gradient: LinearGradient(colors: gradient),
-              boxShadow: const [
-                BoxShadow(
-                  color: Color(0x220F172A),
-                  blurRadius: 16,
-                  offset: Offset(0, 8),
-                ),
-              ],
-            ),
-            child: Icon(icon, color: Colors.white, size: 30),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            label,
-            style: const TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w700,
-              color: AppColors.primaryText,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}

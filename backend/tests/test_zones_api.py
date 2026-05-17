@@ -7,7 +7,10 @@ def _register(client):
         json={
             "email": "zoneapi@example.com",
             "password": "supersecret123",
-            "traveler_type": "local",
+            "display_name": "Zone API",
+            "country_of_origin": "Philippines",
+            "city_of_origin": "Cebu City",
+            "user_type": "local_resident",
         },
     )
     assert resp.status_code == 201, resp.text
@@ -56,7 +59,7 @@ def test_zones_viewport_returns_new_schema_fields(client):
         "zone_id",
         "display_name",
         "behavior_type",
-        "function_type",
+        "traveler_mix",
         "live_status",
         "polygon_geojson",
         "centroid",
@@ -68,7 +71,8 @@ def test_zones_viewport_returns_new_schema_fields(client):
         assert field in first, f"missing field {field}"
     assert first["polygon_geojson"]["type"] in ("Polygon", "MultiPolygon")
     assert "lat" in first["centroid"] and "lng" in first["centroid"]
-    assert " near " in first["display_name"]
+    assert first["traveler_mix"] in {"local", "mixed", "international"}
+    assert "·" in first["display_name"] or " near " in first["display_name"]
 
 
 def test_zone_detail_returns_expected_fields(client):
@@ -96,7 +100,8 @@ def test_zone_detail_returns_expected_fields(client):
         "zone_id",
         "display_name",
         "behavior_type",
-        "function_type",
+        "traveler_mix",
+        "places",
         "summary",
         "live_status",
         "polygon_geojson",
@@ -110,6 +115,8 @@ def test_zone_detail_returns_expected_fields(client):
     ):
         assert field in body, f"missing field {field}"
     assert body["zone_id"] == zone_id
+    assert body["traveler_mix"] in {"local", "mixed", "international"}
+    assert isinstance(body["places"], list)
 
 
 def test_zone_detail_404_for_unknown_id(client):

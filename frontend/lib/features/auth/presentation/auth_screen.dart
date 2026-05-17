@@ -6,6 +6,12 @@ import 'package:go_router/go_router.dart';
 import '../../../app/theme/colors.dart';
 import '../../../shared/providers/app_providers.dart';
 
+const _kUserTypeChoices = <(String value, String label)>[
+  ('local_resident', 'Local resident'),
+  ('international_visitor', 'International visitor'),
+  ('domestic_traveler', 'Domestic traveler'),
+];
+
 class AuthScreen extends ConsumerStatefulWidget {
   const AuthScreen({super.key});
 
@@ -17,15 +23,20 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   final _displayNameController = TextEditingController();
+  final _countryController = TextEditingController();
+  final _cityController = TextEditingController();
   AuthMode _mode = AuthMode.login;
   bool _obscurePassword = true;
   bool _acceptedResearchConsent = false;
+  String _userTypeValue = 'local_resident';
 
   @override
   void dispose() {
     _emailController.dispose();
     _passwordController.dispose();
     _displayNameController.dispose();
+    _countryController.dispose();
+    _cityController.dispose();
     super.dispose();
   }
 
@@ -56,6 +67,25 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
       );
       return;
     }
+    if (_mode == AuthMode.register) {
+      final displayName = _displayNameController.text.trim();
+      final country = _countryController.text.trim();
+      final city = _cityController.text.trim();
+      if (displayName.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Display name is required.')),
+        );
+        return;
+      }
+      if (country.isEmpty || city.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Country and city of origin are required.'),
+          ),
+        );
+        return;
+      }
+    }
     if (_mode == AuthMode.login &&
         email.toLowerCase() == 'demo@strollwise.local' &&
         (password == 'demo12345' || password.toLowerCase() == 'demo')) {
@@ -72,6 +102,9 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
             email: email,
             password: password,
             displayName: _displayNameController.text,
+            countryOfOrigin: _countryController.text,
+            cityOfOrigin: _cityController.text,
+            userType: _userTypeValue,
             acceptedResearchConsent: _acceptedResearchConsent,
           );
       if (!mounted) return;
@@ -216,7 +249,7 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
                             controller: _displayNameController,
                             textInputAction: TextInputAction.next,
                             decoration: const InputDecoration(
-                              hintText: 'Display name (optional)',
+                              hintText: 'Display name',
                               prefixIcon: Icon(Icons.person_outline_rounded),
                             ),
                           ),
@@ -251,6 +284,48 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
                             ),
                           ),
                         ),
+                        if (isRegister) ...[
+                          const SizedBox(height: 10),
+                          TextField(
+                            controller: _countryController,
+                            textInputAction: TextInputAction.next,
+                            textCapitalization: TextCapitalization.words,
+                            decoration: const InputDecoration(
+                              hintText: 'Country of origin',
+                              prefixIcon: Icon(Icons.public_outlined),
+                            ),
+                          ),
+                          const SizedBox(height: 10),
+                          TextField(
+                            controller: _cityController,
+                            textInputAction: TextInputAction.next,
+                            textCapitalization: TextCapitalization.words,
+                            decoration: const InputDecoration(
+                              hintText: 'City of origin',
+                              prefixIcon: Icon(Icons.location_city_outlined),
+                            ),
+                          ),
+                          const SizedBox(height: 10),
+                          DropdownButtonFormField<String>(
+                            initialValue: _userTypeValue,
+                            decoration: const InputDecoration(
+                              labelText: 'User type',
+                              prefixIcon: Icon(Icons.groups_outlined),
+                            ),
+                            items: _kUserTypeChoices
+                                .map(
+                                  (e) => DropdownMenuItem(
+                                    value: e.$1,
+                                    child: Text(e.$2),
+                                  ),
+                                )
+                                .toList(),
+                            onChanged: (v) {
+                              if (v == null) return;
+                              setState(() => _userTypeValue = v);
+                            },
+                          ),
+                        ],
                         if (isRegister) ...[
                           const SizedBox(height: 12),
                           _ResearchConsentCard(

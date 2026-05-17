@@ -1,3 +1,5 @@
+import 'place.dart';
+
 /// Mirrors the `ZoneListItem` / `ZoneDetail` schema returned by the
 /// StrollWise backend (`/api/v1/zones` and `/api/v1/zones/{id}`).
 ///
@@ -9,7 +11,12 @@ class ZoneModel {
     required this.zoneId,
     required this.displayName,
     required this.behaviorType,
-    required this.functionType,
+  this.functionType,
+    required this.travelerMix,
+    this.placeId,
+    this.placeName,
+    this.placeType,
+    this.places = const [],
     required this.summary,
     required this.liveStatus,
     required this.polygonGeoJson,
@@ -39,8 +46,16 @@ class ZoneModel {
   /// Raw enum value: `local_area`, `tourist_area`, `mixed_area`.
   final String behaviorType;
 
-  /// Raw enum value: `food_hotspot`, `student_area`, `transport_zone`, etc.
-  final String functionType;
+  /// Deprecated on zones; use [placeType] for what (school, food, …).
+  final String? functionType;
+
+  /// `local`, `mixed`, or `international` — primary map classification.
+  final String travelerMix;
+
+  final String? placeId;
+  final String? placeName;
+  final String? placeType;
+  final List<PlaceSummary> places;
 
   final String? summary;
   final String liveStatus;
@@ -98,20 +113,21 @@ class ZoneModel {
 
   /// Legacy label: `Local` / `International` / `Mixed`.
   String get travelerType {
-    switch (behaviorType) {
-      case 'local_area':
+    switch (travelerMix) {
+      case 'local':
         return 'Local';
-      case 'tourist_area':
+      case 'international':
         return 'International';
       default:
         return 'Mixed';
     }
   }
 
-  /// Legacy zone-type label that matches the strings the UI checks for
-  /// (`food`, `school`, `transport`, `commercial`, `residential`, `safety`,
-  /// `tourist`, `busy`, `mixed`, `emerging`).
+  /// What the area is (from linked place); falls back to legacy function_type.
   String get zoneType {
+    if (placeType != null && placeType!.isNotEmpty) {
+      return placeType!;
+    }
     switch (functionType) {
       case 'food_hotspot':
         return 'food';
@@ -142,27 +158,10 @@ class ZoneModel {
   /// Default fill / border hex codes derived from the function type. The
   /// backend no longer ships `style` metadata; the frontend owns styling.
   String get fillColor {
-    switch (functionType) {
-      case 'food_hotspot':
-        return '#FFE9CC';
-      case 'student_area':
-        return '#F0E4FF';
-      case 'busy_zone':
-        return '#FFE0E0';
-      case 'transport_zone':
-        return '#FFF4CC';
-      case 'commercial_zone':
-        return '#FFE0EA';
-      case 'residential_zone':
-        return '#EEF2F7';
-      case 'safety_concern':
-        return '#FDE2E2';
-    }
-
-    switch (behaviorType) {
-      case 'local_area':
+    switch (travelerMix) {
+      case 'local':
         return '#DDF5E8';
-      case 'tourist_area':
+      case 'international':
         return '#DCEBFF';
       default:
         return '#D9F6F4';
@@ -170,27 +169,10 @@ class ZoneModel {
   }
 
   String get borderColor {
-    switch (functionType) {
-      case 'food_hotspot':
-        return '#F59E0B';
-      case 'student_area':
-        return '#8B5CF6';
-      case 'busy_zone':
-        return '#EF4444';
-      case 'transport_zone':
-        return '#EAB308';
-      case 'commercial_zone':
-        return '#F43F5E';
-      case 'residential_zone':
-        return '#94A3B8';
-      case 'safety_concern':
-        return '#DC2626';
-    }
-
-    switch (behaviorType) {
-      case 'local_area':
+    switch (travelerMix) {
+      case 'local':
         return '#22C55E';
-      case 'tourist_area':
+      case 'international':
         return '#3B82F6';
       default:
         return '#14B8A6';
@@ -218,7 +200,17 @@ class ZoneModel {
       zoneId: (json['zone_id'] ?? '').toString(),
       displayName: (json['display_name'] ?? 'Unnamed zone').toString(),
       behaviorType: (json['behavior_type'] ?? 'mixed_area').toString(),
-      functionType: (json['function_type'] ?? 'unknown').toString(),
+      functionType: json['function_type'] as String?,
+      travelerMix: (json['traveler_mix'] ??
+              _travelerMixFromBehavior(json['behavior_type']))
+          .toString(),
+      placeId: json['place_id']?.toString(),
+      placeName: json['place_name'] as String?,
+      placeType: json['place_type'] as String?,
+      places: ((json['places'] as List?) ?? const [])
+          .whereType<Map>()
+          .map((e) => PlaceSummary.fromJson(Map<String, dynamic>.from(e)))
+          .toList(),
       summary: json['summary'] as String?,
       liveStatus: (json['live_status'] ?? 'quiet_now').toString(),
       polygonGeoJson: polygon,
@@ -318,5 +310,16 @@ class ZoneModel {
   static DateTime? _parseDateTime(Object? value) {
     if (value == null) return null;
     return DateTime.tryParse(value.toString());
+  }
+
+  static String _travelerMixFromBehavior(Object? behavior) {
+    switch (behavior?.toString()) {
+      case 'local_area':
+        return 'local';
+      case 'tourist_area':
+        return 'international';
+      default:
+        return 'mixed';
+    }
   }
 }

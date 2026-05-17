@@ -6,6 +6,7 @@ import 'package:maplibre_gl/maplibre_gl.dart';
 import '../../../app/theme/colors.dart';
 import '../../../shared/models/zone.dart';
 import '../../../shared/providers/app_providers.dart';
+import '../../../shared/zone_place_ui.dart';
 
 class TrendsScreen extends ConsumerWidget {
   const TrendsScreen({this.zoneId, super.key});
@@ -873,12 +874,8 @@ class _ZoneIntelligence {
 
   factory _ZoneIntelligence.fromZone(ZoneModel zone) {
     final name = zone.displayName.toLowerCase();
-    final function = zone.functionType;
-    final travelerMix = switch (zone.behaviorType) {
-      'local_area' => 'Local-heavy',
-      'tourist_area' => 'Tourist-heavy',
-      _ => 'Mixed',
-    };
+    final function = zone.zoneType;
+    final travelerMix = travelerMixTrendLabel(zone.travelerMix);
 
     if (name.contains('colon') || name.contains('basilica')) {
       return const _ZoneIntelligence(

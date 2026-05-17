@@ -10,6 +10,7 @@ import '../../../app/theme/colors.dart';
 import '../../../shared/location/cebu_place_geocode.dart';
 import '../../../shared/models/report.dart';
 import '../../../shared/models/user_contributions.dart';
+import '../../../shared/models/user_me.dart';
 import '../../../shared/models/zone.dart';
 import '../../../shared/network/api_client.dart';
 import '../../../shared/providers/app_providers.dart';
@@ -70,7 +71,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
         ? 'Demo session — stats below are placeholders until you register.'
         : userMe.maybeWhen(
             data: (u) =>
-                u == null ? 'Loading profile…' : _travelerLabel(u.travelerType),
+                u == null ? 'Loading profile…' : _contributorProfileLine(u),
             loading: () => 'Loading profile…',
             orElse: () => 'Loading profile…',
           );
@@ -133,7 +134,11 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                 SliverPadding(
                   padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
                   sliver: SliverToBoxAdapter(
-                    child: _DemoSessionCallout(),
+                    child: _DemoSessionCallout(
+                      onSignIn: () {
+                        if (context.mounted) context.go('/auth');
+                      },
+                    ),
                   ),
                 ),
               SliverPadding(
@@ -147,7 +152,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                         subtitle: travelerLabel,
                         contributorLabel: contributorLabel,
                         showVerified: showVerified,
-                        onEdit: () => _editProfile(context, ref, displayName),
+                        onEdit: () => _editProfile(context, ref),
                         onLogout: () => _logout(context, ref),
                       ),
                       const SizedBox(height: 14),
@@ -161,7 +166,8 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                       _ProfileSectionCard(
                         icon: Icons.edit_location_alt_rounded,
                         title: 'Map location',
-                        subtitle: 'Used for Explore and zone picks',
+                        subtitle:
+                            'Set where you explore without sharing live GPS',
                         child: _LocationPreferenceTile(
                           onSetManual: () =>
                               _setManualLocationFromProfile(context, ref),
@@ -211,21 +217,51 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
   Future<void> _editProfile(
     BuildContext context,
     WidgetRef ref,
-    String currentName,
   ) async {
-    final result = await showDialog<String>(
-      context: context,
-      builder: (_) => _EditProfileDialog(initialName: currentName),
-    );
-    if (!context.mounted) return;
-    if (result == null) return;
-    final name = result.trim();
     final token = ref.read(authTokenProvider);
     if (token == null || token == 'demo-token-local') {
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Sign in with a full account to save your display name.'),
+          content: Text('Sign in with a full account to edit your profile.'),
+        ),
+      );
+      return;
+    }
+    UserMeModel? user = ref.read(cachedUserMeProvider);
+    user ??= await ref.read(userMeProvider.future);
+    if (!context.mounted) return;
+    if (user == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not load profile. Pull to refresh.')),
+      );
+      return;
+    }
+    final u = user;
+    final result = await showDialog<_ProfileEditResult>(
+      context: context,
+      builder: (_) => _EditProfileDialog(
+        initialName: u.displayName?.trim().isNotEmpty == true
+            ? u.displayName!.trim()
+            : _displayNameFromEmail(u.email),
+        initialCountry: u.countryOfOrigin ?? '',
+        initialCity: u.cityOfOrigin ?? '',
+        initialUserType: u.userType ?? 'local_resident',
+      ),
+    );
+    if (!context.mounted) return;
+    if (result == null) return;
+    final name = result.displayName.trim();
+    if (name.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Display name is required.')),
+      );
+      return;
+    }
+    if (result.country.trim().isEmpty || result.city.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Country and city of origin are required.'),
         ),
       );
       return;
@@ -233,7 +269,12 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     try {
       await ref.read(dioProvider).patch(
         '/users/me',
-        data: {'display_name': name.isEmpty ? null : name},
+        data: {
+          'display_name': name,
+          'country_of_origin': result.country.trim(),
+          'city_of_origin': result.city.trim(),
+          'user_type': result.userType,
+        },
         options: Options(headers: {'Authorization': 'Bearer $token'}),
       );
       await Future<void>.delayed(Duration.zero);
@@ -414,7 +455,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
           borderRadius: BorderRadius.circular(22),
         ),
         title: const Text('Log out'),
-        content: const Text('End your current Strollwise session?'),
+        content: const Text('End your current StrollWise session?'),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
@@ -440,6 +481,30 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     return email.split('@').first.replaceAll('.', ' ');
   }
 
+  String _contributorProfileLine(UserMeModel u) {
+    final type = _userTypeLabel(u.userType, u.travelerType);
+    final bits = <String>[];
+    final city = u.cityOfOrigin?.trim();
+    final country = u.countryOfOrigin?.trim();
+    if (city != null && city.isNotEmpty) bits.add(city);
+    if (country != null && country.isNotEmpty) bits.add(country);
+    if (bits.isEmpty) return '$type · not shown on the public map';
+    return '$type · ${bits.join(', ')} (private to you)';
+  }
+
+  String _userTypeLabel(String? userType, String travelerType) {
+    switch ((userType ?? '').toLowerCase()) {
+      case 'local_resident':
+        return 'Local resident';
+      case 'international_visitor':
+        return 'International visitor';
+      case 'domestic_traveler':
+        return 'Domestic traveler';
+      default:
+        return _travelerLabel(travelerType);
+    }
+  }
+
   String _travelerLabel(String raw) {
     switch (raw.toLowerCase()) {
       case 'local':
@@ -453,27 +518,63 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
   }
 }
 
+class _ProfileEditResult {
+  const _ProfileEditResult({
+    required this.displayName,
+    required this.country,
+    required this.city,
+    required this.userType,
+  });
+
+  final String displayName;
+  final String country;
+  final String city;
+  final String userType;
+}
+
 class _EditProfileDialog extends StatefulWidget {
-  const _EditProfileDialog({required this.initialName});
+  const _EditProfileDialog({
+    required this.initialName,
+    required this.initialCountry,
+    required this.initialCity,
+    required this.initialUserType,
+  });
 
   final String initialName;
+  final String initialCountry;
+  final String initialCity;
+  final String initialUserType;
 
   @override
   State<_EditProfileDialog> createState() => _EditProfileDialogState();
 }
 
 class _EditProfileDialogState extends State<_EditProfileDialog> {
+  static const _userTypeChoices = <(String, String)>[
+    ('local_resident', 'Local resident'),
+    ('international_visitor', 'International visitor'),
+    ('domestic_traveler', 'Domestic traveler'),
+  ];
+
   late final TextEditingController _nameController;
+  late final TextEditingController _countryController;
+  late final TextEditingController _cityController;
+  late String _userType;
 
   @override
   void initState() {
     super.initState();
     _nameController = TextEditingController(text: widget.initialName);
+    _countryController = TextEditingController(text: widget.initialCountry);
+    _cityController = TextEditingController(text: widget.initialCity);
+    _userType = widget.initialUserType;
   }
 
   @override
   void dispose() {
     _nameController.dispose();
+    _countryController.dispose();
+    _cityController.dispose();
     super.dispose();
   }
 
@@ -492,8 +593,42 @@ class _EditProfileDialogState extends State<_EditProfileDialog> {
               controller: _nameController,
               decoration: const InputDecoration(
                 labelText: 'Display name',
-                helperText: 'Saved to your Strollwise account',
+                helperText: 'Saved to your StrollWise account',
               ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _countryController,
+              textCapitalization: TextCapitalization.words,
+              decoration: const InputDecoration(
+                labelText: 'Country of origin',
+              ),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: _cityController,
+              textCapitalization: TextCapitalization.words,
+              decoration: const InputDecoration(
+                labelText: 'City of origin',
+              ),
+            ),
+            const SizedBox(height: 10),
+            DropdownButtonFormField<String>(
+              initialValue: _userTypeChoices.any((e) => e.$1 == _userType)
+                  ? _userType
+                  : 'local_resident',
+              decoration: const InputDecoration(
+                labelText: 'User type',
+              ),
+              items: _userTypeChoices
+                  .map(
+                    (e) => DropdownMenuItem(value: e.$1, child: Text(e.$2)),
+                  )
+                  .toList(),
+              onChanged: (v) {
+                if (v == null) return;
+                setState(() => _userType = v);
+              },
             ),
           ],
         ),
@@ -504,8 +639,14 @@ class _EditProfileDialogState extends State<_EditProfileDialog> {
           child: const Text('Cancel'),
         ),
         FilledButton(
-          onPressed: () =>
-              Navigator.of(context).pop(_nameController.text.trim()),
+          onPressed: () => Navigator.of(context).pop(
+            _ProfileEditResult(
+              displayName: _nameController.text,
+              country: _countryController.text,
+              city: _cityController.text,
+              userType: _userType,
+            ),
+          ),
           child: const Text('Save'),
         ),
       ],
@@ -541,7 +682,7 @@ class _ProfilePageHeader extends StatelessWidget {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  'Your Strollwise account',
+                  'Your StrollWise account',
                   style: TextStyle(
                     fontSize: 13,
                     fontWeight: FontWeight.w600,
@@ -596,13 +737,15 @@ class _ProfileHeaderIconButton extends StatelessWidget {
 }
 
 class _DemoSessionCallout extends StatelessWidget {
-  const _DemoSessionCallout();
+  const _DemoSessionCallout({required this.onSignIn});
+
+  final VoidCallback onSignIn;
 
   @override
   Widget build(BuildContext context) {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
       decoration: BoxDecoration(
         color: AppColors.surfaceWarm,
         borderRadius: BorderRadius.circular(18),
@@ -610,25 +753,38 @@ class _DemoSessionCallout extends StatelessWidget {
           color: AppColors.accent.withValues(alpha: 0.55),
         ),
       ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Icon(
-            Icons.travel_explore_rounded,
-            size: 22,
-            color: AppColors.transportAccent.withValues(alpha: 0.9),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Text(
-              'Demo session: sign in with a registered account to load '
-              'your real tags, badges, and saved zones.',
-              style: TextStyle(
-                color: AppColors.secondaryText.withValues(alpha: 0.98),
-                fontWeight: FontWeight.w600,
-                fontSize: 13,
-                height: 1.35,
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(
+                Icons.travel_explore_rounded,
+                size: 22,
+                color: AppColors.transportAccent.withValues(alpha: 0.9),
               ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  'Demo session: sign in with a full StrollWise account to '
+                  'load your tags, badges, and saved zones.',
+                  style: TextStyle(
+                    color: AppColors.secondaryText.withValues(alpha: 0.98),
+                    fontWeight: FontWeight.w600,
+                    fontSize: 13,
+                    height: 1.35,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Align(
+            alignment: Alignment.centerRight,
+            child: FilledButton(
+              onPressed: onSignIn,
+              child: const Text('Sign in or register'),
             ),
           ),
         ],
@@ -1063,9 +1219,9 @@ class _LocationPreferenceTile extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Text(
-          'If GPS is unreliable, set where you are exploring so Explore and '
-          'nearby picks stay useful. Search by street, mall, or landmark in '
-          'greater Cebu.',
+          'Use this when you do not want to share your device location. '
+          'Explore and nearby picks will use the place you choose in '
+          'greater Cebu instead of live GPS.',
           style: TextStyle(
             color: AppColors.secondaryText.withValues(alpha: 0.98),
             fontWeight: FontWeight.w600,

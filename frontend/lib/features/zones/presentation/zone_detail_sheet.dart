@@ -17,11 +17,19 @@ class ZoneDetailSheet extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final zone = ref.watch(selectedZoneProvider);
+    final detailAsync = ref.watch(selectedZoneDetailProvider);
+    final zone = detailAsync.valueOrNull ?? ref.watch(selectedZoneProvider);
     if (zone == null) {
       return const SizedBox(
         height: 200,
         child: Center(child: Text('No zone selected')),
+      );
+    }
+
+    if (detailAsync.isLoading && detailAsync.valueOrNull == null) {
+      return const SizedBox(
+        height: 200,
+        child: Center(child: CircularProgressIndicator()),
       );
     }
 
@@ -81,7 +89,7 @@ class _ZoneHero extends StatelessWidget {
                   onTap: () => Navigator.of(context).maybePop(),
                 ),
                 Text(
-                  zone.zoneType,
+                  zone.travelerType,
                   style: const TextStyle(
                     color: Colors.white,
                     fontWeight: FontWeight.w700,
@@ -349,6 +357,23 @@ class _ZoneBody extends ConsumerWidget {
             _InfoIconChip(icon: Icons.notifications_none_rounded),
           ],
         ),
+        if (zone.places.isNotEmpty) ...[
+          const SizedBox(height: 20),
+          _SectionHeading(title: 'Places here'),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: zone.places
+                .map(
+                  (place) => Chip(
+                    label: Text('${place.displayName} · ${_titleize(place.placeType)}'),
+                    backgroundColor: const Color(0xFFF1F5F9),
+                  ),
+                )
+                .toList(),
+          ),
+        ],
         const SizedBox(height: 20),
         _SectionHeading(title: 'Traveler mix'),
         const SizedBox(height: 8),
@@ -499,16 +524,16 @@ class _ZoneBody extends ConsumerWidget {
     if (summary != null && summary.isNotEmpty) {
       return '$summary This area is currently read as $traveler behavior with $confidence% confidence and $peak activity.';
     }
-    final behavior = switch (zone.functionType) {
-      'food_hotspot' =>
+    final behavior = switch (zone.zoneType) {
+      'food' || 'food_hotspot' =>
         'food behavior, dining movement, and activity combinations',
-      'student_area' =>
+      'school' || 'student_area' =>
         'student movement, study hubs, budget meals, and campus-edge activity',
-      'transport_zone' =>
+      'transport' || 'transport_zone' =>
         'commute pressure, pickup movement, food stops, and local errands',
-      'commercial_zone' =>
+      'commercial' || 'commercial_zone' =>
         'shopping, work, dining, and visible commercial movement',
-      'tourist_hotspot' =>
+      'tourist' || 'tourist_hotspot' =>
         'visitor movement, sightseeing, accessible food, and photo-stop behavior',
       _ => 'local movement, activity patterns, and zone-level behavior',
     };
@@ -520,7 +545,8 @@ class _ZoneBody extends ConsumerWidget {
     return math.max(1, (total * (zone.confidenceScore / 100)).round());
   }
 
-  String _topAgreedCategory(ZoneModel zone) => _titleize(zone.functionType);
+  String _topAgreedCategory(ZoneModel zone) =>
+      _titleize(zone.placeName ?? zone.zoneType);
 
   String _lastUpdatedLabel(ZoneModel zone) {
     final updated = zone.updatedAt;
@@ -534,15 +560,20 @@ class _ZoneBody extends ConsumerWidget {
   }
 
   String _localsKnow(ZoneModel zone) {
-    switch (zone.functionType) {
+    switch (zone.zoneType) {
+      case 'food':
       case 'food_hotspot':
         return 'Local tags point to budget meals, repeat vendors, and side-street food movement.';
+      case 'school':
       case 'student_area':
         return 'Students use this area for study stops, budget food, and campus-edge errands.';
+      case 'transport':
       case 'transport_zone':
         return 'Locals treat this as a pickup, transfer, and quick-errand zone.';
+      case 'commercial':
       case 'commercial_zone':
         return 'Local activity clusters around work breaks, shopping shortcuts, and evening dining.';
+      case 'safety':
       case 'safety_concern':
         return 'Community tags suggest extra awareness around timing, lighting, and crowd conditions.';
       default:
@@ -551,15 +582,20 @@ class _ZoneBody extends ConsumerWidget {
   }
 
   String _touristsMiss(ZoneModel zone) {
-    switch (zone.functionType) {
+    switch (zone.zoneType) {
+      case 'food':
       case 'food_hotspot':
         return 'Visitors may only see the landmark, while locals know when food activity is strongest.';
+      case 'school':
       case 'student_area':
         return 'Tourists may miss that this is mostly student-paced and budget-oriented.';
+      case 'transport':
       case 'transport_zone':
         return 'Visitors may underestimate transfer time, traffic pressure, and pickup behavior.';
+      case 'commercial':
       case 'commercial_zone':
         return 'Tourists may miss quieter local routes behind malls and office clusters.';
+      case 'safety':
       case 'safety_concern':
         return 'Visitors may not know which times or exits need extra caution.';
       default:
@@ -568,7 +604,8 @@ class _ZoneBody extends ConsumerWidget {
   }
 
   String _safetyContext(ZoneModel zone) {
-    if (zone.functionType == 'safety_concern' ||
+    if (zone.zoneType == 'safety' ||
+        zone.functionType == 'safety_concern' ||
         zone.liveStatus == 'caution_now') {
       return 'Recent safety-related signals are present. Stay in visible public areas and check current conditions.';
     }

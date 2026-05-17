@@ -1,9 +1,8 @@
-"""Builds one frontend-facing zone per active H3 cell (no multi-cell merge).
+"""Builds one frontend-facing zone per active place (strategy B).
 
-Each aggregate cell becomes its own zone with a single-hex footprint so
-polygons never overlap across zone types and the map reads as individual
-hexes rather than one large merged blob. Partial recomputes delete any prior
-zones whose H3 sources intersect the affected area before re-inserting.
+Each place spans many H3 cells; the zone polygon matches the place footprint.
+Zones expose traveler mix (local / mixed / international) only — place type
+(school, food, etc.) lives on the Place model.
 """
 from __future__ import annotations
 
@@ -18,8 +17,11 @@ from app.core.cache import cache_delete_pattern
 from app.models.enums import BehaviorType, FunctionType, LiveStatus
 from app.models.h3_cell_aggregate import H3CellAggregate
 from app.models.merged_zone import MergedZone
+from app.models.place import Place
 from app.repositories.h3_repository import H3Repository
+from app.repositories.place_repository import PlaceRepository
 from app.repositories.zone_repository import ZoneRepository
+from app.utils.traveler_mix_utils import traveler_mix_from_counts
 from app.services import h3_service
 from app.services.landmark_service import landmark_for_centroid
 from app.services.polygon_service import PolygonService
@@ -43,6 +45,18 @@ BEHAVIOR_PREFIX = {
     BehaviorType.LOCAL_AREA.value: "Local",
     BehaviorType.TOURIST_AREA.value: "Tourist",
     BehaviorType.MIXED_AREA.value: "Mixed",
+}
+
+TRAVELER_MIX_LABEL = {
+    "local": "Mostly local",
+    "mixed": "Mixed crowd",
+    "international": "Mostly international",
+}
+
+TRAVELER_MIX_TO_BEHAVIOR = {
+    "local": BehaviorType.LOCAL_AREA.value,
+    "mixed": BehaviorType.MIXED_AREA.value,
+    "international": BehaviorType.TOURIST_AREA.value,
 }
 
 FUNCTION_DISPLAY_LABEL = {
@@ -218,14 +232,17 @@ class ZoneMergeService:
     def __init__(self, db: Session) -> None:
         self.db = db
         self.h3_repo = H3Repository(db)
+        self.place_repo = PlaceRepository(db)
         self.zone_repo = ZoneRepository(db)
 
     def rebuild_all(self) -> list[MergedZone]:
-        cells = self.h3_repo.list_all_active()
-        return self._rebuild_from_cells(cells, rebuild_all=True)
+        for zone in self.zone_repo.list_active():
+            self.zone_repo.delete(zone)
+        self.db.flush()
+        places = [p for p in self.place_repo.list_active() if p.report_count > 0]
+        return self._rebuild_from_places(places, used_slugs=set())
 
     def recompute_near(self, seed_h3_indexes: Iterable[str]) -> list[MergedZone]:
-        # Expand seed cells with a 2-ring neighborhood to catch boundary flips.
         expanded: set[str] = set()
         for idx in seed_h3_indexes:
             expanded.add(idx)
@@ -233,35 +250,36 @@ class ZoneMergeService:
         cells = self.h3_repo.list_by_indexes(expanded)
         if not cells:
             return []
-        return self._rebuild_from_cells(cells, rebuild_all=False)
+        place_ids = {c.place_id for c in cells if c.place_id is not None}
+        for cell in self.h3_repo.list_all_active():
+            if cell.h3_index in expanded and cell.place_id:
+                place_ids.add(cell.place_id)
+        return self.recompute_for_places(place_ids)
+
+    def recompute_for_places(self, place_ids: Iterable) -> list[MergedZone]:
+        ids = {pid for pid in place_ids if pid is not None}
+        if not ids:
+            return []
+        self._delete_zones_for_places(ids)
+        self.db.flush()
+        places = [self.place_repo.get(pid) for pid in ids]
+        places = [p for p in places if p is not None and p.report_count > 0]
+        return self._rebuild_from_places(places, used_slugs=set())
 
     # ---------------------------------------------------------------- core
 
-    def _rebuild_from_cells(
-        self,
-        cells: list[H3CellAggregate],
-        *,
-        rebuild_all: bool,
+    def _rebuild_from_places(
+        self, places: list[Place], *, used_slugs: set[str]
     ) -> list[MergedZone]:
         new_zones: list[MergedZone] = []
-        used_slugs: set[str] = set()
+        cells_by_place: dict = {}
+        for cell in self.h3_repo.list_all_active():
+            if cell.place_id and cell.report_count > 0:
+                cells_by_place.setdefault(cell.place_id, []).append(cell)
 
-        if rebuild_all:
-            for zone in self.zone_repo.list_active():
-                self.zone_repo.delete(zone)
-            self.db.flush()
-        else:
-            touched = {c.h3_index for c in cells}
-            self._delete_zones_touching_h3_indexes(touched)
-            self.db.flush()
-
-        for cell in cells:
-            if cell.report_count == 0:
-                continue
-            function_group = FUNCTION_GROUPS.get(cell.function_type, "general")
-            zone = self._build_zone(
-                cell.behavior_type, function_group, [cell], used_slugs
-            )
+        for place in places:
+            cells = cells_by_place.get(place.place_id, [])
+            zone = self._build_zone_from_place(place, cells, used_slugs)
             if zone is not None:
                 self.zone_repo.upsert(zone)
                 new_zones.append(zone)
@@ -271,6 +289,11 @@ class ZoneMergeService:
         cache_delete_pattern("zones:feed*")
         cache_delete_pattern("city:pulse:*")
         return new_zones
+
+    def _delete_zones_for_places(self, place_ids: set) -> None:
+        for zone in list(self.zone_repo.list_active()):
+            if zone.place_id in place_ids:
+                self.zone_repo.delete(zone)
 
     def _delete_zones_touching_h3_indexes(self, indexes: set[str]) -> None:
         """Remove merged zones that used any of these cells so we never stack
@@ -284,35 +307,32 @@ class ZoneMergeService:
 
     # ---------------------------------------------------------- zone assembly
 
-    def _build_zone(
+    def _build_zone_from_place(
         self,
-        behavior: str,
-        function_group: str,
+        place: Place,
         cells: list[H3CellAggregate],
         used_slugs: set[str],
     ) -> MergedZone | None:
-        if not cells:
+        if not cells or place.report_count == 0:
             return None
-        # Use the dominant function type within the component for display.
-        function_counter: dict[str, int] = {}
-        for c in cells:
-            function_counter[c.function_type] = function_counter.get(c.function_type, 0) + 1
-        dominant_function = max(function_counter.items(), key=lambda kv: kv[1])[0]
 
-        h3_indexes = [c.h3_index for c in cells]
-        polygon = PolygonService.cells_to_geojson_polygon(h3_indexes)
-        centroid_lat, centroid_lng = PolygonService.centroid_of_cells(h3_indexes)
+        h3_indexes = place.source_h3_indexes_json or [c.h3_index for c in cells]
+        polygon = place.polygon_geojson or PolygonService.cells_to_geojson_polygon(
+            h3_indexes
+        )
+        centroid_lat = place.centroid_lat
+        centroid_lng = place.centroid_lng
 
         report_count = sum(c.report_count for c in cells)
-        if report_count == 0:
-            return None
+        local_total = sum(c.local_count for c in cells)
+        intl_total = sum(c.international_count for c in cells)
+        traveler_mix = traveler_mix_from_counts(local_total, intl_total)
+        behavior = TRAVELER_MIX_TO_BEHAVIOR[traveler_mix]
 
         local_presence = 0.0
-        total_travelers = sum(c.local_count + c.international_count for c in cells)
+        total_travelers = local_total + intl_total
         if total_travelers > 0:
-            local_presence = (
-                sum(c.local_count for c in cells) / total_travelers * 100.0
-            )
+            local_presence = local_total / total_travelers * 100.0
 
         crowd_level = sum(c.crowd_score for c in cells) / len(cells)
         confidence = sum(c.confidence_score for c in cells) / len(cells)
@@ -324,13 +344,11 @@ class ZoneMergeService:
         peak_label = label_for_peak_hours(peak_hours)
 
         top_activities = self._top_activities(cells)
-        label = FUNCTION_DISPLAY_LABEL.get(dominant_function, "Area")
-        prefix = BEHAVIOR_PREFIX.get(behavior, "")
         landmark_name, _ = landmark_for_centroid(centroid_lat, centroid_lng)
-        profile = self._landmark_profile(landmark_name)
-        display_name = self._compose_display_name(prefix, label, landmark_name, profile)
+        traveler_label = TRAVELER_MIX_LABEL[traveler_mix]
+        display_name = f"{place.display_name} · {traveler_label}"
 
-        slug_base = slugify(f"{display_name} {h3_indexes[0][:6]}")
+        slug_base = slugify(f"{place.slug}-{traveler_mix}")
         slug = slug_base
         counter = 1
         while slug in used_slugs or self.zone_repo.list_by_slug(slug):
@@ -338,23 +356,30 @@ class ZoneMergeService:
             slug = f"{slug_base}-{counter}"
         used_slugs.add(slug)
 
-        live_status = self._live_status(behavior, dominant_function, crowd_level)
-        summary = self._summary(
-            behavior,
-            dominant_function,
+        live_status = self._live_status(behavior, None, crowd_level)
+        summary = self._traveler_summary(
+            place.display_name,
+            traveler_mix,
             report_count,
             local_presence,
-            profile=profile,
         )
-        top_activities = self._merge_profile_activities(top_activities, profile)
         priority = self._priority(report_count, crowd_level, confidence, popularity)
 
+        existing_zone = None
+        for zone in self.zone_repo.list_active():
+            if zone.place_id == place.place_id:
+                existing_zone = zone
+                break
+
+        zone_id = existing_zone.zone_id if existing_zone else uuid4()
         return MergedZone(
-            zone_id=uuid4(),
+            zone_id=zone_id,
             display_name=display_name,
             slug=slug,
             behavior_type=behavior,
-            function_type=dominant_function,
+            function_type=None,
+            traveler_mix=traveler_mix,
+            place_id=place.place_id,
             summary=summary,
             live_status=live_status,
             polygon_geojson=polygon,
@@ -374,7 +399,20 @@ class ZoneMergeService:
             report_count=report_count,
             is_active=True,
             updated_at=datetime.utcnow(),
-            created_at=datetime.utcnow(),
+            created_at=existing_zone.created_at if existing_zone else datetime.utcnow(),
+        )
+
+    @staticmethod
+    def _traveler_summary(
+        place_name: str,
+        traveler_mix: str,
+        report_count: int,
+        local_presence: float,
+    ) -> str:
+        label = TRAVELER_MIX_LABEL.get(traveler_mix, "Mixed crowd")
+        return (
+            f"{label} area around {place_name}. "
+            f"Based on {report_count} recent tags with about {local_presence:.0f}% local presence."
         )
 
     @staticmethod
@@ -455,7 +493,7 @@ class ZoneMergeService:
         )
 
     @staticmethod
-    def _live_status(behavior: str, function_type: str, crowd_level: float) -> str:
+    def _live_status(behavior: str, function_type: str | None, crowd_level: float) -> str:
         if function_type == FunctionType.SAFETY_CONCERN.value:
             return LiveStatus.CAUTION_NOW.value
         if crowd_level >= 0.8:

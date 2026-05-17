@@ -14,6 +14,7 @@ from app.repositories.h3_repository import H3Repository
 from app.repositories.report_repository import ReportRepository
 from app.services.classification_service import ClassificationService
 from app.utils.time_utils import as_utc_aware, hour_of
+from app.utils.user_type_utils import report_counts_local_international
 
 
 class AggregationService:
@@ -56,12 +57,10 @@ class AggregationService:
         tag_counts = self.build_tag_counts(reports)
 
         local_count = sum(
-            1 for r in reports if (r.traveler_type_snapshot or "").lower() == "local"
+            1 for r in reports if report_counts_local_international(r)[0]
         )
         intl_count = sum(
-            1
-            for r in reports
-            if (r.traveler_type_snapshot or "").lower() == "international"
+            1 for r in reports if report_counts_local_international(r)[1]
         )
         total = len(reports)
         mixed_score = 0.0
@@ -141,7 +140,7 @@ class AggregationService:
             return 0.0
         # Use timezone-aware "now" so comparisons work with Postgres
         # DateTime(timezone=True) while utcnow() stays naive for legacy callers.
-        now = datetime.now(timezone.utc)
+        now = datetime.now(timezone.utc)  # noqa: UP017
         window = now - timedelta(hours=12)
         recent = [
             r

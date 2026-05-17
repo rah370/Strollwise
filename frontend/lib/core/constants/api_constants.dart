@@ -1,5 +1,5 @@
 class ApiConstants {
-  /// Base URL of the StrollWise backend. Defaults to the local Docker stack.
+  /// Base URL of the StrollWise backend (local uvicorn on port 8000 by default).
   static const baseUrl = String.fromEnvironment(
     'API_URL',
     defaultValue: 'http://localhost:8000',

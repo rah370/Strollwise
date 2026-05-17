@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:math' as math;
 
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:h3_flutter/h3_flutter.dart';
 import 'package:maplibre_gl/maplibre_gl.dart';
@@ -10,6 +11,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../shared/models/current_zone_overview.dart';
 import '../../shared/models/layer_settings.dart';
+import '../../shared/models/place.dart';
+import '../../shared/models/place_list_item.dart';
 import '../../shared/models/place_tag_marker.dart';
 import '../../shared/models/report.dart';
 import '../../shared/models/user_contributions.dart';
@@ -19,8 +22,88 @@ import '../../shared/network/api_client.dart';
 
 final authTokenProvider = StateProvider<String?>((ref) => null);
 final authUserEmailProvider = StateProvider<String?>((ref) => null);
+final cachedUserMeProvider = StateProvider<UserMeModel?>((ref) => null);
+
+/// Bumps so [GoRouter] re-runs `redirect` after auth restore or login/logout.
+final routerRefreshListenable = ValueNotifier<int>(0);
+
+const authPrefsTokenKey = 'strollwise.auth.access_token';
+const authPrefsEmailKey = 'strollwise.auth.user_email';
+const authPrefsUserJsonKey = 'strollwise.auth.user_json';
+
+Future<void> persistAuthCredentials({
+  required String token,
+  required String email,
+  UserMeModel? user,
+}) async {
+  final prefs = await SharedPreferences.getInstance();
+  await prefs.setString(authPrefsTokenKey, token);
+  await prefs.setString(authPrefsEmailKey, email);
+  if (user != null) {
+    await prefs.setString(authPrefsUserJsonKey, jsonEncode(user.toJson()));
+  } else {
+    await prefs.remove(authPrefsUserJsonKey);
+  }
+}
+
+Future<void> clearPersistedAuth() async {
+  final prefs = await SharedPreferences.getInstance();
+  await prefs.remove(authPrefsTokenKey);
+  await prefs.remove(authPrefsEmailKey);
+  await prefs.remove(authPrefsUserJsonKey);
+}
+
+Future<void> restoreAuthFromPrefs(WidgetRef ref) async {
+  final prefs = await SharedPreferences.getInstance();
+  final token = prefs.getString(authPrefsTokenKey);
+  final email = prefs.getString(authPrefsEmailKey);
+  final raw = prefs.getString(authPrefsUserJsonKey);
+  if (token != null && token.isNotEmpty) {
+    ref.read(authTokenProvider.notifier).state = token;
+    if (email != null && email.isNotEmpty) {
+      ref.read(authUserEmailProvider.notifier).state = email;
+    }
+    if (raw != null && raw.isNotEmpty) {
+      try {
+        final decoded = jsonDecode(raw);
+        if (decoded is Map<String, dynamic>) {
+          ref.read(cachedUserMeProvider.notifier).state =
+              UserMeModel.fromJson(decoded);
+        }
+      } catch (_) {}
+    }
+    routerRefreshListenable.value++;
+  }
+}
 final selectedZoneProvider = StateProvider<ZoneModel?>((ref) => null);
+
+/// Fetches full zone detail (including [ZoneModel.places]) when a zone is selected.
+final selectedZoneDetailProvider = FutureProvider<ZoneModel?>((ref) async {
+  final zone = ref.watch(selectedZoneProvider);
+  if (zone == null) return null;
+  final dio = ref.watch(dioProvider);
+  try {
+    final response = await dio.get('/zones/${zone.zoneId}');
+    final data = response.data;
+    if (data is! Map<String, dynamic>) return zone;
+    return ZoneModel.fromJson(data);
+  } on DioException {
+    return zone;
+  } on FormatException {
+    return zone;
+  } on TypeError {
+    return zone;
+  }
+});
+
+/// Sort/ranking filter sent as `filter=` (popular_now, etc.).
 final activeZoneFilterProvider = StateProvider<String?>((ref) => null);
+
+/// Who uses the area: local | mixed | international → `traveler_mix=`.
+final activeTravelerMixFilterProvider = StateProvider<String?>((ref) => null);
+
+/// What the area is: school | food | transport | … → `place_type=`.
+final activePlaceTypeFilterProvider = StateProvider<String?>((ref) => null);
 final currentUserLocationProvider = StateProvider<LatLng?>((ref) => null);
 final exploreFocusLocationProvider = StateProvider<LatLng?>((ref) => null);
 
@@ -132,10 +215,65 @@ final ownPendingTagPinsProvider =
   }
 });
 
+final visiblePlacesProvider = FutureProvider<List<PlaceListItem>>((ref) async {
+  final dio = ref.watch(dioProvider);
+  final viewport = ref.watch(mapViewportProvider);
+  final placeType = ref.watch(activePlaceTypeFilterProvider);
+  try {
+    final response = await dio.get(
+      '/places',
+      queryParameters: {
+        'min_lat': viewport.minLat,
+        'min_lng': viewport.minLng,
+        'max_lat': viewport.maxLat,
+        'max_lng': viewport.maxLng,
+        if (placeType != null && placeType.isNotEmpty) 'place_type': placeType,
+      },
+    );
+    final list = response.data;
+    if (list is! List) return const [];
+    return list
+        .map((e) => PlaceListItem.fromJson(e as Map<String, dynamic>))
+        .toList();
+  } on DioException {
+    return const [];
+  } on FormatException {
+    return const [];
+  } on TypeError {
+    return const [];
+  }
+});
+
+/// Catalog place at a pin (tag picker / preview).
+final resolvedPlaceAtPointProvider =
+    FutureProvider.family<PlaceSummary?, ({double lat, double lng})>(
+  (ref, point) async {
+    final dio = ref.watch(dioProvider);
+    try {
+      final response = await dio.get(
+        '/places/resolve',
+        queryParameters: {'lat': point.lat, 'lng': point.lng},
+      );
+      final data = response.data;
+      if (data == null) return null;
+      if (data is! Map<String, dynamic>) return null;
+      return PlaceSummary.fromJson(data);
+    } on DioException {
+      return null;
+    } on FormatException {
+      return null;
+    } on TypeError {
+      return null;
+    }
+  },
+);
+
 final visibleZonesProvider = FutureProvider<List<ZoneModel>>((ref) async {
   final dio = ref.watch(dioProvider);
   final viewport = ref.watch(mapViewportProvider);
   final filter = ref.watch(activeZoneFilterProvider);
+  final travelerMix = ref.watch(activeTravelerMixFilterProvider);
+  final placeType = ref.watch(activePlaceTypeFilterProvider);
   const cacheKey = 'last_good_visible_zones';
   try {
     final response = await dio.get(
@@ -147,6 +285,9 @@ final visibleZonesProvider = FutureProvider<List<ZoneModel>>((ref) async {
         'max_lng': viewport.maxLng,
         'zoom': viewport.zoom.round(),
         if (filter != null && filter.isNotEmpty) 'filter': filter,
+        if (travelerMix != null && travelerMix.isNotEmpty)
+          'traveler_mix': travelerMix,
+        if (placeType != null && placeType.isNotEmpty) 'place_type': placeType,
       },
     );
     final zones = (response.data as List)
@@ -187,6 +328,7 @@ final userMeProvider = FutureProvider<UserMeModel?>((ref) async {
     return null;
   }
   final dio = ref.watch(dioProvider);
+  final cached = ref.read(cachedUserMeProvider);
   try {
     final response = await dio.get(
       '/users/me',
@@ -198,13 +340,17 @@ final userMeProvider = FutureProvider<UserMeModel?>((ref) async {
         },
       ),
     );
-    return UserMeModel.fromJson(response.data as Map<String, dynamic>);
+    final data = response.data as Map<String, dynamic>;
+    final model = UserMeModel.fromJson(data);
+    ref.read(cachedUserMeProvider.notifier).state = model;
+    await persistAuthCredentials(token: token, email: model.email, user: model);
+    return model;
   } on DioException {
-    return null;
+    return cached;
   } on FormatException {
-    return null;
+    return cached;
   } on TypeError {
-    return null;
+    return cached;
   }
 });
 
@@ -655,8 +801,8 @@ List<ZoneModel> _filterFallbackZones(List<ZoneModel> zones, String? filter) {
   return zones
       .where((zone) {
         final f = filter.toLowerCase();
-        return zone.functionType.contains(f) ||
-            zone.behaviorType.contains(f) ||
+        return zone.zoneType.contains(f) ||
+            zone.travelerMix.contains(f) ||
             zone.displayName.toLowerCase().contains(f);
       })
       .toList(growable: false);
@@ -1265,11 +1411,17 @@ ZoneModel _legacyBlobFallbackZone({
   required int reports,
 }) {
   final boundary = _blobBoundary(lat, lng, latRadius, lngRadius);
+  final travelerMix = switch (behaviorType) {
+    'local_area' => 'local',
+    'tourist_area' => 'international',
+    _ => 'mixed',
+  };
   return ZoneModel(
     zoneId: zoneId,
     displayName: displayName,
     behaviorType: behaviorType,
     functionType: functionType,
+    travelerMix: travelerMix,
     summary: summary,
     liveStatus: liveStatus,
     polygonGeoJson: {
@@ -1405,6 +1557,7 @@ class TagSubmissionController
         // responsive while still refreshing local fallback providers.
         await Future<void>.delayed(const Duration(milliseconds: 350));
         ref.invalidate(visibleZonesProvider);
+        ref.invalidate(selectedZoneDetailProvider);
         ref.invalidate(ownPendingTagPinsProvider);
         ref.invalidate(feedProvider);
         ref.invalidate(zoneFeedProvider);
@@ -1431,6 +1584,7 @@ class TagSubmissionController
         data['aggregation'] as Map<String, dynamic>,
       );
       ref.invalidate(visibleZonesProvider);
+      ref.invalidate(selectedZoneDetailProvider);
       ref.invalidate(ownPendingTagPinsProvider);
       ref.invalidate(feedProvider);
       ref.invalidate(zoneFeedProvider);
@@ -1498,6 +1652,9 @@ class AuthActionController extends StateNotifier<AsyncValue<void>> {
     required String email,
     required String password,
     String? displayName,
+    String? countryOfOrigin,
+    String? cityOfOrigin,
+    String? userType,
     bool acceptedResearchConsent = false,
   }) async {
     state = const AsyncLoading();
@@ -1512,7 +1669,11 @@ class AuthActionController extends StateNotifier<AsyncValue<void>> {
             'display_name': (displayName == null || displayName.trim().isEmpty)
                 ? null
                 : displayName.trim(),
-          if (mode == AuthMode.register) 'traveler_type': 'mixed',
+          if (mode == AuthMode.register)
+            'country_of_origin': countryOfOrigin?.trim(),
+          if (mode == AuthMode.register)
+            'city_of_origin': cityOfOrigin?.trim(),
+          if (mode == AuthMode.register) 'user_type': userType?.trim(),
           if (mode == AuthMode.register)
             'accepted_research_consent': acceptedResearchConsent,
         },
@@ -1523,6 +1684,20 @@ class AuthActionController extends StateNotifier<AsyncValue<void>> {
       }
       ref.read(authTokenProvider.notifier).state = token;
       ref.read(authUserEmailProvider.notifier).state = email.trim();
+      final rawUser = response.data['user'];
+      UserMeModel? userMe;
+      if (rawUser is Map<String, dynamic>) {
+        userMe = UserMeModel.fromJson(rawUser);
+      } else if (rawUser is Map) {
+        userMe = UserMeModel.fromJson(Map<String, dynamic>.from(rawUser));
+      }
+      ref.read(cachedUserMeProvider.notifier).state = userMe;
+      await persistAuthCredentials(
+        token: token,
+        email: email.trim(),
+        user: userMe,
+      );
+      routerRefreshListenable.value++;
       ref.invalidate(userMeProvider);
       ref.invalidate(userContributionsProvider);
       ref.invalidate(savedZonesProfileProvider);
@@ -1534,8 +1709,11 @@ class AuthActionController extends StateNotifier<AsyncValue<void>> {
   }
 
   void loginDemoUser() {
+    unawaited(clearPersistedAuth());
     ref.read(authTokenProvider.notifier).state = 'demo-token-local';
     ref.read(authUserEmailProvider.notifier).state = 'demo@strollwise.local';
+    ref.read(cachedUserMeProvider.notifier).state = null;
+    routerRefreshListenable.value++;
     ref.invalidate(userMeProvider);
     ref.invalidate(userContributionsProvider);
     ref.invalidate(savedZonesProfileProvider);
@@ -1543,15 +1721,20 @@ class AuthActionController extends StateNotifier<AsyncValue<void>> {
   }
 
   void logout() {
+    unawaited(clearPersistedAuth());
     ref.read(authTokenProvider.notifier).state = null;
     ref.read(authUserEmailProvider.notifier).state = null;
+    ref.read(cachedUserMeProvider.notifier).state = null;
     ref.read(selectedZoneProvider.notifier).state = null;
     ref.read(activeZoneFilterProvider.notifier).state = null;
+    ref.read(activeTravelerMixFilterProvider.notifier).state = null;
+    ref.read(activePlaceTypeFilterProvider.notifier).state = null;
     ref.read(currentUserLocationProvider.notifier).state = null;
     ref.read(exploreFocusLocationProvider.notifier).state = null;
     ref.read(explorePostSubmitCueProvider.notifier).state = null;
     ref.read(exploreFlashPinProvider.notifier).state = null;
     ref.read(zoneDataNoticeProvider.notifier).state = null;
+    routerRefreshListenable.value++;
     ref.invalidate(userMeProvider);
     ref.invalidate(userContributionsProvider);
     ref.invalidate(savedZonesProfileProvider);

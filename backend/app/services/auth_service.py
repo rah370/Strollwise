@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-from datetime import timezone
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
 
@@ -10,6 +9,7 @@ from app.models.user import User
 from app.repositories.user_repository import UserRepository
 from app.schemas.auth import LoginRequest, RegisterRequest, TokenResponse
 from app.schemas.user import UserPublic
+from app.utils.user_type_utils import apply_user_type_to_user
 
 
 class AuthError(Exception):
@@ -29,16 +29,20 @@ class AuthService:
             email=email,
             password_hash=hash_password(payload.password),
             display_name=payload.display_name,
-            traveler_type=payload.traveler_type or "mixed",
+            country_of_origin=payload.country_of_origin,
+            city_of_origin=payload.city_of_origin,
+            user_type=payload.user_type,
+            traveler_type="mixed",
             nationality=payload.nationality,
             age_range=payload.age_range,
             accepted_research_consent=payload.accepted_research_consent,
             accepted_privacy_terms_at=(
-                datetime.now(timezone.utc)
+                datetime.now(timezone.utc)  # noqa: UP017
                 if payload.accepted_research_consent
                 else None
             ),
         )
+        apply_user_type_to_user(user)
         self.users.create(user)
         self.db.commit()
         self.db.refresh(user)

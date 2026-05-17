@@ -16,13 +16,17 @@ from app.core.cache import (
 )
 from app.core.config import settings
 from app.core.database import get_db
+from app.repositories.place_repository import PlaceRepository
 from app.repositories.zone_repository import ZoneRepository
 from app.schemas.common import Centroid
 from app.models.enums import BehaviorType, FunctionType, LiveStatus
+from app.schemas.place import PlaceSummary
 from app.schemas.zone import CurrentZoneOverview, ZoneDetail, ZoneLaunchContext, ZoneListItem
+from app.utils.traveler_mix_utils import behavior_to_traveler_mix
 from app.services.ranking_service import RankingService
 from app.services import h3_service
 from app.utils.geo_utils import haversine_km, polygon_intersects_bbox
+from app.utils.h3_display import display_h3_rings
 
 log = logging.getLogger(__name__)
 
@@ -37,6 +41,8 @@ def zones_in_viewport(
     max_lng: float = Query(..., ge=-180.0, le=180.0),
     zoom: float | None = Query(default=None, ge=0, le=22),
     filter: str | None = Query(default=None, max_length=32),
+    traveler_mix: str | None = Query(default=None, max_length=16),
+    place_type: str | None = Query(default=None, max_length=32),
     user_lat: float | None = Query(default=None, ge=-90.0, le=90.0),
     user_lng: float | None = Query(default=None, ge=-180.0, le=180.0),
     db: Session = Depends(get_db),
@@ -45,7 +51,14 @@ def zones_in_viewport(
         raise HTTPException(status_code=400, detail="Invalid bounding box")
 
     cache_key = build_viewport_cache_key(
-        min_lat, min_lng, max_lat, max_lng, zoom=zoom, filter_key=filter
+        min_lat,
+        min_lng,
+        max_lat,
+        max_lng,
+        zoom=zoom,
+        filter_key=filter,
+        traveler_mix=traveler_mix,
+        place_type=place_type,
     )
     cached = cache_get(cache_key)
     if cached is not None:
@@ -67,9 +80,12 @@ def zones_in_viewport(
                 max_lng,
             )
         ]
-    ranked = RankingService.rank(
+    _attach_place_metadata(db, in_viewport)
+    ranked = RankingService.apply_viewport_filters(
         in_viewport,
         filter_key=filter,
+        traveler_mix=traveler_mix,
+        place_type=place_type,
         user_lat=user_lat,
         user_lng=user_lng,
     )
@@ -98,6 +114,7 @@ def zones_feed(
 
     repo = ZoneRepository(db)
     all_zones = repo.list_active()
+    _attach_place_metadata(db, all_zones)
     ranked = RankingService.rank(
         all_zones,
         filter_key=filter,
@@ -161,6 +178,9 @@ def current_zone_overview(
     city_activity = _city_activity_label(context_source.crowd_level)
     crowd_percent = min(max(context_source.crowd_level * 100, 0), 100)
 
+    overview_zones = [z for z in [current, *nearby, *alternatives] if z is not None]
+    _attach_place_metadata(db, overview_zones)
+
     return CurrentZoneOverview(
         current_zone=_to_list_item(current) if current is not None else None,
         nearby_zones=[_to_list_item(z) for z in nearby],
@@ -182,11 +202,20 @@ def zone_detail(zone_id: UUID, db: Session = Depends(get_db)) -> ZoneDetail:
         raise HTTPException(status_code=404, detail="Zone not found")
 
     nearby = _nearby_zone_ids(repo, zone)
+    place_repo = PlaceRepository(db)
+    primary_place = place_repo.get(zone.place_id) if zone.place_id else None
+    places_here = _places_for_zone_detail(place_repo, zone, primary_place)
+    mix, place_name, place_type = _zone_place_fields(zone, primary_place)
     return ZoneDetail(
         zone_id=zone.zone_id,
         display_name=zone.display_name,
         behavior_type=zone.behavior_type,
+        traveler_mix=mix,
         function_type=zone.function_type,
+        place_id=zone.place_id,
+        place_name=place_name,
+        place_type=place_type,
+        places=places_here,
         summary=zone.summary,
         live_status=zone.live_status,
         polygon_geojson=zone.polygon_geojson,
@@ -200,7 +229,7 @@ def zone_detail(zone_id: UUID, db: Session = Depends(get_db)) -> ZoneDetail:
         live_update=_live_update(zone),
         nearby_zone_ids=nearby,
         source_h3_indexes=list(zone.source_h3_indexes_json or []),
-        source_h3_rings=_display_h3_rings(zone),
+        source_h3_rings=display_h3_rings(zone.source_h3_indexes_json),
         report_count=zone.report_count,
         updated_at=zone.updated_at,
     )
@@ -231,12 +260,74 @@ def zone_nearby(
     return [_to_list_item(o) for _, o in distances[:limit]]
 
 
+def _attach_place_metadata(db: Session, zones: list) -> None:
+    place_ids = {z.place_id for z in zones if z.place_id}
+    if not place_ids:
+        return
+    place_repo = PlaceRepository(db)
+    by_id = {p.place_id: p for p in place_repo.list_by_ids(place_ids)}
+    for zone in zones:
+        place = by_id.get(zone.place_id)
+        if place is None:
+            continue
+        zone._place_display_name = place.display_name  # type: ignore[attr-defined]
+        zone._place_type = place.place_type  # type: ignore[attr-defined]
+
+
+def _zone_place_fields(zone, primary_place) -> tuple[str, str | None, str | None]:
+    mix = zone.traveler_mix or behavior_to_traveler_mix(zone.behavior_type)
+    if primary_place is None:
+        return mix, None, None
+    return mix, primary_place.display_name, primary_place.place_type
+
+
+def _places_for_zone_detail(place_repo, zone, primary_place) -> list[PlaceSummary]:
+    items: list[PlaceSummary] = []
+    if primary_place is not None:
+        items.append(
+            PlaceSummary(
+                place_id=primary_place.place_id,
+                display_name=primary_place.display_name,
+                place_type=primary_place.place_type,
+                report_count=primary_place.report_count,
+                confidence_score=primary_place.confidence_score,
+            )
+        )
+    for other in place_repo.list_active():
+        if primary_place and other.place_id == primary_place.place_id:
+            continue
+        d = haversine_km(
+            zone.centroid_lat,
+            zone.centroid_lng,
+            other.centroid_lat,
+            other.centroid_lng,
+        )
+        if d <= 0.6:
+            items.append(
+                PlaceSummary(
+                    place_id=other.place_id,
+                    display_name=other.display_name,
+                    place_type=other.place_type,
+                    report_count=other.report_count,
+                    confidence_score=other.confidence_score,
+                )
+            )
+    return items[:6]
+
+
 def _to_list_item(zone) -> ZoneListItem:
+    mix = zone.traveler_mix or behavior_to_traveler_mix(zone.behavior_type)
+    place_name = getattr(zone, "_place_display_name", None)
+    place_type = getattr(zone, "_place_type", None)
     return ZoneListItem(
         zone_id=zone.zone_id,
         display_name=zone.display_name,
         behavior_type=zone.behavior_type,
+        traveler_mix=mix,
         function_type=zone.function_type,
+        place_id=zone.place_id,
+        place_name=place_name,
+        place_type=place_type,
         summary=zone.summary,
         live_status=zone.live_status,
         polygon_geojson=zone.polygon_geojson,
@@ -246,38 +337,9 @@ def _to_list_item(zone) -> ZoneListItem:
         peak_time_label=zone.peak_time_label,
         confidence_score=zone.confidence_score,
         priority_score=zone.priority_score,
-        source_h3_rings=_display_h3_rings(zone),
+        source_h3_rings=display_h3_rings(zone.source_h3_indexes_json),
         updated_at=zone.updated_at,
     )
-
-
-def _close_ring(ring: list[list[float]]) -> list[list[float]]:
-    if not ring:
-        return []
-    if ring[0] == ring[-1]:
-        return ring
-    return [*ring, ring[0]]
-
-
-def _display_h3_rings(zone) -> list[list[list[float]]]:
-    source = [idx for idx in (zone.source_h3_indexes_json or []) if idx]
-    if not source:
-        return []
-
-    # Render with finer hexes than aggregation resolution so the map reads as
-    # small manageable cells instead of one large chunky region.
-    target_resolution = min(settings.h3_resolution + 1, 10)
-    try:
-        display_indexes = h3_service.expand_cells(source, target_resolution)
-    except Exception:
-        display_indexes = source
-
-    # Keep payload bounded in very dense areas.
-    unique = list(dict.fromkeys(display_indexes))
-    if len(unique) > 600:
-        unique = unique[:600]
-
-    return [_close_ring(h3_service.cell_to_lnglat_ring(idx)) for idx in unique]
 
 
 def _ring_bbox_area_deg2(ring: list[list[float]]) -> float:

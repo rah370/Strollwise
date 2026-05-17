@@ -16,13 +16,14 @@ from app.schemas.common import MessageResponse
 from app.schemas.report import ReportPublic
 from app.schemas.user import (
     ProfileBadge,
-    UserContributionStats,
     UserContributionsResponse,
+    UserContributionStats,
     UserPublic,
     UserUpdate,
 )
 from app.schemas.zone import ZoneListItem
 from app.services.audit_service import AuditService
+from app.utils.user_type_utils import apply_user_type_to_user
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -93,6 +94,8 @@ def update_me(
     data = payload.model_dump(exclude_unset=True)
     for key, value in data.items():
         setattr(current_user, key, value)
+    if "user_type" in data:
+        apply_user_type_to_user(current_user)
     UserRepository(db).save(current_user)
     db.commit()
     db.refresh(current_user)

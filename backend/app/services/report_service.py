@@ -21,7 +21,9 @@ from app.schemas.report import ReportCreate
 from app.services import h3_service
 from app.services.aggregation_service import AggregationService
 from app.services.audit_service import AuditService
+from app.services.place_service import PlaceService
 from app.services.zone_merge_service import ZoneMergeService
+from app.utils.user_type_utils import traveler_type_from_user_type
 
 log = logging.getLogger(__name__)
 
@@ -127,7 +129,14 @@ class ReportService:
             note_text=payload.note_text,
             image_url=payload.image_url,
             source_type=payload.source_type,
-            traveler_type_snapshot=user.traveler_type,
+            traveler_type_snapshot=(
+                traveler_type_from_user_type(user.user_type)
+                if user.user_type
+                else (user.traveler_type or "mixed")
+            ),
+            user_type_snapshot=user.user_type,
+            country_of_origin_snapshot=user.country_of_origin,
+            city_of_origin_snapshot=user.city_of_origin,
             visibility_status=VisibilityStatus.PENDING.value,
         )
         self.reports.create(report)
@@ -158,7 +167,7 @@ class ReportService:
             },
         )
 
-        user.updated_at = datetime.now(timezone.utc)
+        user.updated_at = datetime.now(timezone.utc)  # noqa: UP017
         self.db.add(user)
         self.db.commit()
         self.db.refresh(report)
@@ -319,7 +328,9 @@ class ReportService:
         try:
             AggregationService(self.db).recompute_cells(affected)
             self.db.commit()
-            ZoneMergeService(self.db).recompute_near([h3_index])
+            places = PlaceService(self.db).rebuild_places_for_cells(affected)
+            place_ids = [p.place_id for p in places]
+            ZoneMergeService(self.db).recompute_for_places(place_ids)
 
             cache_delete_pattern("zones:vp:*")
             cache_delete_pattern("zones:feed*")

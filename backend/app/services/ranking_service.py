@@ -7,6 +7,17 @@ from collections.abc import Iterable
 from app.models.enums import BehaviorType, FunctionType
 from app.models.merged_zone import MergedZone
 from app.utils.geo_utils import haversine_km
+from app.utils.traveler_mix_utils import behavior_to_traveler_mix
+
+
+def _zone_traveler_mix(zone: MergedZone) -> str:
+    if zone.traveler_mix:
+        return zone.traveler_mix
+    return behavior_to_traveler_mix(zone.behavior_type)
+
+
+def _zone_place_type(zone: MergedZone) -> str | None:
+    return getattr(zone, "_place_type", None)
 
 
 class RankingService:
@@ -15,11 +26,44 @@ class RankingService:
         "popular_now",
         "local_picks",
         "food",
+        "school",
         "transport",
         "commercial",
         "tourist",
         "safe_areas",
     }
+
+    @classmethod
+    def apply_viewport_filters(
+        cls,
+        zones: Iterable[MergedZone],
+        *,
+        filter_key: str | None = None,
+        traveler_mix: str | None = None,
+        place_type: str | None = None,
+        user_lat: float | None = None,
+        user_lng: float | None = None,
+        limit: int | None = None,
+    ) -> list[MergedZone]:
+        """Filter by traveler mix and/or place type, then rank."""
+        zones_list = list(zones)
+        if traveler_mix:
+            mix = traveler_mix.lower()
+            zones_list = [z for z in zones_list if _zone_traveler_mix(z) == mix]
+        if place_type:
+            pt = place_type.lower()
+            zones_list = [
+                z
+                for z in zones_list
+                if (_zone_place_type(z) or "").lower() == pt
+            ]
+        return cls.rank(
+            zones_list,
+            filter_key=filter_key,
+            user_lat=user_lat,
+            user_lng=user_lng,
+            limit=limit,
+        )
 
     @classmethod
     def rank(
@@ -59,29 +103,39 @@ class RankingService:
                 base += zone.crowd_level * 30 + zone.report_count * 0.25
             elif key == "local_picks":
                 base += zone.local_presence_percent * 0.8
-                if zone.behavior_type == BehaviorType.LOCAL_AREA.value:
+                if _zone_traveler_mix(zone) == "local":
                     base += 20
             elif key == "food":
-                if zone.function_type == FunctionType.FOOD_HOTSPOT.value:
+                if _zone_place_type(zone) == "food":
                     base += 40
+                elif zone.function_type == FunctionType.FOOD_HOTSPOT.value:
+                    base += 40
+            elif key == "school":
+                if _zone_place_type(zone) == "school":
+                    base += 42
+                elif zone.function_type == FunctionType.STUDENT_AREA.value:
+                    base += 42
             elif key == "transport":
-                if zone.function_type == FunctionType.TRANSPORT_ZONE.value:
+                if _zone_place_type(zone) == "transport":
+                    base += 35
+                elif zone.function_type == FunctionType.TRANSPORT_ZONE.value:
                     base += 35
             elif key == "commercial":
-                if zone.function_type == FunctionType.COMMERCIAL_ZONE.value:
+                if _zone_place_type(zone) in {"commercial", "busy"}:
+                    base += 30
+                elif zone.function_type == FunctionType.COMMERCIAL_ZONE.value:
                     base += 30
             elif key == "tourist":
-                # Tourist-leaning areas: hotspots and mixed behavior
-                # dominated by international visitors.
-                if zone.function_type == FunctionType.TOURIST_HOTSPOT.value:
+                if _zone_place_type(zone) == "tourist":
                     base += 40
-                if zone.behavior_type == BehaviorType.TOURIST_AREA.value:
+                if _zone_traveler_mix(zone) == "international":
                     base += 18
-                # Downrank strongly local-only areas for this filter.
-                if zone.behavior_type == BehaviorType.LOCAL_AREA.value:
+                if _zone_traveler_mix(zone) == "local":
                     base -= 10
             elif key == "safe_areas":
-                if zone.function_type == FunctionType.SAFETY_CONCERN.value:
+                if _zone_place_type(zone) == "safety":
+                    base -= 45
+                elif zone.function_type == FunctionType.SAFETY_CONCERN.value:
                     base -= 45
                 else:
                     base += zone.confidence_score * 0.25

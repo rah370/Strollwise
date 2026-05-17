@@ -1,6 +1,9 @@
+/// Map layer toggles persisted in [layerSettingsProvider].
 class LayerSettings {
   const LayerSettings({
+    /// Zone polygon fill from traveler mix (who).
     this.showTravelerLayer = true,
+    /// Catalog place outlines by place type (what).
     this.showFunctionalOverlay = true,
     this.showHeatmap = false,
     this.showTraffic = false,

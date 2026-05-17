@@ -39,6 +39,9 @@ class Report(Base):
 
     source_type: Mapped[str] = mapped_column(String(16), nullable=False, default="user")
     traveler_type_snapshot: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    user_type_snapshot: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    country_of_origin_snapshot: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
+    city_of_origin_snapshot: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
     visibility_status: Mapped[str] = mapped_column(
         String(16), nullable=False, default="visible"
     )

@@ -8,6 +8,7 @@ import '../../../core/widgets/empty_state_card.dart';
 import '../../../core/widgets/loading_skeleton.dart';
 import '../../../shared/models/zone.dart';
 import '../../../shared/providers/app_providers.dart';
+import '../../../shared/zone_place_ui.dart';
 
 class FeedScreen extends ConsumerStatefulWidget {
   const FeedScreen({super.key});
@@ -324,9 +325,9 @@ class _ZoneFeedCard extends StatelessWidget {
     return Color(int.parse(h, radix: 16));
   }
 
-  String _functionLabel() {
-    return zone.functionType.replaceAll('_', ' ');
-  }
+  String _cardTitle() => zoneDisplayTitle(zone);
+
+  String _cardSubtitle() => zoneMapSubtitle(zone);
 
   @override
   Widget build(BuildContext context) {
@@ -369,7 +370,7 @@ class _ZoneFeedCard extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        zone.displayName,
+                        _cardTitle(),
                         style: const TextStyle(
                           fontWeight: FontWeight.w800,
                           color: Color(0xFF0F172A),
@@ -379,7 +380,7 @@ class _ZoneFeedCard extends StatelessWidget {
                       ),
                       const SizedBox(height: 4),
                       Text(
-                        '${zone.travelerType} · ${_functionLabel()}',
+                        _cardSubtitle(),
                         style: const TextStyle(
                           fontSize: 12,
                           color: Color(0xFF64748B),

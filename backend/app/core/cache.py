@@ -84,14 +84,18 @@ def build_viewport_cache_key(
     *,
     zoom: float | None,
     filter_key: str | None,
+    traveler_mix: str | None = None,
+    place_type: str | None = None,
 ) -> str:
     quant = lambda v: round(v, 3)  # noqa: E731
     zoom_part = f"{zoom:.1f}" if zoom is not None else "na"
     filter_part = filter_key or "all"
+    mix_part = (traveler_mix or "any").lower()
+    place_part = (place_type or "any").lower()
     return (
         "zones:vp:"
         f"{quant(min_lat)}:{quant(min_lng)}:{quant(max_lat)}:{quant(max_lng)}:"
-        f"{zoom_part}:{filter_part}"
+        f"{zoom_part}:{filter_part}:{mix_part}:{place_part}"
     )
 
 

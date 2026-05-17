@@ -8,6 +8,9 @@ def test_users_me_patch_manual_map_round_trip(client):
             "email": "mapper@example.com",
             "password": "supersecret123",
             "display_name": "Mapper",
+            "country_of_origin": "Philippines",
+            "city_of_origin": "Cebu City",
+            "user_type": "local_resident",
         },
     )
     assert reg.status_code == 201, reg.text

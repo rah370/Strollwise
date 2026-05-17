@@ -7,7 +7,10 @@ def _register(client):
         json={
             "email": "report@example.com",
             "password": "supersecret123",
-            "traveler_type": "local",
+            "display_name": "Reporter",
+            "country_of_origin": "Philippines",
+            "city_of_origin": "Cebu City",
+            "user_type": "local_resident",
         },
     )
     assert resp.status_code == 201
@@ -245,7 +248,10 @@ def test_me_contributions_reflects_submitted_reports(client):
         json={
             "email": email,
             "password": "supersecret123",
-            "traveler_type": "local",
+            "display_name": "Contrib",
+            "country_of_origin": "Philippines",
+            "city_of_origin": "Cebu City",
+            "user_type": "local_resident",
         },
     )
     assert reg.status_code == 201, reg.text

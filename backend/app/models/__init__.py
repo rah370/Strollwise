@@ -11,6 +11,7 @@ from app.models.enums import (
 from app.models.h3_cell_aggregate import H3CellAggregate
 from app.models.media import Media
 from app.models.merged_zone import MergedZone
+from app.models.place import Place
 from app.models.report import Report
 from app.models.saved_zone import SavedZone
 from app.models.user import User
@@ -24,6 +25,7 @@ __all__ = [
     "LiveStatus",
     "Media",
     "MergedZone",
+    "Place",
     "Report",
     "ReportCategory",
     "SavedZone",

@@ -12,6 +12,7 @@ import '../../../shared/location/cebu_place_geocode.dart';
 import '../../../shared/models/zone.dart';
 import '../../../shared/network/api_client.dart';
 import '../../../shared/providers/app_providers.dart';
+import '../../../shared/zone_place_ui.dart';
 
 Future<LatLng?> _tagPickerTryCurrentGps() async {
   try {
@@ -572,8 +573,8 @@ class _ZoneCard extends StatelessWidget {
             ),
             const SizedBox(height: 6),
             Text(
-              zone?.displayName.trim().isNotEmpty == true
-                  ? zone!.displayName.trim()
+              zone != null
+                  ? '${zoneDisplayTitle(zone!)} · ${zoneMapSubtitle(zone!)}'
                   : 'Zone loads after you set a location.',
               style: const TextStyle(
                 color: AppColors.secondaryText,
@@ -588,7 +589,7 @@ class _ZoneCard extends StatelessWidget {
   }
 }
 
-class _LocationCard extends StatelessWidget {
+class _LocationCard extends ConsumerWidget {
   const _LocationCard({
     required this.placeSearchController,
     required this.pickedLocation,
@@ -610,7 +611,17 @@ class _LocationCard extends StatelessWidget {
   final VoidCallback onClear;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final resolvedPlace = pickedLocation == null
+        ? null
+        : ref
+            .watch(
+              resolvedPlaceAtPointProvider((
+                lat: pickedLocation!.latitude,
+                lng: pickedLocation!.longitude,
+              )),
+            )
+            .valueOrNull;
     return Card(
       elevation: 0,
       shape: RoundedRectangleBorder(
@@ -682,6 +693,54 @@ class _LocationCard extends StatelessWidget {
             ),
             if (pickedLocation != null) ...[
               const SizedBox(height: 12),
+              if (resolvedPlace != null)
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 10,
+                  ),
+                  decoration: BoxDecoration(
+                    color: placeTypeAccentColor(resolvedPlace.placeType)
+                        .withValues(alpha: 0.10),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                      color: placeTypeAccentColor(resolvedPlace.placeType)
+                          .withValues(alpha: 0.35),
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        placeTypeIcon(resolvedPlace.placeType),
+                        size: 20,
+                        color: placeTypeAccentColor(resolvedPlace.placeType),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          'Tagging near ${resolvedPlace.displayName} '
+                          '(${placeTypeLabel(resolvedPlace.placeType)})',
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w800,
+                            fontSize: 13,
+                            color: AppColors.primaryText,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                )
+              else
+                const Text(
+                  'Outside a named catalog place — tag still counts toward '
+                  'the nearest cell.',
+                  style: TextStyle(
+                    color: AppColors.mutedText,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              const SizedBox(height: 8),
               SelectableText(
                 '${pickedLocation!.latitude.toStringAsFixed(5)}, '
                 '${pickedLocation!.longitude.toStringAsFixed(5)}',

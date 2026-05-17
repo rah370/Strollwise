@@ -39,8 +39,9 @@ class LayersScreen extends ConsumerWidget {
               ),
               _LayerTile(
                 icon: Icons.category_outlined,
-                title: 'Functional zone overlay',
-                subtitle: 'Borders and badges for food, school, transport',
+                title: 'Place type overlay',
+                subtitle:
+                    'Hex outlines from tagged cells (school, food, commercial)',
                 color: AppColors.accent,
                 value: settings.showFunctionalOverlay,
                 onChanged: (value) => notifier.state = settings.copyWith(
@@ -152,7 +153,7 @@ class _Header extends StatelessWidget {
           ),
           SizedBox(height: 6),
           Text(
-            'Keep the map readable: fill shows traveler mix, borders show functional zones, opacity shows confidence.',
+            'Fill color = who (local / mixed / international). Outlines = what (school, food, transport).',
             style: TextStyle(
               color: Color(0xFFBAE6FD),
               height: 1.4,
