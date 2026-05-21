@@ -11,11 +11,13 @@ import 'package:maplibre_gl/maplibre_gl.dart';
 
 import '../../../app/theme/colors.dart';
 import '../../../shared/models/cell.dart';
+import '../../../shared/models/current_zone_overview.dart';
 import '../../../shared/models/layer_settings.dart';
 import '../../../shared/models/place_list_item.dart';
 import '../../../shared/models/zone.dart';
 import '../../../shared/maps/google_maps_launcher.dart';
 import '../../../shared/network/api_client.dart';
+import '../../../shared/map/map_viewport.dart';
 import '../../../shared/providers/app_providers.dart';
 import '../../../shared/traveler_gradient.dart';
 import '../../../shared/zone_place_ui.dart';
@@ -79,6 +81,11 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
   String? _searchFeedback;
   bool _searchBusy = false;
   Timer? _searchDebounce;
+  Timer? _viewportIdleDebounce;
+  Timer? _zoneLookupDebounce;
+  DateTime? _lastFollowCameraAt;
+  LatLng? _lastFollowCameraTarget;
+  LatLng? _lastZoneLookupLocation;
   ExplorePlaceSearchService? _placeSearchService;
   int _searchRequestGen = 0;
   static const _cebuCityCenter = LatLng(10.3157, 123.8854);
@@ -259,10 +266,9 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
     LatLng target, {
     double zoom = _defaultZoom,
   }) async {
-    final current = ref.read(mapViewportProvider);
     const latDelta = 0.05;
     const lngDelta = 0.05;
-    ref.read(mapViewportProvider.notifier).state = current.copyWith(
+    final next = MapViewport(
       center: target,
       zoom: zoom,
       minLat: target.latitude - latDelta,
@@ -270,10 +276,45 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
       maxLat: target.latitude + latDelta,
       maxLng: target.longitude + lngDelta,
     );
+    _applyMapViewport(next, refetchData: true);
     final controller = _controller;
     if (controller != null) {
       await controller.moveCamera(CameraUpdate.newLatLngZoom(target, zoom));
     }
+    _scheduleZoneLookupUpdate(target, immediate: true);
+  }
+
+  void _applyMapViewport(MapViewport next, {required bool refetchData}) {
+    ref.read(mapViewportProvider.notifier).state = next;
+    if (!refetchData) return;
+    final dataViewport = ref.read(dataFetchViewportProvider);
+    if (!mapViewportChangedSignificantly(dataViewport, next)) return;
+    ref.read(dataFetchViewportProvider.notifier).state = next;
+  }
+
+  void _scheduleZoneLookupUpdate(LatLng location, {bool immediate = false}) {
+    if (!latLngChangedSignificantly(_lastZoneLookupLocation, location)) {
+      return;
+    }
+    _zoneLookupDebounce?.cancel();
+    if (immediate) {
+      _lastZoneLookupLocation = location;
+      ref.read(zoneLookupLocationProvider.notifier).state = location;
+      return;
+    }
+    _zoneLookupDebounce = Timer(const Duration(milliseconds: 1200), () {
+      if (!mounted) return;
+      _lastZoneLookupLocation = location;
+      ref.read(zoneLookupLocationProvider.notifier).state = location;
+    });
+  }
+
+  void _scheduleViewportRefresh() {
+    _viewportIdleDebounce?.cancel();
+    _viewportIdleDebounce = Timer(const Duration(milliseconds: 380), () {
+      if (!mounted) return;
+      unawaited(_refreshViewportZones());
+    });
   }
 
   Future<void> _ensureDefaultCebuViewport() async {
@@ -336,7 +377,9 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
     }
     try {
       final features = <Map<String, dynamic>>[];
-      final hasCellLayer = cells.isNotEmpty;
+      // Thesis map: show catalog zone hexes whenever zones exist; skip cell grid.
+      final drawZoneHexes = zones.isNotEmpty;
+      final hasCellLayer = cells.isNotEmpty && !drawZoneHexes;
       if (hasCellLayer) {
         for (final cell in cells) {
           final layerKey = _cellLayerKey(cell);
@@ -346,9 +389,9 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
           final color = _cellColor(cell);
           final closed = _closeGeoJsonLngLatRing(cell.ring);
           if (closed.length < 4) continue;
-          final lifecycle = cell.reportCount >= 6
+          final lifecycle = cell.reportCount >= 3
               ? 'defined'
-              : cell.reportCount >= 2
+              : cell.reportCount >= 1
               ? 'emerging'
               : 'sparse';
           features.add({
@@ -725,15 +768,21 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
       final bounds = await controller.getVisibleRegion();
       final camera = controller.cameraPosition;
       if (!mounted) return;
-      final current = ref.read(mapViewportProvider);
-      ref.read(mapViewportProvider.notifier).state = current.copyWith(
-        center: camera?.target,
-        zoom: camera?.zoom,
+      final center = camera?.target ?? ref.read(mapViewportProvider).center;
+      final zoom = camera?.zoom ?? ref.read(mapViewportProvider).zoom;
+      final next = MapViewport(
+        center: center,
+        zoom: zoom,
         minLat: bounds.southwest.latitude,
         minLng: bounds.southwest.longitude,
         maxLat: bounds.northeast.latitude,
         maxLng: bounds.northeast.longitude,
       );
+      final dataViewport = ref.read(dataFetchViewportProvider);
+      final shouldRefetch = mapViewportChangedSignificantly(dataViewport, next);
+      ref.read(mapViewportProvider.notifier).state = next;
+      if (!shouldRefetch) return;
+      ref.read(dataFetchViewportProvider.notifier).state = next;
       ref.invalidate(visibleZonesProvider);
       ref.invalidate(visibleCellsProvider);
       final zones = await ref.read(visibleZonesProvider.future);
@@ -749,7 +798,9 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
 
   void _selectZone(ZoneModel zone) {
     ref.read(selectedCellProvider.notifier).state = null;
-    ref.read(selectedZoneProvider.notifier).state = zone;
+    ref.read(mapSearchPlaceTitleProvider.notifier).state = null;
+    ref.read(selectedZoneProvider.notifier).state =
+        enrichZoneForAreaCard(zone);
     setState(() => _mapMode = ExploreMapMode.zoneSelected);
   }
 
@@ -941,20 +992,37 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
     _positionSubscription =
         Geolocator.getPositionStream(
           locationSettings: const LocationSettings(
-            accuracy: LocationAccuracy.best,
-            distanceFilter: 12,
+            accuracy: LocationAccuracy.medium,
+            distanceFilter: 25,
           ),
         ).listen((position) async {
           if (!mounted || _usingManualLocation) return;
           final live = LatLng(position.latitude, position.longitude);
           ref.read(currentUserLocationProvider.notifier).state = live;
-          if (_followUser) {
-            final controller = _controller;
-            if (controller != null) {
-              await controller.moveCamera(
-                CameraUpdate.newLatLngZoom(live, 13),
-              );
-            }
+          _scheduleZoneLookupUpdate(live);
+          if (!_followUser) {
+            final zones = ref.read(visibleZonesProvider).valueOrNull ?? _latestZones;
+            unawaited(_drawZones(zones));
+            return;
+          }
+          final now = DateTime.now();
+          final lastAt = _lastFollowCameraAt;
+          final lastTarget = _lastFollowCameraTarget;
+          final movedEnough = latLngChangedSignificantly(
+            lastTarget,
+            live,
+            minMeters: 35,
+          );
+          final throttled = lastAt != null &&
+              now.difference(lastAt) < const Duration(seconds: 4);
+          if (!movedEnough || throttled) return;
+          _lastFollowCameraAt = now;
+          _lastFollowCameraTarget = live;
+          final controller = _controller;
+          if (controller != null) {
+            await controller.moveCamera(
+              CameraUpdate.newLatLngZoom(live, 13),
+            );
           }
         });
   }
@@ -962,6 +1030,8 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
   @override
   void dispose() {
     _exploreFlashClearTimer?.cancel();
+    _viewportIdleDebounce?.cancel();
+    _zoneLookupDebounce?.cancel();
     _positionSubscription?.cancel();
     _searchDebounce?.cancel();
     _searchController.dispose();
@@ -1052,16 +1122,7 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
 
   Future<void> _focusSearchHit(ExploreSearchHit hit) async {
     ref.read(mapSearchFocusProvider.notifier).state = hit.location;
-    ref.read(mapSearchPlaceTitleProvider.notifier).state = hit.title;
     ref.invalidate(currentZoneOverviewProvider);
-
-    if (hit.zone != null) {
-      _selectZone(hit.zone!);
-    } else {
-      ref.read(selectedZoneProvider.notifier).state = null;
-      ref.read(selectedCellProvider.notifier).state = null;
-      setState(() => _mapMode = ExploreMapMode.discovery);
-    }
 
     setState(() {
       _followUser = false;
@@ -1074,6 +1135,40 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
     await _moveCameraToLocation(hit.location, zoom: 15.4);
     if (!mounted) return;
     await _refreshViewportZones();
+    if (!mounted) return;
+    await _selectZoneForMapPoint(hit.location, preferred: hit.zone);
+  }
+
+  Future<void> _selectZoneForMapPoint(
+    LatLng location, {
+    ZoneModel? preferred,
+  }) async {
+    ZoneModel? zone = preferred != null
+        ? enrichZoneForAreaCard(preferred)
+        : null;
+    if (zone == null) {
+      final zones = ref.read(visibleZonesProvider).valueOrNull ?? _latestZones;
+      final nearest = _findNearestZone(location, zones);
+      if (nearest != null) zone = enrichZoneForAreaCard(nearest);
+    }
+    if (zone == null) {
+      await ZoneCatalog.ensureLoaded();
+      final entry = ZoneCatalog.nearestEntry(
+        location.latitude,
+        location.longitude,
+      );
+      if (entry != null) {
+        zone = zoneModelFromCatalogEntry(entry);
+      }
+    }
+    if (zone != null) {
+      _selectZone(zone);
+      return;
+    }
+    ref.read(mapSearchPlaceTitleProvider.notifier).state = null;
+    ref.read(selectedZoneProvider.notifier).state = null;
+    ref.read(selectedCellProvider.notifier).state = null;
+    setState(() => _mapMode = ExploreMapMode.discovery);
   }
 
   void _clearSearchInsight() {
@@ -1096,6 +1191,21 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
 
   @override
   Widget build(BuildContext context) {
+    ref.listen<AsyncValue<CurrentZoneOverviewModel?>>(
+      currentZoneOverviewProvider,
+      (prev, next) {
+        if (next.isLoading) return;
+        next.whenData((overview) {
+          if (_didApplyCurrentZone || overview?.currentZone == null) return;
+          _didApplyCurrentZone = true;
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!mounted) return;
+            ref.read(selectedZoneProvider.notifier).state =
+                enrichZoneForAreaCard(overview!.currentZone!);
+          });
+        });
+      },
+    );
     ref.listen<bool>(explorePendingGpsCenterProvider, (prev, next) {
       if (next != true) return;
       ref.read(explorePendingGpsCenterProvider.notifier).state = false;
@@ -1181,17 +1291,9 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
     ref.watch(ownVisitPinsProvider);
     final selectedZone = ref.watch(selectedZoneProvider);
     final searchPlaceTitle = ref.watch(mapSearchPlaceTitleProvider);
-    final currentZoneOverview = ref.watch(currentZoneOverviewProvider);
+    ref.watch(currentZoneOverviewProvider);
     final zoneDataNotice = ref.watch(zoneDataNoticeProvider);
     final zones = zonesValue.valueOrNull ?? _latestZones;
-    currentZoneOverview.whenData((overview) {
-      if (_didApplyCurrentZone || overview?.currentZone == null) return;
-      _didApplyCurrentZone = true;
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted) return;
-        ref.read(selectedZoneProvider.notifier).state = overview!.currentZone;
-      });
-    });
 
     return Scaffold(
       body: LayoutBuilder(
@@ -1229,21 +1331,22 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
                         unawaited(_drawZones(zones));
                       }
                     },
-                    onCameraIdle: _refreshViewportZones,
+                    onCameraIdle: _scheduleViewportRefresh,
                     onMapClick: (point, latLng) {
                       final tap = LatLng(latLng.latitude, latLng.longitude);
-                      final cells = _latestCells;
-                      if (cells.isNotEmpty) {
-                        final cell = _findCellAt(tap, cells);
-                        if (cell != null) {
-                          _handleCellTap(cell);
+                      final zones = _latestZones;
+                      if (zones.isNotEmpty) {
+                        final selected = _findNearestZone(tap, zones);
+                        if (selected != null) {
+                          _handleZoneTap(selected);
                           return;
                         }
                       }
-                      final zones = _latestZones;
-                      if (zones.isEmpty) return;
-                      final selected = _findNearestZone(tap, zones);
-                      if (selected != null) _handleZoneTap(selected);
+                      final cells = _latestCells;
+                      if (cells.isNotEmpty) {
+                        final cell = _findCellAt(tap, cells);
+                        if (cell != null) _handleCellTap(cell);
+                      }
                     },
                   ),
                 ),
@@ -2147,7 +2250,7 @@ class _SelectedZoneCard extends StatelessWidget {
                 _MetricCell(
                   icon: Icons.bar_chart_rounded,
                   label: 'Activity',
-                  value: zone.reportCount >= 35 ? 'Busy' : 'Moderate',
+                  value: _activityLabel(zone),
                   accent: AppColors.accent,
                 ),
                 _MetricCell(
@@ -2158,7 +2261,7 @@ class _SelectedZoneCard extends StatelessWidget {
                 _MetricCell(
                   icon: Icons.verified_user_outlined,
                   label: 'Best time',
-                  value: '4PM-9PM',
+                  value: _bestTimeLabel(zone),
                 ),
               ],
             ),
@@ -2220,10 +2323,27 @@ class _CloseButton extends StatelessWidget {
   }
 }
 
+String _activityLabel(ZoneModel zone) {
+  if (zone.liveStatus.contains('busy') || zone.reportCount >= 35) {
+    return 'Busy';
+  }
+  if (zone.reportCount >= 15 || zone.crowdLevel >= 0.55) {
+    return 'Moderate';
+  }
+  return 'Light';
+}
+
+String _bestTimeLabel(ZoneModel zone) {
+  final peak = zone.peakTimeLabel?.trim() ?? '';
+  if (peak.isNotEmpty) return peak;
+  return '4PM–9PM';
+}
+
 String _localPresence(ZoneModel zone) {
-  if (zone.travelerType == 'Local') return '72%';
-  if (zone.travelerType == 'International') return '38%';
-  return '55%';
+  final pct = zone.localPresencePercent > 0
+      ? zone.localPresencePercent
+      : TravelerGradient.localRatioForZone(zone) * 100;
+  return '${pct.round()}%';
 }
 
 int _matchingSignalCount(ZoneModel zone) {

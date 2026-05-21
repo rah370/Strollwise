@@ -28,6 +28,26 @@ final dioProvider = Provider<Dio>((ref) {
         }
         handler.next(options);
       },
+      onError: (error, handler) async {
+        final status = error.response?.statusCode;
+        final path = error.requestOptions.path;
+        final hadAuth = error.requestOptions.headers['Authorization'] != null;
+        final isAuthRoute = path.contains('/auth/login') ||
+            path.contains('/auth/register');
+        if (status == 401 && hadAuth && !isAuthRoute) {
+          final token = ref.read(authTokenProvider);
+          if (token != null &&
+              token.isNotEmpty &&
+              token != 'demo-token-local') {
+            await clearPersistedAuth();
+            ref.read(authTokenProvider.notifier).state = null;
+            ref.read(authUserEmailProvider.notifier).state = null;
+            ref.read(cachedUserMeProvider.notifier).state = null;
+            routerRefreshListenable.value++;
+          }
+        }
+        handler.next(error);
+      },
     ),
   );
 

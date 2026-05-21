@@ -64,6 +64,7 @@ class PlaceService:
             place.centroid_lat = centroid_lat
             place.centroid_lng = centroid_lng
             place.source = "catalog"
+            place.source_h3_indexes_json = list(entry.source_h3_indexes)
             synced.append(self.place_repo.upsert(place))
         self.db.commit()
         return synced
@@ -107,7 +108,10 @@ class PlaceService:
             place.report_count = 0
             place.confidence_score = 0.0
             place.source_h3_indexes_json = []
-            place.is_active = False
+            catalog = catalog_by_slug(place.slug)
+            place.is_active = catalog is not None
+            if catalog is not None:
+                place.polygon_geojson = catalog.polygon_geojson
             self.place_repo.upsert(place)
             return place
 
@@ -166,7 +170,7 @@ class PlaceService:
         place.confidence_score = round(
             sum(c.confidence_score for c in active_cells) / len(active_cells), 2
         ) if active_cells else 0.0
-        place.is_active = place.report_count > 0
+        place.is_active = True if catalog is not None else place.report_count > 0
         place.updated_at = datetime.utcnow()
         return self.place_repo.upsert(place)
 
@@ -204,10 +208,12 @@ class PlaceService:
     def _place_from_centroid(
         self, lat: float, lng: float, slug_to_place: dict[str, Place]
     ) -> Place | None:
-        for entry in CEBU_PLACE_CATALOG:
-            if point_in_geojson(entry.polygon_geojson, lat=lat, lng=lng):
-                return slug_to_place.get(entry.slug)
-        return None
+        from app.services.place_catalog import catalog_place_at_point
+
+        entry = catalog_place_at_point(lat=lat, lng=lng)
+        if entry is None:
+            return None
+        return slug_to_place.get(entry.slug)
 
     def _place_slug_from_cell_tags(self, cell: H3CellAggregate) -> str | None:
         lat, lng = h3_service.cell_centroid(cell.h3_index)

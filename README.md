@@ -46,7 +46,7 @@ cp .env.example .env          # uses localhost URLs
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 python -m alembic upgrade head
-python seed.py                  # demo Cebu data
+python seed.py                  # demo Cebu data (keeps your registered accounts)
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
@@ -67,6 +67,23 @@ chmod +x backend/scripts/dev.sh
 cd frontend
 flutter pub get
 flutter run --dart-define=API_URL=http://127.0.0.1:8000
+```
+
+**Mapbox (optional)** — Map style + place search geocoding. Without a token the app uses Carto Positron and OpenStreetMap Nominatim.
+
+```bash
+# Same token as in backend/.env (public pk.* token is fine for client maps)
+flutter run \
+  --dart-define=API_URL=http://127.0.0.1:8000 \
+  --dart-define=MAPBOX_ACCESS_TOKEN=pk.your_token_here
+```
+
+Verify catalog zone centers against Mapbox (backend):
+
+```bash
+cd backend
+# set MAPBOX_ACCESS_TOKEN in .env first
+python scripts/verify_zone_placements_mapbox.py
 ```
 
 - **iOS Simulator:** `http://127.0.0.1:8000` or `http://localhost:8000`
@@ -99,6 +116,7 @@ Copy [`backend/.env.example`](backend/.env.example) to `backend/.env`. Key value
 | --- | --- |
 | `DATABASE_URL` | `postgresql+psycopg2://strollwise:strollwise@localhost:5432/strollwise` |
 | `REDIS_URL` | `redis://localhost:6379/0` |
+| `MAPBOX_ACCESS_TOKEN` | Optional — geocoding API + placement verification |
 
 ## Pipeline (short)
 

@@ -21,6 +21,7 @@ import '../../shared/models/user_contributions.dart';
 import '../../shared/models/visit_pin.dart';
 import '../../shared/models/user_me.dart';
 import '../../shared/models/zone.dart';
+import '../../shared/map/map_viewport.dart';
 import '../../shared/network/api_client.dart';
 
 final authTokenProvider = StateProvider<String?>((ref) => null);
@@ -82,10 +83,53 @@ Future<void> bootstrapAuthSession(dynamic ref) async {
         }
       } catch (_) {}
     }
+    await _validatePersistedAuthSession(ref);
   }
 
   ref.read(authBootstrapCompleteProvider.notifier).state = true;
   routerRefreshListenable.value++;
+}
+
+/// Confirms the saved JWT still works; clears stale prefs on 401.
+Future<void> _validatePersistedAuthSession(dynamic ref) async {
+  final token = ref.read(authTokenProvider);
+  if (token == null || token.isEmpty || token == 'demo-token-local') {
+    return;
+  }
+  try {
+    final dio = ref.read(dioProvider);
+    final response = await dio.get(
+      '/users/me',
+      options: Options(
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Cache-Control': 'no-cache',
+        },
+      ),
+    );
+    final data = response.data;
+    if (data is Map<String, dynamic>) {
+      final user = UserMeModel.fromJson(data);
+      ref.read(cachedUserMeProvider.notifier).state = user;
+      ref.read(authUserEmailProvider.notifier).state = user.email;
+      await persistAuthCredentials(
+        token: token,
+        email: user.email,
+        user: user,
+      );
+    }
+  } on DioException catch (error) {
+    if (error.response?.statusCode == 401 ||
+        error.response?.statusCode == 403) {
+      await clearPersistedAuth();
+      ref.read(authTokenProvider.notifier).state = null;
+      ref.read(authUserEmailProvider.notifier).state = null;
+      ref.read(cachedUserMeProvider.notifier).state = null;
+      routerRefreshListenable.value++;
+    }
+  } catch (_) {
+    // Offline at startup — keep cached token; API calls will retry when online.
+  }
 }
 
 Future<void> restoreAuthFromPrefs(WidgetRef ref) async {
@@ -149,61 +193,32 @@ final layerSettingsProvider = StateProvider<LayerSettings>(
   (ref) => const LayerSettings(),
 );
 
-class MapViewport {
-  const MapViewport({
-    required this.center,
-    required this.zoom,
-    required this.minLat,
-    required this.minLng,
-    required this.maxLat,
-    required this.maxLng,
-  });
-
-  final LatLng center;
-  final double zoom;
-  final double minLat;
-  final double minLng;
-  final double maxLat;
-  final double maxLng;
-
-  MapViewport copyWith({
-    LatLng? center,
-    double? zoom,
-    double? minLat,
-    double? minLng,
-    double? maxLat,
-    double? maxLng,
-  }) {
-    return MapViewport(
-      center: center ?? this.center,
-      zoom: zoom ?? this.zoom,
-      minLat: minLat ?? this.minLat,
-      minLng: minLng ?? this.minLng,
-      maxLat: maxLat ?? this.maxLat,
-      maxLng: maxLng ?? this.maxLng,
-    );
-  }
-
-  /// Legacy helper kept for any remaining call sites that expect a single
-  /// `minLng,minLat,maxLng,maxLat` string.
-  String get bbox => '$minLng,$minLat,$maxLng,$maxLat';
-}
-
-final mapViewportProvider = StateProvider<MapViewport>(
-  (ref) => const MapViewport(
-    center: LatLng(10.3157, 123.8854),
-    zoom: 12,
-    minLat: 10.24,
-    minLng: 123.82,
-    maxLat: 10.39,
-    maxLng: 123.97,
-  ),
+const _defaultMapViewport = MapViewport(
+  center: LatLng(10.3157, 123.8854),
+  zoom: 12,
+  minLat: 10.24,
+  minLng: 123.82,
+  maxLat: 10.39,
+  maxLng: 123.97,
 );
+
+/// Live camera viewport (updates often). Used for "Explore map center" on Add Tag.
+final mapViewportProvider = StateProvider<MapViewport>(
+  (ref) => _defaultMapViewport,
+);
+
+/// Bbox used for zone/cell/pin API fetches — only updates on meaningful map moves.
+final dataFetchViewportProvider = StateProvider<MapViewport>(
+  (ref) => _defaultMapViewport,
+);
+
+/// Debounced location for `/zones/current` on Explore (avoids refetch every GPS tick).
+final zoneLookupLocationProvider = StateProvider<LatLng?>((ref) => null);
 
 /// Private visit pins — only the logged-in user sees these on the map.
 final ownVisitPinsProvider = FutureProvider<List<VisitPinModel>>((ref) async {
   final dio = ref.watch(dioProvider);
-  final viewport = ref.watch(mapViewportProvider);
+  final viewport = ref.watch(dataFetchViewportProvider);
   final token = ref.watch(authTokenProvider);
   if (token == null || token == 'demo-token-local') {
     return const [];
@@ -265,7 +280,7 @@ final ownVisitHistoryProvider = FutureProvider<List<VisitPinModel>>((ref) async 
 final ownPendingTagPinsProvider =
     FutureProvider<List<PlaceTagMarker>>((ref) async {
   final dio = ref.watch(dioProvider);
-  final viewport = ref.watch(mapViewportProvider);
+  final viewport = ref.watch(dataFetchViewportProvider);
   final token = ref.watch(authTokenProvider);
   if (token == null || token == 'demo-token-local') {
     return const [];
@@ -298,7 +313,7 @@ final ownPendingTagPinsProvider =
 
 final visiblePlacesProvider = FutureProvider<List<PlaceListItem>>((ref) async {
   final dio = ref.watch(dioProvider);
-  final viewport = ref.watch(mapViewportProvider);
+  final viewport = ref.watch(dataFetchViewportProvider);
   final placeType = ref.watch(activePlaceTypeFilterProvider);
   try {
     final response = await dio.get(
@@ -351,7 +366,7 @@ final resolvedPlaceAtPointProvider =
 
 final visibleCellsProvider = FutureProvider<List<CellModel>>((ref) async {
   final dio = ref.watch(dioProvider);
-  final viewport = ref.watch(mapViewportProvider);
+  final viewport = ref.watch(dataFetchViewportProvider);
   final travelerMix = ref.watch(activeTravelerMixFilterProvider);
   final placeType = ref.watch(activePlaceTypeFilterProvider);
   try {
@@ -382,7 +397,7 @@ final visibleCellsProvider = FutureProvider<List<CellModel>>((ref) async {
 
 final visibleZonesProvider = FutureProvider<List<ZoneModel>>((ref) async {
   final dio = ref.watch(dioProvider);
-  final viewport = ref.watch(mapViewportProvider);
+  final viewport = ref.watch(dataFetchViewportProvider);
   final filter = ref.watch(activeZoneFilterProvider);
   final travelerMix = ref.watch(activeTravelerMixFilterProvider);
   final placeType = ref.watch(activePlaceTypeFilterProvider);
@@ -408,7 +423,10 @@ final visibleZonesProvider = FutureProvider<List<ZoneModel>>((ref) async {
         .toList();
     unawaited(_writeZoneCache(cacheKey, response.data));
     ref.read(zoneDataNoticeProvider.notifier).state = null;
-    return zones;
+    await ZoneCatalog.ensureLoaded();
+    return _filterToCatalogZones(zones)
+        .map(enrichZoneForAreaCard)
+        .toList(growable: false);
   } on DioException {
     return _cachedOrFallbackZones(ref, cacheKey, filter);
   } on FormatException {
@@ -647,10 +665,16 @@ Future<List<ZoneModel>> _cachedOrFallbackZones(
   if (cached != null && cached.zones.isNotEmpty) {
     ref.read(zoneDataNoticeProvider.notifier).state =
         'Showing cached zone data from ${_formatCacheTime(cached.savedAt)}';
-    return _filterFallbackZones(cached.zones, filter);
+    await ZoneCatalog.ensureLoaded();
+    return _filterFallbackZones(
+      _filterToCatalogZones(cached.zones)
+          .map(enrichZoneForAreaCard)
+          .toList(growable: false),
+      filter,
+    );
   }
   ref.read(zoneDataNoticeProvider.notifier).state = null;
-  return _fallbackVisibleZones(filter);
+  return await _fallbackVisibleZones(filter);
 }
 
 Future<_CachedZones?> _readCachedZones(String key) async {
@@ -747,7 +771,8 @@ final currentZoneOverviewProvider = FutureProvider<CurrentZoneOverviewModel?>((
   ref,
 ) async {
   final searchFocus = ref.watch(mapSearchFocusProvider);
-  final location = searchFocus ?? ref.watch(currentUserLocationProvider);
+  final location =
+      searchFocus ?? ref.watch(zoneLookupLocationProvider);
   if (location == null) return null;
 
   final dio = ref.watch(dioProvider);
@@ -804,7 +829,7 @@ class TagFlowZoneOverviewNotifier extends StateNotifier<TagFlowZoneOverviewState
     _locationSub = ref.listen<LatLng>(
       tagFlowZoneOverviewLocationProvider,
       (previous, next) {
-        unawaited(_fetchFor(next));
+        _scheduleFetch(previous, next);
       },
       fireImmediately: true,
     );
@@ -813,10 +838,24 @@ class TagFlowZoneOverviewNotifier extends StateNotifier<TagFlowZoneOverviewState
   final Ref ref;
   late final ProviderSubscription<LatLng> _locationSub;
   CancelToken? _cancelToken;
+  Timer? _fetchDebounce;
   bool _alive = true;
+
+  void _scheduleFetch(LatLng? previous, LatLng next) {
+    if (!_alive) return;
+    if (previous != null &&
+        !latLngChangedSignificantly(previous, next, minMeters: 22)) {
+      return;
+    }
+    _fetchDebounce?.cancel();
+    _fetchDebounce = Timer(const Duration(milliseconds: 480), () {
+      if (_alive) unawaited(_fetchFor(next));
+    });
+  }
 
   void teardown() {
     _alive = false;
+    _fetchDebounce?.cancel();
     _cancelToken?.cancel();
     _locationSub.close();
   }
@@ -904,7 +943,7 @@ Future<CurrentZoneOverviewModel?> _catalogOverviewFor(LatLng loc) async {
   await ZoneCatalog.ensureLoaded();
   final entry = ZoneCatalog.nearestEntry(loc.latitude, loc.longitude);
   if (entry == null) return null;
-  final zone = _zoneModelFromCatalogEntry(entry);
+  final zone = zoneModelFromCatalogEntry(entry);
   return CurrentZoneOverviewModel(
     currentZone: zone,
     nearbyZones: const [],
@@ -932,41 +971,6 @@ Future<CurrentZoneOverviewModel> _overviewWithCatalogFallback(
   );
 }
 
-ZoneModel _zoneModelFromCatalogEntry(ZoneCatalogEntry entry) {
-  final ratio = entry.defaultLocalRatio;
-  final travelerMix = ratio >= 0.85
-      ? 'local'
-      : ratio <= 0.15
-          ? 'international'
-          : 'mixed';
-  final functionType = switch (entry.zoneType.toUpperCase()) {
-    'LOCAL' => 'residential_zone',
-    'INTERNATIONAL' => 'tourist_hotspot',
-    _ => 'commercial_zone',
-  };
-  return ZoneModel(
-    zoneId: entry.zoneId,
-    displayName: entry.zoneName,
-    behaviorType: 'mixed_area',
-    functionType: functionType,
-    travelerMix: travelerMix,
-    summary: '${entry.zoneName} · ${entry.city}',
-    liveStatus: 'unknown',
-    polygonGeoJson: const {},
-    boundary: const [],
-    polygonParts: const [],
-    centroidLat: entry.centerLat,
-    centroidLng: entry.centerLng,
-    crowdLevel: 0.5,
-    localPresencePercent: ratio * 100,
-    localRatio: ratio,
-    peakTimeLabel: '',
-    confidenceScore: 50,
-    priorityScore: 50,
-    reportCount: 0,
-  );
-}
-
 final tagFlowZoneOverviewNotifierProvider =
     StateNotifierProvider.autoDispose<TagFlowZoneOverviewNotifier, TagFlowZoneOverviewState>(
   (ref) {
@@ -976,22 +980,33 @@ final tagFlowZoneOverviewNotifierProvider =
   },
 );
 
-/// Matches backend `h3_resolution` (8) and `_display_h3_rings` uncompact (+1).
+/// Matches backend `h3_resolution` (8); catalog zones use res-8 hex disks only.
 const int _kFallbackH3AggregateRes = 8;
 const int _kFallbackH3DisplayRes = 9;
 const int _kFallbackH3MaxDisplayCells = 600;
 
-List<ZoneModel> _fallbackVisibleZones(String? filter) {
-  try {
-    final h3 = const H3Factory().load();
-    try {
-      return _filterFallbackZones(_h3FallbackZoneList(h3), filter);
-    } catch (_) {
-      return _filterFallbackZones(_legacyBlobFallbackZoneList(), filter);
-    }
-  } catch (_) {
-    return _filterFallbackZones(_legacyBlobFallbackZoneList(), filter);
-  }
+Future<List<ZoneModel>> _fallbackVisibleZones(String? filter) async {
+  await ZoneCatalog.ensureLoaded();
+  final zones = ZoneCatalog.entries
+      .map(zoneModelFromCatalogEntry)
+      .map(enrichZoneForAreaCard)
+      .toList(growable: false);
+  return _filterFallbackZones(zones, filter);
+}
+
+List<ZoneModel> _filterToCatalogZones(List<ZoneModel> zones) {
+  final names = ZoneCatalog.entries
+      .map((e) => e.zoneName.toLowerCase())
+      .toSet();
+  if (names.isEmpty) return zones;
+  return zones
+      .where((zone) {
+        final label = zone.displayName.toLowerCase().split('·').first.trim();
+        return names.any(
+          (name) => label.contains(name) || name.contains(label),
+        );
+      })
+      .toList(growable: false);
 }
 
 List<ZoneModel> _filterFallbackZones(List<ZoneModel> zones, String? filter) {
@@ -1127,6 +1142,23 @@ List<ZoneModel> _h3FallbackZoneList(H3 h3) {
       confidence: 81,
       priority: 87,
       reports: 55,
+    ),
+    _fallbackZoneFromH3(
+      h3,
+      zoneId: 'dev-escario',
+      displayName: 'Escario Street',
+      behaviorType: 'mixed_area',
+      functionType: 'commercial_zone',
+      summary:
+          'Capitol-area offices, restaurants, and local commerce — separate from IT Park.',
+      liveStatus: 'active_now',
+      lat: 10.3155,
+      lng: 123.8965,
+      crowd: 64,
+      localPresence: 54,
+      confidence: 74,
+      priority: 83,
+      reports: 42,
     ),
     _fallbackZoneFromH3(
       h3,
@@ -1835,8 +1867,8 @@ class TagSubmissionController
         h3Index: cell.toString(),
         pendingCount: 1,
         matchingCount: 1,
-        threshold: 6,
-        remainingToThreshold: 5,
+        threshold: 3,
+        remainingToThreshold: 2,
         thresholdMet: false,
         publicZoneUpdate: 'Zone will update after the threshold is reached.',
       );
@@ -1845,8 +1877,8 @@ class TagSubmissionController
         h3Index: 'demo-h3-cell',
         pendingCount: 1,
         matchingCount: 1,
-        threshold: 6,
-        remainingToThreshold: 5,
+        threshold: 3,
+        remainingToThreshold: 2,
         thresholdMet: false,
         publicZoneUpdate: 'Zone will update after the threshold is reached.',
       );
@@ -1879,23 +1911,31 @@ class AuthActionController extends StateNotifier<AsyncValue<void>> {
     state = const AsyncLoading();
     try {
       final dio = ref.read(dioProvider);
+      final trimmedEmail = email.trim().toLowerCase();
       final response = await dio.post(
         mode == AuthMode.login ? '/auth/login' : '/auth/register',
-        data: {
-          'email': email,
-          'password': password,
-          if (mode == AuthMode.register)
-            'display_name': (displayName == null || displayName.trim().isEmpty)
-                ? null
-                : displayName.trim(),
-          if (mode == AuthMode.register)
-            'country_of_origin': countryOfOrigin?.trim(),
-          if (mode == AuthMode.register)
-            'city_of_origin': cityOfOrigin?.trim(),
-          if (mode == AuthMode.register) 'user_type': userType?.trim(),
-          if (mode == AuthMode.register)
-            'accepted_research_consent': acceptedResearchConsent,
-        },
+        data: mode == AuthMode.login
+            ? {
+                'email': trimmedEmail,
+                'password': password,
+              }
+            : {
+                'email': trimmedEmail,
+                'password': password,
+                'display_name': (displayName == null ||
+                        displayName.trim().isEmpty)
+                    ? trimmedEmail.split('@').first
+                    : displayName.trim(),
+                'country_of_origin':
+                    (countryOfOrigin ?? '').trim().isEmpty
+                        ? 'Philippines'
+                        : countryOfOrigin!.trim(),
+                'city_of_origin': (cityOfOrigin ?? '').trim().isEmpty
+                    ? 'Cebu City'
+                    : cityOfOrigin!.trim(),
+                'user_type': (userType ?? 'local_resident').trim(),
+                'accepted_research_consent': acceptedResearchConsent,
+              },
       );
       final token = (response.data['access_token'] ?? '').toString();
       if (token.isEmpty) {

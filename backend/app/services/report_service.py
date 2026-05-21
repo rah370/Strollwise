@@ -29,6 +29,11 @@ from app.utils.user_type_utils import traveler_type_from_user_type
 log = logging.getLogger(__name__)
 
 
+def _distinct_contributors(reports: list[Report]) -> int:
+    """Unique people who submitted a pending report in this H3 cell."""
+    return len({r.user_id for r in reports})
+
+
 class ReportValidationError(Exception):
     pass
 
@@ -300,10 +305,9 @@ class ReportService:
             if has_uspf
             else max(settings.pending_min_reports_per_cell, 1)
         )
-        matching_count = sum(
-            1 for report in pending_reports if (report.category or "").lower() == category
-        )
-        remaining = max(min_reports - matching_count, 0)
+        people_in_cell = _distinct_contributors(pending_reports)
+        matching_count = people_in_cell
+        remaining = max(min_reports - people_in_cell, 0)
         return AggregationFeedback(
             h3_index=h3_index,
             pending_count=len(pending_reports),
@@ -328,7 +332,7 @@ class ReportService:
             if has_uspf
             else max(settings.pending_min_reports_per_cell, 1)
         )
-        if len(pending_reports) < min_reports:
+        if _distinct_contributors(pending_reports) < min_reports:
             return False
 
         category_counts = Counter((r.category or "").lower() for r in pending_reports)

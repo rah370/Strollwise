@@ -24,6 +24,7 @@ class Landmark:
 # Ordered by rough importance — the first landmark within `radius_km` wins
 # if multiple overlap, so put more specific names first.
 CEBU_LANDMARKS: tuple[Landmark, ...] = (
+    Landmark("Escario Street", 10.3155, 123.8965, radius_km=0.45),
     Landmark("IT Park", 10.3306, 123.9056, radius_km=0.5),
     Landmark("Sugbo Mercado", 10.3289, 123.9071, radius_km=0.35),
     Landmark("Ayala Center", 10.3181, 123.9056, radius_km=0.5),

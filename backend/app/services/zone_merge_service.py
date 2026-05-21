@@ -21,6 +21,8 @@ from app.models.place import Place
 from app.repositories.h3_repository import H3Repository
 from app.repositories.place_repository import PlaceRepository
 from app.repositories.zone_repository import ZoneRepository
+from app.services.place_catalog import catalog_by_slug
+from app.services.zone_catalog import catalog_entry_for_name
 from app.utils.traveler_mix_utils import traveler_mix_from_counts
 from app.services import h3_service
 from app.services.landmark_service import landmark_for_centroid
@@ -112,6 +114,14 @@ LANDMARK_ZONE_INTELLIGENCE: dict[str, dict[str, object]] = {
             "Fort San Pedro, and nearby local food stops."
         ),
         "activities": ["heritage walk", "museum", "local food", "sightseeing"],
+    },
+    "Escario Street": {
+        "title": "Escario Capitol + Dining Zone",
+        "summary": (
+            "Mixed corridor between Fuente and Capitol with offices, restaurants, "
+            "clinics, and local errands — distinct from IT Park to the north."
+        ),
+        "activities": ["dining", "offices", "local errands", "capitol area"],
     },
     "Fuente Osmeña": {
         "title": "Fuente Transit + Food Zone",
@@ -236,10 +246,13 @@ class ZoneMergeService:
         self.zone_repo = ZoneRepository(db)
 
     def rebuild_all(self) -> list[MergedZone]:
+        from app.services.place_service import PlaceService
+
+        PlaceService(self.db).sync_catalog_places()
         for zone in self.zone_repo.list_active():
             self.zone_repo.delete(zone)
         self.db.flush()
-        places = [p for p in self.place_repo.list_active() if p.report_count > 0]
+        places = self.place_repo.list_all_catalog()
         return self._rebuild_from_places(places, used_slugs=set())
 
     def recompute_near(self, seed_h3_indexes: Iterable[str]) -> list[MergedZone]:
@@ -307,46 +320,69 @@ class ZoneMergeService:
 
     # ---------------------------------------------------------- zone assembly
 
+    @staticmethod
+    def _traveler_mix_from_catalog_ratio(ratio: float) -> str:
+        if ratio >= 0.75:
+            return "local"
+        if ratio <= 0.30:
+            return "international"
+        return "mixed"
+
     def _build_zone_from_place(
         self,
         place: Place,
         cells: list[H3CellAggregate],
         used_slugs: set[str],
     ) -> MergedZone | None:
-        if not cells or place.report_count == 0:
+        catalog = catalog_by_slug(place.slug)
+        catalog_entry = catalog_entry_for_name(place.display_name)
+        if not cells and (catalog is None or catalog_entry is None):
             return None
 
         h3_indexes = place.source_h3_indexes_json or [c.h3_index for c in cells]
-        polygon = place.polygon_geojson or PolygonService.cells_to_geojson_polygon(
-            h3_indexes
-        )
+        if catalog is not None:
+            polygon = catalog.polygon_geojson
+        else:
+            polygon = place.polygon_geojson or PolygonService.cells_to_geojson_polygon(
+                h3_indexes
+            )
         centroid_lat = place.centroid_lat
         centroid_lng = place.centroid_lng
 
-        report_count = sum(c.report_count for c in cells)
-        local_total = sum(c.local_count for c in cells)
-        intl_total = sum(c.international_count for c in cells)
-        traveler_mix = traveler_mix_from_counts(local_total, intl_total)
+        report_count = sum(c.report_count for c in cells) if cells else 0
+        if catalog_entry is not None:
+            traveler_mix = self._traveler_mix_from_catalog_ratio(
+                catalog_entry.default_local_ratio
+            )
+            local_presence = catalog_entry.default_local_ratio * 100.0
+        else:
+            local_total = sum(c.local_count for c in cells)
+            intl_total = sum(c.international_count for c in cells)
+            traveler_mix = traveler_mix_from_counts(local_total, intl_total)
+            local_presence = 0.0
+            total_travelers = local_total + intl_total
+            if total_travelers > 0:
+                local_presence = local_total / total_travelers * 100.0
         behavior = TRAVELER_MIX_TO_BEHAVIOR[traveler_mix]
 
-        local_presence = 0.0
-        total_travelers = local_total + intl_total
-        if total_travelers > 0:
-            local_presence = local_total / total_travelers * 100.0
+        if cells:
+            crowd_level = sum(c.crowd_score for c in cells) / len(cells)
+            confidence = sum(c.confidence_score for c in cells) / len(cells)
+            popularity = sum(c.popularity_score for c in cells) / len(cells)
+            peak_hours: list[int] = []
+            for c in cells:
+                peak_hours.extend(c.peak_hours_json or [])
+            peak_label = label_for_peak_hours(peak_hours)
+            top_activities = self._top_activities(cells)
+        else:
+            crowd_level = 0.5
+            confidence = 50.0
+            popularity = 50.0
+            peak_label = "4PM-9PM"
+            top_activities = list(catalog_entry.characteristics[:4]) if catalog_entry else []
 
-        crowd_level = sum(c.crowd_score for c in cells) / len(cells)
-        confidence = sum(c.confidence_score for c in cells) / len(cells)
-        popularity = sum(c.popularity_score for c in cells) / len(cells)
-
-        peak_hours: list[int] = []
-        for c in cells:
-            peak_hours.extend(c.peak_hours_json or [])
-        peak_label = label_for_peak_hours(peak_hours)
-
-        top_activities = self._top_activities(cells)
         landmark_name, _ = landmark_for_centroid(centroid_lat, centroid_lng)
-        traveler_label = TRAVELER_MIX_LABEL[traveler_mix]
-        display_name = f"{place.display_name} · {traveler_label}"
+        display_name = place.display_name
 
         slug_base = slugify(f"{place.slug}-{traveler_mix}")
         slug = slug_base

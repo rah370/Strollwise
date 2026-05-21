@@ -8,6 +8,7 @@ import '../../../shared/models/zone.dart';
 import '../../../shared/providers/app_providers.dart';
 import '../../../shared/traveler_gradient.dart';
 import '../../../shared/zone_place_ui.dart';
+import 'places_to_go_sheet.dart';
 
 enum _TrendsSection { forYou, browse, routes }
 
@@ -98,10 +99,10 @@ class _TrendsScreenState extends ConsumerState<TrendsScreen> {
           _SectionCard(
             title: 'Browse by vibe',
             subtitle:
-                'Pick a mood — we’ll show matching areas on the map in Explore.',
+                'Pick a mood — we’ll suggest popular places to visit nearby.',
             child: _TrendCategoryGrid(
               filter: _filter,
-              onTrendTap: (item) => _previewExplore(context, item.exploreLabel),
+              onTrendTap: (item) => _showPlacesToGo(context, item, zone),
             ),
           ),
         ];
@@ -179,11 +180,11 @@ class _TrendsScreenState extends ConsumerState<TrendsScreen> {
         const SizedBox(height: 12),
         _SectionCard(
           title: 'Quick vibes',
-          subtitle: 'Jump straight into Explore by mood.',
+          subtitle: 'Top-rated places to visit by mood.',
           child: _TrendCategoryGrid(
             filter: _TrendVibeFilter.all,
             maxItems: 6,
-            onTrendTap: (item) => _previewExplore(context, item.exploreLabel),
+            onTrendTap: (item) => _showPlacesToGo(context, item, zone),
           ),
         ),
         const SizedBox(height: 12),
@@ -197,6 +198,36 @@ class _TrendsScreenState extends ConsumerState<TrendsScreen> {
       ),
     );
     return children;
+  }
+
+  void _showPlacesToGo(
+    BuildContext context,
+    _TrendCategoryItem item,
+    ZoneModel? zone,
+  ) {
+    final center = zone != null
+        ? LatLng(zone.centroidLat, zone.centroidLng)
+        : _locationForLabel(item.exploreLabel);
+    final areaLabel = zone != null
+        ? zoneDisplayTitle(zone)
+        : _cleanPlaceLabel(item.exploreLabel);
+
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (_) => PlacesToGoSheet(
+        vibeTitle: item.title,
+        vibeKey: item.vibeKey,
+        areaLabel: areaLabel,
+        lat: center.latitude,
+        lng: center.longitude,
+      ),
+    );
   }
 
   void _previewExplore(BuildContext context, String label) {
@@ -1199,6 +1230,7 @@ class _TrendCategoryItem {
     required this.title,
     required this.subtitle,
     required this.exploreLabel,
+    required this.vibeKey,
     required this.icon,
     required this.fill,
     required this.accent,
@@ -1208,6 +1240,8 @@ class _TrendCategoryItem {
   final String title;
   final String subtitle;
   final String exploreLabel;
+  /// API vibe key: food | cafe | nightlife | tourist | nature | budget
+  final String vibeKey;
   final IconData icon;
   final Color fill;
   final Color accent;
@@ -1230,6 +1264,7 @@ class _TrendCategoryGrid extends StatelessWidget {
       title: 'Food crawl',
       subtitle: 'Street eats & late bites',
       exploreLabel: 'Food Crawl Trends',
+      vibeKey: 'food',
       icon: Icons.restaurant_outlined,
       fill: AppColors.foodFill,
       accent: AppColors.foodAccent,
@@ -1239,6 +1274,7 @@ class _TrendCategoryGrid extends StatelessWidget {
       title: 'Cafes & study',
       subtitle: 'Work-friendly corners',
       exploreLabel: 'Cafe and Study Trends',
+      vibeKey: 'cafe',
       icon: Icons.local_cafe_outlined,
       fill: AppColors.studentFill,
       accent: AppColors.studentAccent,
@@ -1248,6 +1284,7 @@ class _TrendCategoryGrid extends StatelessWidget {
       title: 'Nightlife',
       subtitle: 'After-dark social zones',
       exploreLabel: 'Nightlife Trends',
+      vibeKey: 'nightlife',
       icon: Icons.nightlife_outlined,
       fill: AppColors.commercialFill,
       accent: AppColors.commercialAccent,
@@ -1257,6 +1294,7 @@ class _TrendCategoryGrid extends StatelessWidget {
       title: 'Heritage walk',
       subtitle: 'History & culture',
       exploreLabel: 'Heritage Walk Trends',
+      vibeKey: 'tourist',
       icon: Icons.museum_outlined,
       fill: AppColors.localFill,
       accent: AppColors.localAccent,
@@ -1266,6 +1304,7 @@ class _TrendCategoryGrid extends StatelessWidget {
       title: 'Nature escape',
       subtitle: 'Mountains & views',
       exploreLabel: 'Nature Escape Trends',
+      vibeKey: 'nature',
       icon: Icons.landscape_outlined,
       fill: AppColors.touristFill,
       accent: AppColors.touristAccent,
@@ -1275,6 +1314,7 @@ class _TrendCategoryGrid extends StatelessWidget {
       title: 'Student life',
       subtitle: 'Campus & budget hubs',
       exploreLabel: 'Student Activity Trends',
+      vibeKey: 'cafe',
       icon: Icons.school_outlined,
       fill: AppColors.studentFill,
       accent: AppColors.studentAccent,
@@ -1284,6 +1324,7 @@ class _TrendCategoryGrid extends StatelessWidget {
       title: 'Weekend local',
       subtitle: 'Where locals go',
       exploreLabel: 'Weekend Local Trends',
+      vibeKey: 'food',
       icon: Icons.weekend_outlined,
       fill: AppColors.localFill,
       accent: AppColors.localAccent,
@@ -1293,6 +1334,7 @@ class _TrendCategoryGrid extends StatelessWidget {
       title: 'Budget travel',
       subtitle: 'Cheap stays & eats',
       exploreLabel: 'Budget Traveler Trends',
+      vibeKey: 'budget',
       icon: Icons.savings_outlined,
       fill: AppColors.transportFill,
       accent: AppColors.transportAccent,
@@ -1302,6 +1344,7 @@ class _TrendCategoryGrid extends StatelessWidget {
       title: 'Digital nomad',
       subtitle: 'Wi‑Fi & coworking',
       exploreLabel: 'Digital Nomad Trends',
+      vibeKey: 'cafe',
       icon: Icons.laptop_mac_outlined,
       fill: AppColors.mixedFill,
       accent: AppColors.mixedAccent,
@@ -1311,6 +1354,7 @@ class _TrendCategoryGrid extends StatelessWidget {
       title: 'Transit',
       subtitle: 'Commute corridors',
       exploreLabel: 'Commute and Transit Trends',
+      vibeKey: 'tourist',
       icon: Icons.directions_bus_outlined,
       fill: AppColors.transportFill,
       accent: AppColors.transportAccent,
@@ -1320,6 +1364,7 @@ class _TrendCategoryGrid extends StatelessWidget {
       title: 'Shopping',
       subtitle: 'Markets & malls',
       exploreLabel: 'Shopping Trends',
+      vibeKey: 'tourist',
       icon: Icons.shopping_bag_outlined,
       fill: AppColors.commercialFill,
       accent: AppColors.commercialAccent,
@@ -1329,6 +1374,7 @@ class _TrendCategoryGrid extends StatelessWidget {
       title: 'Wellness',
       subtitle: 'Slow & recharge',
       exploreLabel: 'Wellness and Relaxation Trends',
+      vibeKey: 'nature',
       icon: Icons.spa_outlined,
       fill: AppColors.touristFill,
       accent: AppColors.touristAccent,
@@ -1338,6 +1384,7 @@ class _TrendCategoryGrid extends StatelessWidget {
       title: 'Family day',
       subtitle: 'Kid-friendly outings',
       exploreLabel: 'Family Activity Trends',
+      vibeKey: 'tourist',
       icon: Icons.family_restroom_outlined,
       fill: AppColors.hotelFill,
       accent: AppColors.hotelAccent,
@@ -1347,6 +1394,7 @@ class _TrendCategoryGrid extends StatelessWidget {
       title: 'Adventure',
       subtitle: 'Active & outdoor',
       exploreLabel: 'Adventure Trends',
+      vibeKey: 'nature',
       icon: Icons.terrain_outlined,
       fill: AppColors.touristFill,
       accent: AppColors.touristAccent,
@@ -1356,6 +1404,7 @@ class _TrendCategoryGrid extends StatelessWidget {
       title: 'Hidden spots',
       subtitle: 'Off-guide finds',
       exploreLabel: 'Hidden Local Spots',
+      vibeKey: 'food',
       icon: Icons.explore_outlined,
       fill: AppColors.mixedFill,
       accent: AppColors.mixedAccent,

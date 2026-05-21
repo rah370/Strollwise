@@ -2,6 +2,7 @@ import 'package:dio/dio.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:maplibre_gl/maplibre_gl.dart';
 
+import '../../../core/constants/mapbox_config.dart';
 import '../../../shared/models/zone.dart';
 import '../../../shared/traveler_gradient.dart';
 
@@ -42,52 +43,39 @@ class ExplorePlaceSearchService {
     'ayala': const LatLng(10.3176, 123.9053),
     'ayala center': const LatLng(10.3176, 123.9053),
     'ayala center cebu': const LatLng(10.3176, 123.9053),
-    'it park': const LatLng(10.3305, 123.9066),
-    'cebu it park': const LatLng(10.3305, 123.9066),
-    'it park business zone': const LatLng(10.3305, 123.9066),
-    'colon': const LatLng(10.2943, 123.9018),
-    'colon street': const LatLng(10.2943, 123.9018),
-    'colon basilica': const LatLng(10.2943, 123.9018),
-    'carbon': const LatLng(10.2932, 123.8997),
-    'carbon market': const LatLng(10.2932, 123.8997),
+    'it park': const LatLng(10.3295, 123.9067),
+    'cebu it park': const LatLng(10.3295, 123.9067),
+    'it park business zone': const LatLng(10.3295, 123.9067),
+    'colon': const LatLng(10.2942, 123.9017),
+    'colon street': const LatLng(10.2942, 123.9017),
+    'colon basilica': const LatLng(10.2942, 123.9017),
+    'carbon': const LatLng(10.2933, 123.8998),
+    'carbon market': const LatLng(10.2933, 123.8998),
     'magellan cross': const LatLng(10.2930, 123.9029),
     'basilica': const LatLng(10.2942, 123.9022),
     'santo nino': const LatLng(10.2942, 123.9022),
     'fort san pedro': const LatLng(10.2922, 123.9058),
-    'fuente': const LatLng(10.3099, 123.8915),
-    'fuente osmena': const LatLng(10.3099, 123.8915),
-    'fuente osmeña': const LatLng(10.3099, 123.8915),
-    'mango avenue': const LatLng(10.3109, 123.8953),
-    'mango': const LatLng(10.3109, 123.8953),
+    'fuente': const LatLng(10.3100, 123.8916),
+    'fuente osmena': const LatLng(10.3100, 123.8916),
+    'fuente osmeña': const LatLng(10.3100, 123.8916),
+
+    'ocean park': const LatLng(10.2836, 123.8789),
+    'escario': const LatLng(10.3157, 123.8919),
+    'escario street': const LatLng(10.3157, 123.8919),
+    'capitol site': const LatLng(10.3172, 123.8958),
     'sm city': const LatLng(10.3113, 123.9180),
     'sm city cebu': const LatLng(10.3113, 123.9180),
-    'sm seaside': const LatLng(10.2816, 123.8810),
-    'srp': const LatLng(10.2867, 123.8805),
-    'south road properties': const LatLng(10.2867, 123.8805),
-    'pier': const LatLng(10.3003, 123.9122),
-    'cebu port': const LatLng(10.3003, 123.9122),
-    'usc': const LatLng(10.3006, 123.8989),
-    'university of san carlos': const LatLng(10.3006, 123.8989),
-    'uspf': const LatLng(10.3382, 123.9014),
-    'university of southern philippines foundation':
-        const LatLng(10.3382, 123.9014),
-    'salinas drive': const LatLng(10.3370, 123.9025),
-    'lahug': const LatLng(10.3359, 123.9023),
-    'jy square': const LatLng(10.3359, 123.9023),
-    'talamban': const LatLng(10.3550, 123.9180),
-    'pardo': const LatLng(10.2815, 123.8450),
-    'minglanilla': const LatLng(10.2441, 123.7964),
-    'talisay': const LatLng(10.2447, 123.8494),
-    'mactan': const LatLng(10.2995, 124.0118),
-    'lapu-lapu': const LatLng(10.2995, 124.0118),
-    'robinsons galleria cebu': const LatLng(10.3170, 123.9170),
-    'robinsons cybergate': const LatLng(10.3300, 123.9080),
-    'cebu business park': const LatLng(10.3305, 123.9066),
-    'queen city memorial garden': const LatLng(10.3180, 123.8900),
-    'cebu doctors hospital': const LatLng(10.3099, 123.8916),
-    'chong hua': const LatLng(10.3050, 123.8950),
-    'landmark': const LatLng(10.3170, 123.9050),
-    'robinsons mall': const LatLng(10.3170, 123.9170),
+    'srp': const LatLng(10.2836, 123.8789),
+    'south road properties': const LatLng(10.2836, 123.8789),
+    'lahug': const LatLng(10.3335, 123.9030),
+    'talamban': const LatLng(10.3694, 123.9185),
+    'pardo': const LatLng(10.2811, 123.8456),
+    'minglanilla': const LatLng(10.2446, 123.7963),
+    'talisay': const LatLng(10.2449, 123.8493),
+    'mactan': const LatLng(10.2998, 124.0112),
+    'lapu-lapu': const LatLng(10.2998, 124.0112),
+    'cebu doctors': const LatLng(10.3155, 123.8965),
+    'capitol': const LatLng(10.3172, 123.8958),
   };
 
   Future<List<ExploreSearchHit>> search(
@@ -117,7 +105,7 @@ class ExplorePlaceSearchService {
           subtitle: _zoneSubtitle(zone),
           location: LatLng(zone.centroidLat, zone.centroidLng),
           kind: ExploreSearchHitKind.zone,
-          zone: zone,
+          zone: enrichZoneForAreaCard(zone),
           localRatio: TravelerGradient.localRatioForZone(zone),
         ),
       );
@@ -135,6 +123,10 @@ class ExplorePlaceSearchService {
           subtitle: '${entry.city} · ${_mixLabel(entry.defaultLocalRatio)}',
           location: LatLng(entry.centerLat, entry.centerLng),
           kind: ExploreSearchHitKind.landmark,
+          zone: enrichZoneForAreaCard(
+            _zoneForCatalogEntry(entry, zones) ??
+                zoneModelFromCatalogEntry(entry),
+          ),
           localRatio: entry.defaultLocalRatio,
         ),
       );
@@ -142,6 +134,7 @@ class ExplorePlaceSearchService {
 
     for (final place in _landmarks.entries) {
       if (!_matchesTerms(place.key, q)) continue;
+      final landmarkZone = _zoneForLandmark(place.key, place.value, zones);
       add(
         ExploreSearchHit(
           id: 'landmark-${place.key}',
@@ -149,16 +142,98 @@ class ExplorePlaceSearchService {
           subtitle: 'Cebu landmark',
           location: place.value,
           kind: ExploreSearchHitKind.landmark,
+          zone: landmarkZone != null
+              ? enrichZoneForAreaCard(landmarkZone)
+              : null,
         ),
       );
     }
 
-    final remote = await _nominatimSearch(query, limit: maxResults - hits.length);
+    final remote = await _remoteGeocodeSearch(query, limit: maxResults - hits.length);
     for (final hit in remote) {
       add(hit);
     }
 
     return hits;
+  }
+
+  Future<List<ExploreSearchHit>> _remoteGeocodeSearch(
+    String query, {
+    required int limit,
+  }) async {
+    if (limit <= 0) return const [];
+    if (MapboxConfig.isConfigured) {
+      final mapbox = await _mapboxSearch(query, limit: limit);
+      if (mapbox.isNotEmpty) return mapbox;
+    }
+    return _nominatimSearch(query, limit: limit);
+  }
+
+  Future<List<ExploreSearchHit>> _mapboxSearch(
+    String query, {
+    required int limit,
+  }) async {
+    try {
+      final token = MapboxConfig.accessToken.trim();
+      final encoded = Uri.encodeComponent(query);
+      final response = await _dio.getUri(
+        Uri.https('api.mapbox.com', '/geocoding/v5/mapbox.places/$encoded.json', {
+          'access_token': token,
+          'limit': limit.clamp(1, 8).toString(),
+          'proximity': '${_cebuCenter.longitude},${_cebuCenter.latitude}',
+          'bbox': _cebuViewbox,
+          'country': 'ph',
+          'types': 'poi,place,locality,neighborhood,address',
+        }),
+        options: Options(receiveTimeout: const Duration(seconds: 8)),
+      );
+      final features = response.data?['features'];
+      if (features is! List) return const [];
+
+      final hits = <ExploreSearchHit>[];
+      for (final raw in features) {
+        if (raw is! Map) continue;
+        final center = raw['center'];
+        if (center is! List || center.length < 2) continue;
+        final lng = (center[0] as num).toDouble();
+        final lat = (center[1] as num).toDouble();
+        final loc = LatLng(lat, lng);
+        if (!_isWithinCebuRegion(loc)) continue;
+
+        final title = (raw['text'] ?? query).toString().trim();
+        final placeName = (raw['place_name'] ?? title).toString();
+        final subtitle = _mapboxSubtitle(raw, placeName);
+
+        hits.add(
+          ExploreSearchHit(
+            id: 'mapbox-${lat.toStringAsFixed(5)}-${lng.toStringAsFixed(5)}',
+            title: title.isEmpty ? query : title,
+            subtitle: subtitle,
+            location: loc,
+            kind: ExploreSearchHitKind.address,
+          ),
+        );
+      }
+      return hits;
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  static String _mapboxSubtitle(Map raw, String placeName) {
+    String? placeType;
+    final placeTypes = raw['place_type'];
+    if (placeTypes is List && placeTypes.isNotEmpty) {
+      placeType = placeTypes.first.toString();
+    }
+    if (placeType != null && placeType.isNotEmpty) {
+      return '${_titleCase(placeType)} · Mapbox';
+    }
+    final parts = placeName.split(',');
+    if (parts.length >= 2) {
+      return parts.sublist(1, parts.length.clamp(1, 3)).join(', ').trim();
+    }
+    return 'Place in Cebu';
   }
 
   Future<List<ExploreSearchHit>> _nominatimSearch(
@@ -269,6 +344,58 @@ class ExplorePlaceSearchService {
 
   static String _mixLabel(double ratio) {
     return TravelerGradient.dominanceLabel(ratio);
+  }
+
+  static ZoneModel? _zoneForCatalogEntry(
+    ZoneCatalogEntry entry,
+    List<ZoneModel> zones,
+  ) {
+    for (final zone in zones) {
+      if (zone.zoneId == entry.zoneId) return zone;
+      if (zone.displayName.toLowerCase() == entry.zoneName.toLowerCase()) {
+        return zone;
+      }
+    }
+    return _nearestZone(
+      LatLng(entry.centerLat, entry.centerLng),
+      zones,
+    );
+  }
+
+  static ZoneModel? _zoneForLandmark(
+    String key,
+    LatLng location,
+    List<ZoneModel> zones,
+  ) {
+    final fromMap = _nearestZone(location, zones);
+    if (fromMap != null) return fromMap;
+    final entry =
+        ZoneCatalog.lookup(key) ?? ZoneCatalog.nearestEntry(
+              location.latitude,
+              location.longitude,
+            );
+    if (entry == null) return null;
+    return _zoneForCatalogEntry(entry, zones) ??
+        zoneModelFromCatalogEntry(entry);
+  }
+
+  static ZoneModel? _nearestZone(LatLng location, List<ZoneModel> zones) {
+    if (zones.isEmpty) return null;
+    ZoneModel? selected;
+    var bestDistance = double.infinity;
+    for (final zone in zones) {
+      final distance = Geolocator.distanceBetween(
+        location.latitude,
+        location.longitude,
+        zone.centroidLat,
+        zone.centroidLng,
+      );
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        selected = zone;
+      }
+    }
+    return bestDistance <= 750 ? selected : null;
   }
 
   static String _titleCase(String value) {

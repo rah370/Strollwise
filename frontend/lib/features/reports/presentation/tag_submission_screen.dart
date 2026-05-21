@@ -371,12 +371,12 @@ class _TagSubmissionScreenState extends ConsumerState<TagSubmissionScreen> {
 
   String _submissionExploreSummary(TagSubmissionFeedback feedback) {
     final thresholdLine = feedback.thresholdMet
-        ? '${feedback.matchingCount}/${feedback.threshold} matching tags — threshold met.'
-        : '${feedback.matchingCount}/${feedback.threshold} matching in this cell.';
+        ? '${feedback.matchingCount}/${feedback.threshold} people — cell can form.'
+        : '${feedback.matchingCount}/${feedback.threshold} people in this cell.';
     final pending = feedback.thresholdMet
-        ? 'An emerging zone will form after aggregation runs.'
-        : '${feedback.remainingToThreshold} more matching '
-              '${feedback.remainingToThreshold == 1 ? 'tag' : 'tags'} until this area can become a public zone.';
+        ? 'This H3 cell will publish after aggregation runs.'
+        : '${feedback.remainingToThreshold} more '
+              '${feedback.remainingToThreshold == 1 ? 'person' : 'people'} needed before this cell can form.';
     return 'Tag saved. H3 ${feedback.h3Index}\n'
         '$thresholdLine\n'
         '$pending\n'

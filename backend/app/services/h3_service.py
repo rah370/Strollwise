@@ -99,6 +99,11 @@ def cell_centroid(h3_index: str) -> tuple[float, float]:
     return float(lat), float(lng)
 
 
+def grid_disk(h3_index: str, ring_size: int) -> list[str]:
+    """All cells within ``ring_size`` k-rings of ``h3_index`` (inclusive)."""
+    return list(_grid_disk(h3_index, ring_size))
+
+
 def get_neighbors(h3_index: str, ring_size: int = 1) -> set[str]:
     disk = set(_grid_disk(h3_index, ring_size))
     disk.discard(h3_index)

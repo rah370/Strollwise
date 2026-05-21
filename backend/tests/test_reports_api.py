@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 
-def _register(client):
+def _register(client, email: str = "report@example.com"):
     resp = client.post(
         "/api/v1/auth/register",
         json={
-            "email": "report@example.com",
+            "email": email,
             "password": "supersecret123",
             "display_name": "Reporter",
             "country_of_origin": "Philippines",
@@ -17,39 +17,7 @@ def _register(client):
     return resp.json()["access_token"]
 
 
-def test_create_report_converts_latlng_into_h3(client):
-    token = _register(client)
-    first = client.post(
-        "/api/v1/reports",
-        headers={"Authorization": f"Bearer {token}"},
-        json={
-            "latitude": 10.3157,
-            "longitude": 123.8854,
-            "category": "food",
-            "tags": ["food", "cafe"],
-            "note_text": "Great spot",
-        },
-    )
-    assert first.status_code == 201, first.text
-    # Submissions 2–5 stay below the cell threshold; the sixth matching report
-    # crosses the default threshold (>5 people, same cell/category).
-    for i in range(2, 6):
-        mid = client.post(
-            "/api/v1/reports",
-            headers={"Authorization": f"Bearer {token}"},
-            json={
-                "latitude": 10.3157,
-                "longitude": 123.8854,
-                "category": "food",
-                "tags": ["food", "cafe"],
-                "note_text": f"Confirmation {i}",
-            },
-        )
-        assert mid.status_code == 201, mid.text
-        body = mid.json()
-        assert body["aggregation"]["matching_count"] == i
-        assert body["aggregation"]["threshold_met"] is False
-
+def _post_food_report(client, token: str, note: str) -> dict:
     resp = client.post(
         "/api/v1/reports",
         headers={"Authorization": f"Bearer {token}"},
@@ -58,40 +26,56 @@ def test_create_report_converts_latlng_into_h3(client):
             "longitude": 123.8854,
             "category": "food",
             "tags": ["food", "cafe"],
-            "note_text": "Another confirmation",
+            "note_text": note,
         },
     )
     assert resp.status_code == 201, resp.text
-    data = resp.json()
-    assert data["h3_index"]
-    assert data["resolution"] == 8
-    assert data["category"] == "food"
-    assert data["aggregation"]["matching_count"] == 6
-    assert data["aggregation"]["threshold_met"] is True
-    assert data["aggregation"]["remaining_to_threshold"] == 0
+    return resp.json()
+
+
+def test_create_report_converts_latlng_into_h3(client):
+    token_a = _register(client, "reporter-a@example.com")
+    first = _post_food_report(client, token_a, "Great spot")
+    assert first["h3_index"]
+    assert first["resolution"] == 8
+    assert first["category"] == "food"
+    assert first["aggregation"]["matching_count"] == 1
+    assert first["aggregation"]["threshold"] == 3
+    assert first["aggregation"]["threshold_met"] is False
+    assert first["aggregation"]["remaining_to_threshold"] == 2
+
+    token_b = _register(client, "reporter-b@example.com")
+    second = _post_food_report(client, token_b, "Second person")
+    assert second["aggregation"]["matching_count"] == 2
+    assert second["aggregation"]["threshold_met"] is False
+    assert second["aggregation"]["remaining_to_threshold"] == 1
+
+    token_c = _register(client, "reporter-c@example.com")
+    third = _post_food_report(client, token_c, "Third person forms cell")
+    assert third["aggregation"]["matching_count"] == 3
+    assert third["aggregation"]["threshold_met"] is True
+    assert third["aggregation"]["remaining_to_threshold"] == 0
+
+
+def test_single_user_cannot_form_cell_with_multiple_reports(client):
+    """Three tags from one account still count as one person."""
+    token = _register(client, "solo@example.com")
+    for i in range(3):
+        body = _post_food_report(client, token, f"Solo report {i}")
+        assert body["aggregation"]["matching_count"] == 1
+        assert body["aggregation"]["threshold_met"] is False
+        assert body["aggregation"]["remaining_to_threshold"] == 2
 
 
 def test_zones_endpoint_returns_list(client):
-    token = _register(client)
-    # Six matching food reports in the same H3 cell trigger approval/publication.
-    for lat in (
-        10.3157,
-        10.31571,
-        10.31572,
-        10.31573,
-        10.31574,
-        10.31575,
+    # Three distinct people in the same H3 cell trigger approval/publication.
+    for email in (
+        "zones-a@example.com",
+        "zones-b@example.com",
+        "zones-c@example.com",
     ):
-        client.post(
-            "/api/v1/reports",
-            headers={"Authorization": f"Bearer {token}"},
-            json={
-                "latitude": lat,
-                "longitude": 123.8854,
-                "category": "food",
-                "tags": ["food", "cafe", "restaurant"],
-            },
-        )
+        token = _register(client, email)
+        _post_food_report(client, token, f"Report from {email}")
     resp = client.get(
         "/api/v1/zones",
         params={

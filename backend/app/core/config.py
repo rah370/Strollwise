@@ -36,13 +36,16 @@ class Settings(BaseSettings):
     city_center_lat: float = Field(default=10.3157)
     city_center_lng: float = Field(default=123.8854)
 
+    mapbox_access_token: str | None = Field(default=None)
+    mapbox_style: str = Field(default="mapbox/streets-v12")
+
     cache_ttl_zones_seconds: int = Field(default=60)
     cache_ttl_zone_feed_seconds: int = Field(default=25)
     cache_ttl_pulse_seconds: int = Field(default=120)
     pending_cache_ttl_seconds: int = Field(default=900)
-    # Require more than 5 pins in the same H3 cell before approval (same-cell
-    # quorum plus category agreement ratio in report_service).
-    pending_min_reports_per_cell: int = Field(default=6)
+    # Minimum distinct people (unique reporters) in the same H3 cell before it
+    # can form / go public, plus category agreement in report_service.
+    pending_min_reports_per_cell: int = Field(default=3)
     pending_agreement_ratio: float = Field(default=0.6)
 
     s3_bucket_name: str | None = Field(default=None)

@@ -6,6 +6,7 @@ os.environ.setdefault("DATABASE_URL", "sqlite+pysqlite:///:memory:")
 os.environ.setdefault("REDIS_URL", "redis://localhost:6379/15")
 os.environ.setdefault("JWT_SECRET_KEY", "test-secret")
 os.environ.setdefault("DEBUG", "true")
+os.environ["PENDING_MIN_REPORTS_PER_CELL"] = "3"
 
 import pytest
 from fastapi.testclient import TestClient
@@ -17,7 +18,11 @@ from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import sessionmaker
 
 from app.core import database as core_db
+from app.core.config import get_settings
 from app.core.database import Base
+
+get_settings.cache_clear()
+
 from app.main import app
 
 

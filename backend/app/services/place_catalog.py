@@ -1,8 +1,17 @@
-"""Curated Cebu place footprints for cell → place assignment."""
+"""Curated Cebu place footprints — one place per catalog zone (14 total)."""
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any
+
+from app.services.polygon_service import PolygonService
+from app.services.zone_catalog import (
+    CEBU_ZONE_CATALOG,
+    ZoneCatalogEntry,
+    cells_for_catalog_zone,
+)
+from app.utils.geo_utils import haversine_km
+from app.utils.place_geometry import point_in_geojson
 
 
 @dataclass(frozen=True)
@@ -11,143 +20,78 @@ class CatalogPlace:
     display_name: str
     default_place_type: str
     polygon_geojson: dict[str, Any]
+    source_h3_indexes: tuple[str, ...] = ()
     tag_aliases: frozenset[str] = frozenset()
-
-
-def _ring_from_bbox(
-    min_lat: float, min_lng: float, max_lat: float, max_lng: float
-) -> list[list[float]]:
-    """Closed GeoJSON ring [lng, lat]."""
-    return [
-        [min_lng, min_lat],
-        [max_lng, min_lat],
-        [max_lng, max_lat],
-        [min_lng, max_lat],
-        [min_lng, min_lat],
-    ]
-
-
-def _ring_from_center(lat: float, lng: float, radius_deg: float) -> list[list[float]]:
-    """Small square footprint around a district center (~street block scale)."""
-    return _ring_from_bbox(
-        lat - radius_deg,
-        lng - radius_deg,
-        lat + radius_deg,
-        lng + radius_deg,
-    )
 
 
 def _polygon(ring: list[list[float]]) -> dict[str, Any]:
     return {"type": "Polygon", "coordinates": [ring]}
 
 
-# More specific places first when testing point-in-polygon overlap.
-CEBU_PLACE_CATALOG: tuple[CatalogPlace, ...] = (
-    CatalogPlace(
-        slug="uspf_campus",
-        display_name="USPF campus",
-        default_place_type="school",
-        polygon_geojson=_polygon(
-            _ring_from_bbox(10.3354, 123.9012, 10.3392, 123.9046)
-        ),
-        tag_aliases=frozenset(
-            {"uspf", "uspf campus", "uspf_campus", "university of southern philippines"}
-        ),
-    ),
-    CatalogPlace(
-        slug="colon_street",
-        display_name="Colon Street",
-        default_place_type="commercial",
-        polygon_geojson=_polygon(
-            _ring_from_bbox(10.2955, 123.9005, 10.2985, 123.9035)
-        ),
-        tag_aliases=frozenset({"colon", "colon street"}),
-    ),
-    CatalogPlace(
-        slug="it_park",
-        display_name="IT Park",
-        default_place_type="commercial",
-        polygon_geojson=_polygon(
-            _ring_from_bbox(10.3285, 123.9035, 10.3325, 123.9075)
-        ),
-        tag_aliases=frozenset({"it park", "it_park", "cebu it park"}),
-    ),
-    CatalogPlace(
-        slug="ayala_center_cebu",
-        display_name="Ayala Center Cebu",
-        default_place_type="commercial",
-        polygon_geojson=_polygon(
-            _ring_from_bbox(10.3165, 123.9040, 10.3195, 123.9070)
-        ),
-        tag_aliases=frozenset({"ayala", "ayala center"}),
-    ),
-    CatalogPlace(
-        slug="carbon_market",
-        display_name="Carbon Market",
-        default_place_type="food",
-        polygon_geojson=_polygon(
-            _ring_from_bbox(10.2930, 123.8995, 10.2960, 123.9018)
-        ),
-        tag_aliases=frozenset({"carbon", "carbon market"}),
-    ),
-    CatalogPlace(
-        slug="fuente_osmena",
-        display_name="Fuente Osmeña",
-        default_place_type="transport",
-        polygon_geojson=_polygon(
-            _ring_from_bbox(10.3090, 123.8910, 10.3120, 123.8935)
-        ),
-        tag_aliases=frozenset({"fuente", "fuente osmena", "fuente osmeña"}),
-    ),
-    CatalogPlace(
-        slug="lahug_residential",
-        display_name="Lahug",
-        default_place_type="residential",
-        polygon_geojson=_polygon(_ring_from_center(10.3388, 123.8893, 0.004)),
-        tag_aliases=frozenset({"lahug", "residential", "neighborhood"}),
-    ),
-    CatalogPlace(
-        slug="usc_campus",
-        display_name="USC Main Campus",
-        default_place_type="school",
-        polygon_geojson=_polygon(_ring_from_center(10.3139, 123.8920, 0.002)),
-        tag_aliases=frozenset({"usc", "usc main", "university of san carlos"}),
-    ),
-    CatalogPlace(
-        slug="usc_talamban",
-        display_name="USC Talamban",
-        default_place_type="school",
-        polygon_geojson=_polygon(_ring_from_center(10.3545, 123.9139, 0.003)),
-        tag_aliases=frozenset({"usc talamban", "talamban"}),
-    ),
-    CatalogPlace(
-        slug="sm_seaside",
-        display_name="SM Seaside",
-        default_place_type="commercial",
-        polygon_geojson=_polygon(_ring_from_center(10.2712, 123.8795, 0.003)),
-        tag_aliases=frozenset({"sm seaside", "seaside", "il corso", "srp"}),
-    ),
-    CatalogPlace(
-        slug="pier_port",
-        display_name="Pier / Port Area",
-        default_place_type="transport",
-        polygon_geojson=_polygon(_ring_from_center(10.2925, 123.9160, 0.003)),
-        tag_aliases=frozenset({"pier", "port", "terminal"}),
-    ),
-    CatalogPlace(
-        slug="busay_tops",
-        display_name="Busay / Tops",
-        default_place_type="tourist",
-        polygon_geojson=_polygon(_ring_from_center(10.3700, 123.8780, 0.004)),
-        tag_aliases=frozenset({"busay", "tops", "temple of leah", "mountain"}),
-    ),
-    CatalogPlace(
-        slug="taoist_temple",
-        display_name="Cebu Taoist Temple",
-        default_place_type="tourist",
-        polygon_geojson=_polygon(_ring_from_center(10.3410, 123.8885, 0.0025)),
-        tag_aliases=frozenset({"taoist", "taoist temple"}),
-    ),
+def _place_type_for_zone(entry: ZoneCatalogEntry) -> str:
+    zt = entry.zone_type.upper()
+    if zt == "LOCAL":
+        return "residential"
+    if zt == "INTERNATIONAL":
+        if "park" in entry.zone_name.lower() or "ocean" in entry.zone_name.lower():
+            return "tourist"
+        return "commercial"
+    return "commercial"
+
+
+def _slug_for_entry(entry: ZoneCatalogEntry) -> str:
+    return entry.zone_id.lower()
+
+
+def _aliases_for_entry(entry: ZoneCatalogEntry) -> frozenset[str]:
+    base = {
+        entry.zone_name.lower(),
+        entry.zone_id.lower(),
+        entry.city.lower(),
+    }
+    name = entry.zone_name.lower()
+    if "it park" in name:
+        base.update({"it park", "cebu it park", "it_park"})
+    if "colon" in name:
+        base.update({"colon", "colon street", "basilica", "magellan"})
+    if "fuente" in name:
+        base.update({"fuente", "fuente osmena", "fuente osmeña"})
+    if "ayala" in name:
+        base.update({"ayala", "ayala center"})
+    if "carbon" in name:
+        base.update({"carbon", "carbon market"})
+    if "sm city" in name:
+        base.update({"sm city", "sm city cebu"})
+    if "srp" in name or "ocean" in name:
+        base.update({"srp", "ocean park", "sm seaside", "il corso"})
+    if "mactan" in name:
+        base.update({"mactan", "lapu-lapu", "resort"})
+    if entry.zone_name == "Escario":
+        base.update({"escario", "escario street", "capitol site", "capitol"})
+    if entry.zone_name == "Lahug":
+        base.update({"lahug", "lahug residential", "salinas", "jy square"})
+    if entry.zone_name == "Talamban":
+        base.update({"talamban", "usc talamban"})
+    return frozenset(base)
+
+
+def _catalog_place(entry: ZoneCatalogEntry) -> CatalogPlace:
+    cells = cells_for_catalog_zone(entry)
+    polygon = PolygonService.cells_to_geojson_polygon(cells)
+    return CatalogPlace(
+        slug=_slug_for_entry(entry),
+        display_name=entry.zone_name,
+        default_place_type=_place_type_for_zone(entry),
+        polygon_geojson=polygon,
+        source_h3_indexes=tuple(cells),
+        tag_aliases=_aliases_for_entry(entry),
+    )
+
+
+# Smaller footprints first so point-in-polygon picks the most specific zone.
+CEBU_PLACE_CATALOG: tuple[CatalogPlace, ...] = tuple(
+    _catalog_place(entry)
+    for entry in sorted(CEBU_ZONE_CATALOG, key=lambda e: e.radius_km)
 )
 
 
@@ -156,3 +100,25 @@ def catalog_by_slug(slug: str) -> CatalogPlace | None:
         if entry.slug == slug:
             return entry
     return None
+
+
+_ZONE_BY_SLUG: dict[str, ZoneCatalogEntry] = {
+    entry.zone_id.lower(): entry for entry in CEBU_ZONE_CATALOG
+}
+
+
+def catalog_place_at_point(*, lat: float, lng: float) -> CatalogPlace | None:
+    """Among overlapping footprints, pick the zone whose center is closest."""
+    containing: list[tuple[float, CatalogPlace]] = []
+    for place in CEBU_PLACE_CATALOG:
+        if not point_in_geojson(place.polygon_geojson, lat=lat, lng=lng):
+            continue
+        zone = _ZONE_BY_SLUG.get(place.slug)
+        if zone is None:
+            continue
+        km = haversine_km(lat, lng, zone.center_lat, zone.center_lng)
+        containing.append((km, place))
+    if not containing:
+        return None
+    containing.sort(key=lambda pair: pair[0])
+    return containing[0][1]

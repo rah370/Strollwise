@@ -22,7 +22,13 @@ from app.schemas.common import Centroid
 from app.models.enums import BehaviorType, FunctionType, LiveStatus
 from app.schemas.place import PlaceSummary
 from app.schemas.zone import CurrentZoneOverview, ZoneDetail, ZoneLaunchContext, ZoneListItem
-from app.services.zone_catalog import default_local_ratio_for_name
+from app.services.place_catalog import CEBU_PLACE_CATALOG, catalog_place_at_point
+from app.services.zone_catalog import (
+    catalog_entry_for_name,
+    default_local_ratio_for_name,
+    nearest_catalog_entry,
+)
+from app.utils.place_geometry import point_in_geojson
 from app.utils.traveler_gradient import (
     local_ratio_from_traveler_mix,
     map_color_hex,
@@ -31,7 +37,7 @@ from app.utils.traveler_mix_utils import behavior_to_traveler_mix
 from app.services.ranking_service import RankingService
 from app.services import h3_service
 from app.utils.geo_utils import haversine_km, polygon_intersects_bbox
-from app.utils.h3_display import display_h3_rings
+from app.utils.h3_display import display_h3_rings, zone_display_rings
 
 log = logging.getLogger(__name__)
 
@@ -86,6 +92,7 @@ def zones_in_viewport(
             )
         ]
     _attach_place_metadata(db, in_viewport)
+    in_viewport = _filter_catalog_zones(in_viewport)
     ranked = RankingService.apply_viewport_filters(
         in_viewport,
         filter_key=filter,
@@ -120,6 +127,7 @@ def zones_feed(
     repo = ZoneRepository(db)
     all_zones = repo.list_active()
     _attach_place_metadata(db, all_zones)
+    all_zones = _filter_catalog_zones(all_zones)
     ranked = RankingService.rank(
         all_zones,
         filter_key=filter,
@@ -146,6 +154,8 @@ def current_zone_overview(
 ) -> CurrentZoneOverview:
     repo = ZoneRepository(db)
     zones = repo.list_active()
+    _attach_place_metadata(db, zones)
+    zones = _filter_catalog_zones(zones)
     if not zones:
         return CurrentZoneOverview(
             current_zone=None,
@@ -237,7 +247,10 @@ def zone_detail(zone_id: UUID, db: Session = Depends(get_db)) -> ZoneDetail:
         live_update=_live_update(zone),
         nearby_zone_ids=nearby,
         source_h3_indexes=list(zone.source_h3_indexes_json or []),
-        source_h3_rings=display_h3_rings(zone.source_h3_indexes_json),
+        source_h3_rings=zone_display_rings(
+            zone.polygon_geojson,
+            zone.source_h3_indexes_json,
+        ),
         report_count=zone.report_count,
         updated_at=zone.updated_at,
     )
@@ -268,6 +281,9 @@ def zone_nearby(
     return [_to_list_item(o) for _, o in distances[:limit]]
 
 
+_CATALOG_SLUGS = {entry.slug for entry in CEBU_PLACE_CATALOG}
+
+
 def _attach_place_metadata(db: Session, zones: list) -> None:
     place_ids = {z.place_id for z in zones if z.place_id}
     if not place_ids:
@@ -280,6 +296,17 @@ def _attach_place_metadata(db: Session, zones: list) -> None:
             continue
         zone._place_display_name = place.display_name  # type: ignore[attr-defined]
         zone._place_type = place.place_type  # type: ignore[attr-defined]
+        zone._place_slug = place.slug  # type: ignore[attr-defined]
+
+
+def _filter_catalog_zones(zones: list) -> list:
+    """Only the 14 curated thesis zones (one per catalog place)."""
+    filtered = []
+    for zone in zones:
+        slug = getattr(zone, "_place_slug", None)
+        if slug in _CATALOG_SLUGS:
+            filtered.append(zone)
+    return filtered
 
 
 def _zone_place_fields(zone, primary_place) -> tuple[str, str | None, str | None]:
@@ -355,7 +382,10 @@ def _to_list_item(zone) -> ZoneListItem:
         peak_time_label=zone.peak_time_label,
         confidence_score=zone.confidence_score,
         priority_score=zone.priority_score,
-        source_h3_rings=display_h3_rings(zone.source_h3_indexes_json),
+        source_h3_rings=zone_display_rings(
+            zone.polygon_geojson,
+            zone.source_h3_indexes_json,
+        ),
         updated_at=zone.updated_at,
     )
 
@@ -387,8 +417,55 @@ def _geojson_bbox_area_deg2(geojson: dict | None) -> float:
     return 1e9
 
 
+def _catalog_place_at_point(*, lat: float, lng: float):
+    return catalog_place_at_point(lat=lat, lng=lng)
+
+
+def _zone_for_catalog_place(
+    zones: list, entry, *, lat: float, lng: float
+) -> object | None:
+    """Match a merged zone to a catalog place name (e.g. Escario, not IT Park)."""
+    key = entry.display_name.lower()
+    slug_words = entry.slug.replace("_", " ")
+    candidates: list[tuple[float, float, object]] = []
+    for zone in zones:
+        dn = (getattr(zone, "display_name", None) or "").lower()
+        pn = (getattr(zone, "place_name", None) or "").lower()
+        if key not in dn and key not in pn and slug_words not in dn:
+            continue
+        candidates.append(
+            (
+                _geojson_bbox_area_deg2(zone.polygon_geojson),
+                haversine_km(lat, lng, zone.centroid_lat, zone.centroid_lng),
+                zone,
+            )
+        )
+    if not candidates:
+        return None
+    candidates.sort(key=lambda row: (row[0], row[1]))
+    return candidates[0][2]
+
+
 def _find_current_zone(zones: list, *, lat: float, lng: float):
+    catalog_place = _catalog_place_at_point(lat=lat, lng=lng)
+    if catalog_place is not None:
+        matched = _zone_for_catalog_place(
+            zones, catalog_place, lat=lat, lng=lng
+        )
+        if matched is not None:
+            return matched
+
     containing = [z for z in zones if _zone_contains_point(z.polygon_geojson, lat=lat, lng=lng)]
+    if catalog_place is not None and containing:
+        key = catalog_place.display_name.lower()
+        filtered = [
+            z
+            for z in containing
+            if key in (getattr(z, "display_name", None) or "").lower()
+            or key in (getattr(z, "place_name", None) or "").lower()
+        ]
+        if filtered:
+            containing = filtered
     if containing:
         if len(containing) >= 2:
             overlap_geojson = _polygon_intersection_geojson(containing)
@@ -404,6 +481,22 @@ def _find_current_zone(zones: list, *, lat: float, lng: float):
 
         containing.sort(key=sort_key)
         return containing[0]
+    if catalog_place is not None:
+        entry = catalog_entry_for_name(catalog_place.display_name)
+        if entry is not None:
+            for zone in zones:
+                if entry.zone_name.lower() in (
+                    getattr(zone, "display_name", None) or ""
+                ).lower():
+                    return zone
+
+    catalog_near = nearest_catalog_entry(lat, lng)
+    if catalog_near is not None:
+        for zone in zones:
+            name = catalog_near.zone_name.lower()
+            if name in (getattr(zone, "display_name", None) or "").lower():
+                return zone
+
     distances = [
         (
             haversine_km(lat, lng, zone.centroid_lat, zone.centroid_lng),

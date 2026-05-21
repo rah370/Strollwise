@@ -75,7 +75,8 @@ def test_merge_creates_zone_for_place(db_session):
     assert zones, "expected at least one zone"
     zone = zones[0]
     assert zone.place_id is not None
-    assert zone.traveler_mix == "local"
+    # IT Park catalog zone is international-dominant (Z007).
+    assert zone.traveler_mix == "international"
     assert zone.function_type is None
     assert len(zone.source_h3_indexes_json or []) >= 1
     assert zone.polygon_geojson is not None
@@ -86,7 +87,8 @@ def test_merge_rollup_traveler_mix_for_mixed_reports(db_session):
     """Same place/cell with both local and international reporters → mixed zone."""
     user = _create_user(db_session)
 
-    lat, lng = 10.3300, 123.9050
+    # Fuente Osmeña circle (mixed catalog zone Z010).
+    lat, lng = 10.3099, 123.8915
     h3_index = h3_service.latlng_to_cell(lat, lng, 8)
 
     for _ in range(6):

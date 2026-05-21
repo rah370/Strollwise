@@ -115,6 +115,20 @@ String travelerMixLabel(String travelerMix) {
   }
 }
 
+/// API `behavior_type`: local_area, tourist_area, mixed_area.
+String zoneBehaviorLabel(String behaviorType) {
+  switch (behaviorType.toLowerCase()) {
+    case 'local_area':
+      return 'Local area';
+    case 'tourist_area':
+      return 'Tourist area';
+    case 'mixed_area':
+      return 'Mixed area';
+    default:
+      return 'Area';
+  }
+}
+
 /// Trend/analytics copy (e.g. "Local-heavy").
 String travelerMixTrendLabel(String travelerMix) {
   switch (travelerMix) {

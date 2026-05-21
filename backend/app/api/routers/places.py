@@ -13,6 +13,8 @@ from app.core.database import get_db
 from app.repositories.place_repository import PlaceRepository
 from app.schemas.common import Centroid
 from app.schemas.place import PlaceDetail, PlaceListItem, PlaceSummary
+from app.schemas.place_recommendation import PlaceRecommendation
+from app.services.place_recommendations_service import fetch_place_recommendations
 from app.services.place_catalog import CEBU_PLACE_CATALOG
 from app.services.place_service import PlaceService
 from app.utils.geo_utils import polygon_intersects_bbox
@@ -58,6 +60,27 @@ def places_in_viewport(
         settings.cache_ttl_zones_seconds,
     )
     return response
+
+
+@router.get("/recommendations", response_model=list[PlaceRecommendation])
+def place_recommendations(
+    lat: float = Query(..., ge=-90.0, le=90.0),
+    lng: float = Query(..., ge=-180.0, le=180.0),
+    vibe: str = Query(
+        "food",
+        description="food | cafe | nightlife | tourist | nature | budget",
+    ),
+    area_label: str = Query("Cebu City", min_length=1, max_length=120),
+    limit: int = Query(8, ge=1, le=15),
+) -> list[PlaceRecommendation]:
+    """Curated top places to visit near a Cebu area for a given vibe."""
+    return fetch_place_recommendations(
+        lat=lat,
+        lng=lng,
+        vibe=vibe.strip().lower(),
+        area_label=area_label.strip(),
+        limit=limit,
+    )
 
 
 @router.get("/resolve", response_model=Optional[PlaceSummary])
