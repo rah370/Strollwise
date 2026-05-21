@@ -12,7 +12,9 @@ from app.repositories.zone_repository import ZoneRepository
 from app.models.enums import VisibilityStatus
 from app.schemas.report import AggregationFeedback, PlaceTagMarker, ReportCreate, ReportPublic
 from app.schemas.report import ReportSubmissionResponse
+from app.schemas.visit_pin import VisitPinCreate, VisitPinPublic
 from app.services.report_service import ReportService, ReportValidationError
+from app.services.visit_pin_service import VisitPinService
 
 router = APIRouter(prefix="/reports", tags=["reports"])
 
@@ -38,6 +40,52 @@ def submit_report(
         **report_data,
         aggregation=AggregationFeedback.model_validate(result.aggregation),
     )
+
+
+@router.post(
+    "/my-visit-pins",
+    response_model=VisitPinPublic,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_my_visit_pin(
+    payload: VisitPinCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> VisitPinPublic:
+    """Drop a private visit pin — only you can see it on the map."""
+    pin = VisitPinService(db).create_from_payload(current_user, payload)
+    return VisitPinPublic.model_validate(pin)
+
+
+@router.get("/my-visit-pins", response_model=list[VisitPinPublic])
+def my_visit_pins(
+    min_lat: float = Query(..., ge=-90.0, le=90.0),
+    max_lat: float = Query(..., ge=-90.0, le=90.0),
+    min_lng: float = Query(..., ge=-180.0, le=180.0),
+    max_lng: float = Query(..., ge=-180.0, le=180.0),
+    limit: int = Query(120, ge=1, le=300),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> list[VisitPinPublic]:
+    pins = VisitPinService(db).list_viewport(
+        current_user.id,
+        min_lat,
+        max_lat,
+        min_lng,
+        max_lng,
+        limit=limit,
+    )
+    return [VisitPinPublic.model_validate(p) for p in pins]
+
+
+@router.get("/my-visit-history", response_model=list[VisitPinPublic])
+def my_visit_history(
+    limit: int = Query(40, ge=1, le=100),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> list[VisitPinPublic]:
+    pins = VisitPinService(db).list_history(current_user.id, limit=limit)
+    return [VisitPinPublic.model_validate(p) for p in pins]
 
 
 @router.get("/my-pending-pins", response_model=list[PlaceTagMarker])

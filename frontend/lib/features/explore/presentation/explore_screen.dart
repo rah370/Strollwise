@@ -6,19 +6,26 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:go_router/go_router.dart';
+import 'package:h3_flutter/h3_flutter.dart';
 import 'package:maplibre_gl/maplibre_gl.dart';
 
 import '../../../app/theme/colors.dart';
+import '../../../shared/models/cell.dart';
 import '../../../shared/models/layer_settings.dart';
 import '../../../shared/models/place_list_item.dart';
 import '../../../shared/models/zone.dart';
+import '../../../shared/maps/google_maps_launcher.dart';
 import '../../../shared/network/api_client.dart';
 import '../../../shared/providers/app_providers.dart';
+import '../../../shared/traveler_gradient.dart';
 import '../../../shared/zone_place_ui.dart';
+import 'cell_detail_sheet.dart';
+import 'explore_area_insight_card.dart';
 import 'explore_map_filters.dart';
+import '../services/explore_place_search.dart';
 import '../../zones/presentation/zone_detail_sheet.dart';
 
-enum ExploreMapMode { discovery, zoneSelected, navigating }
+enum ExploreMapMode { discovery, zoneSelected }
 
 enum _LocationBootstrapState {
   locating,
@@ -46,15 +53,11 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
   bool _zoneLayersAdded = false;
   String? _zoneBelowLayerId;
   List<ZoneModel> _latestZones = const [];
+  List<CellModel> _latestCells = const [];
   bool _usingManualLocation = false;
   bool _followUser = true;
-  bool _showLayerLegend = false;
   String? _lastTappedZoneId;
   int _sameZoneTapCount = 0;
-  List<LatLng> _navigationRoute = const [];
-  _NavigationMetrics? _navigationMetrics;
-  bool _isFetchingRoute = false;
-  DateTime? _lastRouteRefreshAt;
   final Set<String> _enabledLayerKeys = {
     'local',
     'international',
@@ -72,53 +75,22 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
   bool _showSearch = false;
   final TextEditingController _searchController = TextEditingController();
   final FocusNode _searchFocusNode = FocusNode();
-  List<ZoneModel> _searchMatches = const [];
+  List<ExploreSearchHit> _searchHits = const [];
   String? _searchFeedback;
+  bool _searchBusy = false;
+  Timer? _searchDebounce;
+  ExplorePlaceSearchService? _placeSearchService;
+  int _searchRequestGen = 0;
   static const _cebuCityCenter = LatLng(10.3157, 123.8854);
   static const _defaultZoom = 14.7;
   static const _cebuRegionRadiusMeters = 120000.0;
   static const _zonesSourceId = 'zones-source';
   static const _zonesFillLayerId = 'zones-fill';
   static const _zonesLineLayerId = 'zones-line';
-  static const Map<String, LatLng> _knownCebuPlaces = {
-    'ayala': LatLng(10.3173, 123.9058),
-    'ayala center': LatLng(10.3173, 123.9058),
-    'it park': LatLng(10.3304, 123.9072),
-    'cebu it park': LatLng(10.3304, 123.9072),
-    'colon': LatLng(10.2966, 123.8986),
-    'colon street': LatLng(10.2966, 123.8986),
-    'carbon market': LatLng(10.2954, 123.8994),
-    'magellan': LatLng(10.2930, 123.9029),
-    'magellan cross': LatLng(10.2930, 123.9029),
-    'basilica': LatLng(10.2942, 123.9022),
-    'santo nino': LatLng(10.2942, 123.9022),
-    'fort san pedro': LatLng(10.2922, 123.9058),
-    'fuente': LatLng(10.3094, 123.8931),
-    'fuente osmena': LatLng(10.3094, 123.8931),
-    'mango': LatLng(10.3109, 123.8953),
-    'mango avenue': LatLng(10.3109, 123.8953),
-    'south bus': LatLng(10.3002, 123.8931),
-    'south bus terminal': LatLng(10.3002, 123.8931),
-    'sm city': LatLng(10.3112, 123.9187),
-    'sm seaside': LatLng(10.2816, 123.8810),
-    'pier': LatLng(10.3003, 123.9122),
-    'port area': LatLng(10.3003, 123.9122),
-    'j solon': LatLng(10.3181, 123.9021),
-    'usc': LatLng(10.3006, 123.8989),
-    'university of san carlos': LatLng(10.3006, 123.8989),
-    'uspf': LatLng(10.3382, 123.9014),
-    'university of southern philippines foundation': LatLng(10.3382, 123.9014),
-    'salinas drive': LatLng(10.3370, 123.9025),
-    'salinas': LatLng(10.3370, 123.9025),
-    'jy square': LatLng(10.3359, 123.9023),
-    'jy square lahug': LatLng(10.3359, 123.9023),
-    'jy': LatLng(10.3359, 123.9023),
-    'cebu doctors': LatLng(10.3099, 123.8916),
-  };
-
   @override
   void initState() {
     super.initState();
+    unawaited(ZoneCatalog.ensureLoaded());
     WidgetsBinding.instance.addPostFrameCallback((_) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) {
@@ -133,6 +105,13 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
         return;
       }
       if (_consumeExploreFocus()) return;
+      final pendingGps = ref.read(explorePendingGpsCenterProvider);
+      if (pendingGps) {
+        ref.read(explorePendingGpsCenterProvider.notifier).state = false;
+        _didBootstrapLocation = false;
+        unawaited(_bootstrapCurrentLocation(force: true));
+        return;
+      }
       _ensureDefaultCebuViewport();
       _bootstrapCurrentLocation();
     });
@@ -317,53 +296,8 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
     return distanceMeters <= _cebuRegionRadiusMeters;
   }
 
-  Future<LatLng?> _lookupManualPlace(String query) async {
-    final localMatch = _knownCebuPlaceLookup(query);
-    if (localMatch != null) return localMatch;
-    try {
-      final response = await ref
-          .read(dioProvider)
-          .getUri(
-            Uri.https('nominatim.openstreetmap.org', '/search', {
-              'format': 'json',
-              'limit': '1',
-              'addressdetails': '0',
-              'countrycodes': 'ph',
-              'viewbox': '123.75,10.45,124.05,10.20',
-              'bounded': '1',
-              'q': '$query, Cebu City, Cebu, Philippines',
-            }),
-            options: Options(
-              headers: const {
-                'User-Agent': 'StrollWise prototype demo location lookup',
-              },
-            ),
-          );
-      final results = response.data;
-      if (results is! List || results.isEmpty || results.first is! Map) {
-        return null;
-      }
-      final first = results.first as Map;
-      final lat = double.tryParse(first['lat']?.toString() ?? '');
-      final lng = double.tryParse(first['lon']?.toString() ?? '');
-      if (lat == null || lng == null) return null;
-      final location = LatLng(lat, lng);
-      return _isWithinCebuRegion(location) ? location : null;
-    } catch (_) {
-      return null;
-    }
-  }
-
-  LatLng? _knownCebuPlaceLookup(String query) {
-    final normalized = query.toLowerCase().trim();
-    for (final place in _knownCebuPlaces.entries) {
-      final key = place.key;
-      if (normalized.contains(key) || key.contains(normalized)) {
-        return place.value;
-      }
-    }
-    return null;
-  }
+  ExplorePlaceSearchService get _placeSearch =>
+      _placeSearchService ??= ExplorePlaceSearchService(ref.read(dioProvider));
 
   /// GeoJSON polygon rings must be closed (first position == last position).
   List<List<double>> _closeGeoJsonLngLatRing(List<List<double>> ring) {
@@ -385,14 +319,14 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
       return;
     }
     _latestZones = zones;
+    final cells = _latestCells;
     final layerSettings = ref.read(layerSettingsProvider);
     final selectedZone = ref.read(selectedZoneProvider);
+    final selectedCell = ref.read(selectedCellProvider);
     final userLocation = ref.read(currentUserLocationProvider);
     final mapMode = _mapMode;
     final currentZoom = ref.read(mapViewportProvider).zoom;
     final showTravelerFill = layerSettings.showTravelerLayer;
-    final showPlaceOutlines = layerSettings.showFunctionalOverlay;
-    final places = ref.read(visiblePlacesProvider).valueOrNull ?? const [];
     try {
       await controller.clearSymbols();
       await controller.clearCircles();
@@ -402,58 +336,63 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
     }
     try {
       final features = <Map<String, dynamic>>[];
-      for (final zone in zones) {
-        final layerKey = _zoneLayerKey(zone);
-        final isSelected = selectedZone?.h3Index == zone.h3Index;
-        if (!_enabledLayerKeys.contains(layerKey) && !isSelected) continue;
-        final color = _streetZoneColor(zone);
-        final lifecycle = _zoneLifecycleState(zone);
-        if (!showTravelerFill && !isSelected) {
-          continue;
+      final hasCellLayer = cells.isNotEmpty;
+      if (hasCellLayer) {
+        for (final cell in cells) {
+          final layerKey = _cellLayerKey(cell);
+          final isSelected = selectedCell?.h3Index == cell.h3Index;
+          if (!_enabledLayerKeys.contains(layerKey) && !isSelected) continue;
+          if (!showTravelerFill && !isSelected) continue;
+          final color = _cellColor(cell);
+          final closed = _closeGeoJsonLngLatRing(cell.ring);
+          if (closed.length < 4) continue;
+          final lifecycle = cell.reportCount >= 6
+              ? 'defined'
+              : cell.reportCount >= 2
+              ? 'emerging'
+              : 'sparse';
+          features.add({
+            'type': 'Feature',
+            'properties': {
+              'h3_index': cell.h3Index,
+              'zone_type': layerKey,
+              'fill': _hexFromColor(color),
+              'line': _hexFromColor(color),
+              'selected': isSelected,
+              'lifecycle': lifecycle,
+              'dashed': lifecycle == 'emerging',
+              'fill_opacity': _zoneFillOpacity(
+                mode: mapMode,
+                selected: isSelected,
+                hasSelection: selectedCell != null || selectedZone != null,
+                confidenceScore: cell.confidenceScore,
+                lifecycle: lifecycle,
+              ),
+              'line_width': _zoneLifecycleLineWidth(
+                selected: isSelected,
+                lifecycle: lifecycle,
+              ),
+              'line_opacity': _zoneLifecycleLineOpacity(lifecycle),
+            },
+            'geometry': {
+              'type': 'Polygon',
+              'coordinates': [closed],
+            },
+          });
         }
-        final h3Rings = zone.sourceH3Rings;
-        if (h3Rings.isNotEmpty) {
-          for (final ring in h3Rings) {
+      } else {
+        for (final zone in zones) {
+          final layerKey = _zoneLayerKey(zone);
+          final isSelected = selectedZone?.h3Index == zone.h3Index;
+          if (!_enabledLayerKeys.contains(layerKey) && !isSelected) continue;
+          final color = _streetZoneColor(zone);
+          final lifecycle = _zoneLifecycleState(zone);
+          if (!showTravelerFill && !isSelected) {
+            continue;
+          }
+          for (final ring in zone.sourceH3Rings) {
             if (ring.length < 3) continue;
             final closed = _closeGeoJsonLngLatRing(ring);
-            if (closed.length < 4) continue;
-            features.add({
-              'type': 'Feature',
-              'properties': {
-                'zone_id': zone.zoneId,
-                'zone_type': layerKey,
-                'fill': _hexFromColor(color),
-                'line': _hexFromColor(color),
-                'selected': isSelected,
-                'lifecycle': lifecycle,
-                'dashed': lifecycle == 'emerging',
-                'fill_opacity': _zoneFillOpacity(
-                  mode: mapMode,
-                  selected: isSelected,
-                  hasSelection: selectedZone != null,
-                  confidenceScore: zone.confidenceScore,
-                  lifecycle: lifecycle,
-                ),
-                'line_width': _zoneLifecycleLineWidth(
-                  selected: isSelected,
-                  lifecycle: lifecycle,
-                ),
-                'line_opacity': _zoneLifecycleLineOpacity(lifecycle),
-              },
-              'geometry': {
-                'type': 'Polygon',
-                'coordinates': [closed],
-              },
-            });
-          }
-        } else {
-          // Offline fallback zones and some API payloads only ship merged
-          // footprints (`polygon_parts`) without per-cell H3 rings.
-          for (final part in zone.polygonParts) {
-            if (part.isEmpty) continue;
-            final outer = part.first;
-            if (outer.length < 3) continue;
-            final closed = _closeGeoJsonLngLatRing(outer);
             if (closed.length < 4) continue;
             features.add({
               'type': 'Feature',
@@ -516,29 +455,6 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
         await controller.setGeoJsonSource(_zonesSourceId, geoJson);
       }
 
-      if (showPlaceOutlines && currentZoom >= 12) {
-        final placeColor = placeTypeAccentColor;
-        for (final place in places) {
-          final accent = placeColor(place.placeType);
-          final rings = place.sourceH3Rings;
-          if (rings.isEmpty) continue;
-          for (final ring in rings) {
-            if (ring.length < 3) continue;
-            final latLngs = ring
-                .map((p) => LatLng(p[1], p[0]))
-                .toList(growable: false);
-            if (latLngs.length < 3) continue;
-            await controller.addLine(
-              LineOptions(
-                geometry: latLngs,
-                lineColor: _hexFromColor(accent),
-                lineWidth: 2.2,
-                lineOpacity: 0.92,
-              ),
-            );
-          }
-        }
-      }
 
       final labelZones = [...zones]
         ..sort((a, b) {
@@ -566,9 +482,8 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
           continue;
         }
         final center = _zoneCenter(zone);
-        final shouldLabel = mapMode == ExploreMapMode.navigating
-            ? isSelected
-            : isSelected || labeledZoneIds.contains(zone.h3Index);
+        final shouldLabel =
+            isSelected || labeledZoneIds.contains(zone.h3Index);
         if (shouldLabel) {
           await controller.addSymbol(
             SymbolOptions(
@@ -588,20 +503,6 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
           );
         }
       }
-      if (mapMode == ExploreMapMode.navigating &&
-          selectedZone != null &&
-          userLocation != null) {
-        if (_navigationRoute.length >= 2) {
-          await controller.addLine(
-            LineOptions(
-              geometry: _navigationRoute,
-              lineColor: _hexFromColor(AppColors.secondaryAction),
-              lineWidth: 5.4,
-              lineOpacity: 0.92,
-            ),
-          );
-        }
-      }
       final ownPins = ref.read(ownPendingTagPinsProvider).valueOrNull ?? [];
       for (final m in ownPins) {
         await controller.addSymbol(
@@ -615,6 +516,22 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
             textHaloColor: '#FFFFFF',
             textHaloWidth: 1.2,
             zIndex: 6,
+          ),
+        );
+      }
+      final visitPins = ref.read(ownVisitPinsProvider).valueOrNull ?? [];
+      for (final pin in visitPins) {
+        await controller.addSymbol(
+          SymbolOptions(
+            geometry: LatLng(pin.latitude, pin.longitude),
+            textField: '\u{1F9F6}',
+            textSize: pin.visitCount > 1 ? 20 : 18,
+            textAnchor: 'bottom',
+            textOpacity: 0.95,
+            textColor: '#15803D',
+            textHaloColor: '#FFFFFF',
+            textHaloWidth: 1.4,
+            zIndex: 7,
           ),
         );
       }
@@ -817,8 +734,12 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
         maxLat: bounds.northeast.latitude,
         maxLng: bounds.northeast.longitude,
       );
-      final zones = ref.read(visibleZonesProvider).valueOrNull;
-      if (zones != null && mounted) {
+      ref.invalidate(visibleZonesProvider);
+      ref.invalidate(visibleCellsProvider);
+      final zones = await ref.read(visibleZonesProvider.future);
+      final cells = await ref.read(visibleCellsProvider.future);
+      if (mounted) {
+        _latestCells = cells;
         unawaited(_drawZones(zones));
       }
     } finally {
@@ -827,6 +748,7 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
   }
 
   void _selectZone(ZoneModel zone) {
+    ref.read(selectedCellProvider.notifier).state = null;
     ref.read(selectedZoneProvider.notifier).state = zone;
     setState(() => _mapMode = ExploreMapMode.zoneSelected);
   }
@@ -867,6 +789,7 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
 
   void _clearSelectedZone() {
     ref.read(selectedZoneProvider.notifier).state = null;
+    ref.read(selectedCellProvider.notifier).state = null;
     setState(() {
       _mapMode = ExploreMapMode.discovery;
       _lastTappedZoneId = null;
@@ -874,194 +797,143 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
     });
   }
 
-  void _startNavigation(ZoneModel zone) {
-    ref.read(selectedZoneProvider.notifier).state = zone;
-    setState(() {
-      _mapMode = ExploreMapMode.navigating;
-      _followUser = true;
-      _navigationRoute = const [];
-      _navigationMetrics = const _NavigationMetrics(
-        distanceText: 'Finding...',
-        etaText: '--',
-        nextStep: 'Finding the fastest road route',
-        routeStatus: 'Routing on roads',
-      );
-    });
-    final target = _zoneCenter(zone);
-    final controller = _controller;
-    if (controller != null) {
-      unawaited(
-        controller.animateCamera(CameraUpdate.newLatLngZoom(target, 13.2)),
-      );
+  CellModel? _findCellAt(LatLng tap, List<CellModel> cells) {
+    final point = [tap.longitude, tap.latitude];
+    for (final cell in cells.reversed) {
+      if (_pointInRing(point, cell.ring)) return cell;
     }
-    unawaited(_refreshRoadRoute(zone, force: true));
+    try {
+      final h3 = const H3Factory().load();
+      final idx = h3.geoToCell(
+        GeoCoord(lon: tap.longitude, lat: tap.latitude),
+        8,
+      );
+      final idxStr = idx.toString();
+      for (final cell in cells) {
+        if (cell.h3Index == idxStr) return cell;
+      }
+    } catch (_) {}
+    CellModel? nearest;
+    var bestDistance = double.infinity;
+    for (final cell in cells) {
+      final distance = Geolocator.distanceBetween(
+        tap.latitude,
+        tap.longitude,
+        cell.centroidLat,
+        cell.centroidLng,
+      );
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        nearest = cell;
+      }
+    }
+    return bestDistance <= 120 ? nearest : null;
   }
 
-  void _exitNavigation() {
-    setState(() {
-      _mapMode = ref.read(selectedZoneProvider) == null
-          ? ExploreMapMode.discovery
-          : ExploreMapMode.zoneSelected;
-      _followUser = false;
-      _navigationRoute = const [];
-      _navigationMetrics = null;
-      _lastRouteRefreshAt = null;
-    });
+  void _handleCellTap(CellModel cell) {
+    ref.read(selectedCellProvider.notifier).state = cell;
+    ref.read(selectedZoneProvider.notifier).state = null;
+    setState(() => _mapMode = ExploreMapMode.discovery);
+    unawaited(_drawZones(_latestZones));
+    _showCellDetail(cell);
   }
 
-  Future<void> _refreshRoadRoute(ZoneModel zone, {bool force = false}) async {
-    final origin = ref.read(currentUserLocationProvider);
-    if (origin == null || _isFetchingRoute) return;
-    final now = DateTime.now();
-    if (!force &&
-        _lastRouteRefreshAt != null &&
-        now.difference(_lastRouteRefreshAt!) < const Duration(seconds: 18)) {
+  void _showCellDetail(CellModel cell) {
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      barrierColor: Colors.black.withValues(alpha: 0.35),
+      builder: (_) => CellDetailSheet(cell: cell),
+    );
+  }
+
+  Future<void> _markVisitedHere({String? label}) async {
+    final token = ref.read(authTokenProvider);
+    if (token == null || token == 'demo-token-local') {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          behavior: SnackBarBehavior.floating,
+          content: Text('Sign in to save private visit pins on your map.'),
+        ),
+      );
       return;
     }
-    setState(() {
-      _isFetchingRoute = true;
-      _navigationMetrics ??= const _NavigationMetrics(
-        distanceText: 'Finding...',
-        etaText: '--',
-        nextStep: 'Finding the fastest road route',
-        routeStatus: 'Routing on roads',
-      );
-    });
-    _lastRouteRefreshAt = now;
+    final controller = _controller;
+    final camera = controller?.cameraPosition;
+    final target = camera?.target ??
+        ref.read(currentUserLocationProvider) ??
+        const LatLng(10.3157, 123.8854);
     try {
-      final target = _zoneCenter(zone);
-      final route = await _fetchRoadRoute(origin: origin, target: target);
-      final points = route == null
-          ? _streetGridFallbackRoute(origin, target)
-          : _routePointsFromOsrm(route);
-      if (points.length < 2 || !mounted) return;
-      final distanceMeters = route == null
-          ? _polylineDistanceMeters(points)
-          : ((route['distance'] as num?) ?? 0).toDouble();
-      final durationSeconds = route == null
-          ? distanceMeters / 78 * 60
-          : ((route['duration'] as num?) ?? 0).toDouble();
-      final nextStep = route == null
-          ? 'Follow the street-grid preview toward ${_zoneTitle(zone)}'
-          : _routeNextStep(route, zone);
-      setState(() {
-        _navigationRoute = points;
-        _navigationMetrics = _NavigationMetrics(
-          distanceText: _formatDistance(distanceMeters),
-          etaText: _formatDuration(durationSeconds),
-          nextStep: nextStep,
-          routeStatus: route == null
-              ? 'Offline street preview'
-              : 'Fastest road route',
-        );
-      });
-      final zones = ref.read(visibleZonesProvider).valueOrNull;
-      if (zones != null) {
-        unawaited(_drawZones(zones));
-      }
-    } catch (_) {
-      if (!mounted) return;
-      setState(() {
-        _navigationRoute = const [];
-        _navigationMetrics = const _NavigationMetrics(
-          distanceText: '--',
-          etaText: '--',
-          nextStep:
-              'Road routing is unavailable. Try again with internet access.',
-          routeStatus: 'Route unavailable',
-        );
-      });
-      final zones = ref.read(visibleZonesProvider).valueOrNull;
-      if (zones != null) {
-        unawaited(_drawZones(zones));
-      }
-    } finally {
+      final dio = ref.read(dioProvider);
+      await dio.post(
+        '/reports/my-visit-pins',
+        data: {
+          'latitude': target.latitude,
+          'longitude': target.longitude,
+          if (label != null && label.isNotEmpty) 'label': label,
+        },
+        options: Options(headers: {'Authorization': 'Bearer $token'}),
+      );
+      ref.invalidate(ownVisitPinsProvider);
+      ref.invalidate(ownVisitHistoryProvider);
+      final zones = ref.read(visibleZonesProvider).valueOrNull ?? [];
       if (mounted) {
-        setState(() => _isFetchingRoute = false);
-      } else {
-        _isFetchingRoute = false;
+        unawaited(_drawZones(zones));
+        ScaffoldMessenger.of(context)
+          ..hideCurrentSnackBar()
+          ..showSnackBar(
+            SnackBar(
+              behavior: SnackBarBehavior.floating,
+              content: Text(
+                label == null
+                    ? 'Saved to your private visit map.'
+                    : 'Saved visit: $label',
+              ),
+            ),
+          );
       }
-    }
-  }
-
-  Future<Map?> _fetchRoadRoute({
-    required LatLng origin,
-    required LatLng target,
-  }) async {
-    for (final profile in const ['foot', 'driving']) {
-      final url = Uri.parse(
-        'https://router.project-osrm.org/route/v1/$profile/'
-        '${origin.longitude},${origin.latitude};'
-        '${target.longitude},${target.latitude}'
-        '?overview=full&geometries=geojson&steps=true&alternatives=false',
-      );
-      try {
-        final response = await ref.read(dioProvider).getUri(url);
-        final data = response.data;
-        if (data is! Map) continue;
-        final routes = data['routes'];
-        if (routes is List && routes.isNotEmpty && routes.first is Map) {
-          return routes.first as Map;
-        }
-      } catch (_) {
-        // Try the next profile before declaring routing unavailable.
-      }
-    }
-    return null;
-  }
-
-  List<LatLng> _routePointsFromOsrm(Map route) {
-    final geometry = route['geometry'];
-    final coords = geometry is Map ? geometry['coordinates'] : null;
-    if (coords is! List || coords.length < 2) return const [];
-    final points = <LatLng>[];
-    for (final coord in coords) {
-      if (coord is List && coord.length >= 2) {
-        final lng = (coord[0] as num).toDouble();
-        final lat = (coord[1] as num).toDouble();
-        points.add(LatLng(lat, lng));
-      }
-    }
-    return points;
-  }
-
-  List<LatLng> _streetGridFallbackRoute(LatLng origin, LatLng target) {
-    final midLat = (origin.latitude + target.latitude) / 2;
-    final midLng = (origin.longitude + target.longitude) / 2;
-    final horizontalFirst =
-        (origin.longitude - target.longitude).abs() >
-        (origin.latitude - target.latitude).abs();
-    if (horizontalFirst) {
-      return [
-        origin,
-        LatLng(origin.latitude, midLng),
-        LatLng(midLat, midLng),
-        LatLng(midLat, target.longitude),
-        target,
-      ];
-    }
-    return [
-      origin,
-      LatLng(midLat, origin.longitude),
-      LatLng(midLat, midLng),
-      LatLng(target.latitude, midLng),
-      target,
-    ];
-  }
-
-  double _polylineDistanceMeters(List<LatLng> points) {
-    var meters = 0.0;
-    for (var i = 1; i < points.length; i += 1) {
-      final a = points[i - 1];
-      final b = points[i];
-      meters += Geolocator.distanceBetween(
-        a.latitude,
-        a.longitude,
-        b.latitude,
-        b.longitude,
+    } on DioException catch (e) {
+      if (!mounted) return;
+      final detail = e.response?.data;
+      final message = detail is Map && detail['detail'] != null
+          ? detail['detail'].toString()
+          : 'Could not save visit pin.';
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(behavior: SnackBarBehavior.floating, content: Text(message)),
       );
     }
-    return meters;
+  }
+
+  Future<void> _openGoogleMapsNavigation(ZoneModel zone) async {
+    final center = _zoneCenter(zone);
+    final origin = ref.read(currentUserLocationProvider);
+    final address = googleMapsDestinationAddress(
+      displayName: zone.displayName,
+      placeName: zone.placeName,
+    );
+    final opened = await GoogleMapsLauncher.openDirections(
+      latitude: center.latitude,
+      longitude: center.longitude,
+      address: address,
+      originLatitude: origin?.latitude,
+      originLongitude: origin?.longitude,
+    );
+    if (!mounted) return;
+    if (!opened) {
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          const SnackBar(
+            behavior: SnackBarBehavior.floating,
+            content: Text(
+              'Could not open Google Maps. Install the app or try again.',
+            ),
+          ),
+        );
+    }
   }
 
   void _startLiveLocationTracking() {
@@ -1076,20 +948,11 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
           if (!mounted || _usingManualLocation) return;
           final live = LatLng(position.latitude, position.longitude);
           ref.read(currentUserLocationProvider.notifier).state = live;
-          if (_mapMode == ExploreMapMode.navigating) {
-            final targetZone = ref.read(selectedZoneProvider);
-            if (targetZone != null) {
-              unawaited(_refreshRoadRoute(targetZone));
-            }
-          }
           if (_followUser) {
             final controller = _controller;
             if (controller != null) {
               await controller.moveCamera(
-                CameraUpdate.newLatLngZoom(
-                  live,
-                  _mapMode == ExploreMapMode.navigating ? 14 : 13,
-                ),
+                CameraUpdate.newLatLngZoom(live, 13),
               );
             }
           }
@@ -1100,6 +963,7 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
   void dispose() {
     _exploreFlashClearTimer?.cancel();
     _positionSubscription?.cancel();
+    _searchDebounce?.cancel();
     _searchController.dispose();
     _searchFocusNode.dispose();
     super.dispose();
@@ -1111,8 +975,9 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
       _showSearch = opening;
       if (!opening) {
         _searchController.clear();
-        _searchMatches = const [];
+        _searchHits = const [];
         _searchFeedback = null;
+        _searchBusy = false;
       }
     });
     if (opening) {
@@ -1124,120 +989,97 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
     }
   }
 
-  void _applySearchFilter(String value, List<ZoneModel> zones) {
-    final q = value.trim().toLowerCase();
-    if (q.isEmpty) {
-      ref.read(activeZoneFilterProvider.notifier).state = null;
+  void _onSearchQueryChanged(String value, List<ZoneModel> zones) {
+    _searchDebounce?.cancel();
+    final q = value.trim();
+    if (q.length < 2) {
       if (mounted) {
         setState(() {
-          _searchMatches = const [];
+          _searchHits = const [];
           _searchFeedback = null;
+          _searchBusy = false;
         });
       }
       return;
     }
-    final matches = zones.where((zone) => _zoneMatchesQuery(zone, q)).toList();
-    if (mounted) {
+    setState(() => _searchBusy = true);
+    final gen = ++_searchRequestGen;
+    _searchDebounce = Timer(const Duration(milliseconds: 380), () async {
+      final hits = await _placeSearch.search(
+        q,
+        zones: zones,
+        maxResults: 8,
+      );
+      if (!mounted || gen != _searchRequestGen) return;
       setState(() {
-        _searchMatches = matches.take(6).toList(growable: false);
-        _searchFeedback = null;
+        _searchHits = hits;
+        _searchBusy = false;
+        _searchFeedback = hits.isEmpty
+            ? 'No places found in Cebu for "$q".'
+            : null;
       });
-    }
-    if (q.contains('food')) {
-      ref.read(activePlaceTypeFilterProvider.notifier).state = 'food';
-      ref.read(activeTravelerMixFilterProvider.notifier).state = null;
-      ref.read(activeZoneFilterProvider.notifier).state = null;
-      return;
-    }
-    if (q.contains('school') || q.contains('uspf') || q.contains('campus')) {
-      ref.read(activePlaceTypeFilterProvider.notifier).state = 'school';
-      ref.read(activeTravelerMixFilterProvider.notifier).state = null;
-      ref.read(activeZoneFilterProvider.notifier).state = null;
-      return;
-    }
-    if (q.contains('local')) {
-      ref.read(activeTravelerMixFilterProvider.notifier).state = 'local';
-      ref.read(activePlaceTypeFilterProvider.notifier).state = null;
-      ref.read(activeZoneFilterProvider.notifier).state = null;
-      return;
-    }
-    if (q.contains('tour') || q.contains('international')) {
-      ref.read(activeTravelerMixFilterProvider.notifier).state =
-          'international';
-      ref.read(activePlaceTypeFilterProvider.notifier).state = null;
-      ref.read(activeZoneFilterProvider.notifier).state = null;
-      return;
-    }
-    if (q.contains('popular') || q.contains('trend')) {
-      ref.read(activeZoneFilterProvider.notifier).state = 'popular_now';
-      return;
-    }
-    ref.read(activeZoneFilterProvider.notifier).state = null;
-  }
-
-  bool _zoneMatchesQuery(ZoneModel zone, String query) {
-    final haystack = <String>[
-      zone.displayName,
-      _zoneTitle(zone),
-      _zoneIdentity(zone),
-      zone.behaviorType,
-      zone.zoneType,
-      zone.summary ?? '',
-      ...zone.topActivities,
-    ].join(' ').toLowerCase();
-    final terms = query.split(RegExp(r'\s+')).where((term) => term.isNotEmpty);
-    return terms.every(haystack.contains);
+    });
   }
 
   Future<void> _submitSearch(List<ZoneModel> zones, {String? rawQuery}) async {
     final query = (rawQuery ?? _searchController.text).trim();
     if (query.isEmpty) {
       setState(() {
-        _searchMatches = const [];
-        _searchFeedback = 'Enter a place or zone name.';
+        _searchHits = const [];
+        _searchFeedback = 'Search a mall, street, landmark, or area.';
       });
       return;
     }
 
-    final normalized = query.toLowerCase();
-    final zoneMatch = zones.cast<ZoneModel?>().firstWhere(
-      (zone) => zone != null && _zoneMatchesQuery(zone, normalized),
-      orElse: () => null,
-    );
-    if (zoneMatch != null) {
-      await _focusZoneFromSearch(zoneMatch);
+    if (_searchHits.isNotEmpty) {
+      await _focusSearchHit(_searchHits.first);
       return;
     }
 
-    final placeMatch =
-        _knownCebuPlaceLookup(query) ?? await _lookupManualPlace(query);
-    if (placeMatch != null) {
-      if (!mounted) return;
-      ref.read(selectedZoneProvider.notifier).state = null;
-      setState(() {
-        _mapMode = ExploreMapMode.discovery;
-        _searchFeedback = 'Moved to "$query".';
-        _searchMatches = const [];
-      });
-      await _moveCameraToLocation(placeMatch, zoom: 15.2);
-      return;
-    }
-
+    setState(() => _searchBusy = true);
+    final hits = await _placeSearch.search(query, zones: zones);
     if (!mounted) return;
-    setState(() {
-      _searchFeedback = 'No matching Cebu zone or place found for "$query".';
-    });
+    setState(() => _searchBusy = false);
+    if (hits.isEmpty) {
+      setState(() {
+        _searchFeedback = 'No places found in Cebu for "$query".';
+        _searchHits = const [];
+      });
+      return;
+    }
+    await _focusSearchHit(hits.first);
   }
 
-  Future<void> _focusZoneFromSearch(ZoneModel zone) async {
-    _selectZone(zone);
-    final center = _zoneCenter(zone);
-    await _moveCameraToLocation(center, zoom: 15.2);
-    if (!mounted) return;
+  Future<void> _focusSearchHit(ExploreSearchHit hit) async {
+    ref.read(mapSearchFocusProvider.notifier).state = hit.location;
+    ref.read(mapSearchPlaceTitleProvider.notifier).state = hit.title;
+    ref.invalidate(currentZoneOverviewProvider);
+
+    if (hit.zone != null) {
+      _selectZone(hit.zone!);
+    } else {
+      ref.read(selectedZoneProvider.notifier).state = null;
+      ref.read(selectedCellProvider.notifier).state = null;
+      setState(() => _mapMode = ExploreMapMode.discovery);
+    }
+
     setState(() {
-      _searchFeedback = 'Showing ${_zoneTitle(zone)}.';
-      _searchMatches = const [];
+      _followUser = false;
+      _searchFeedback = null;
+      _searchHits = const [];
+      _showSearch = false;
     });
+    _searchFocusNode.unfocus();
+
+    await _moveCameraToLocation(hit.location, zoom: 15.4);
+    if (!mounted) return;
+    await _refreshViewportZones();
+  }
+
+  void _clearSearchInsight() {
+    ref.read(mapSearchFocusProvider.notifier).state = null;
+    ref.read(mapSearchPlaceTitleProvider.notifier).state = null;
+    ref.invalidate(currentZoneOverviewProvider);
   }
 
   void _toggleLayerKey(String key) {
@@ -1254,7 +1096,26 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
 
   @override
   Widget build(BuildContext context) {
+    ref.listen<bool>(explorePendingGpsCenterProvider, (prev, next) {
+      if (next != true) return;
+      ref.read(explorePendingGpsCenterProvider.notifier).state = false;
+      _didBootstrapLocation = false;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        unawaited(_bootstrapCurrentLocation(force: true));
+      });
+    });
     ref.listen(ownPendingTagPinsProvider, (prev, next) {
+      if (next.isLoading) return;
+      next.whenData((_) {
+        final zones = ref.read(visibleZonesProvider).valueOrNull ?? [];
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          unawaited(_drawZones(zones));
+        });
+      });
+    });
+    ref.listen(ownVisitPinsProvider, (prev, next) {
       if (next.isLoading) return;
       next.whenData((_) {
         final zones = ref.read(visibleZonesProvider).valueOrNull ?? [];
@@ -1274,6 +1135,17 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
       next.whenData((zones) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (!mounted) return;
+          unawaited(_drawZones(zones));
+        });
+      });
+    });
+    ref.listen<AsyncValue<List<CellModel>>>(visibleCellsProvider, (prev, next) {
+      if (next.isLoading) return;
+      next.whenData((cells) {
+        _latestCells = cells;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          final zones = ref.read(visibleZonesProvider).valueOrNull ?? _latestZones;
           unawaited(_drawZones(zones));
         });
       });
@@ -1301,11 +1173,14 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
     });
 
     final zonesValue = ref.watch(visibleZonesProvider);
+    ref.watch(visibleCellsProvider);
+    ref.watch(selectedCellProvider);
     ref.watch(visiblePlacesProvider);
     ref.watch(layerSettingsProvider);
     ref.watch(ownPendingTagPinsProvider);
+    ref.watch(ownVisitPinsProvider);
     final selectedZone = ref.watch(selectedZoneProvider);
-    final currentUserLocation = ref.watch(currentUserLocationProvider);
+    final searchPlaceTitle = ref.watch(mapSearchPlaceTitleProvider);
     final currentZoneOverview = ref.watch(currentZoneOverviewProvider);
     final zoneDataNotice = ref.watch(zoneDataNoticeProvider);
     final zones = zonesValue.valueOrNull ?? _latestZones;
@@ -1356,13 +1231,18 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
                     },
                     onCameraIdle: _refreshViewportZones,
                     onMapClick: (point, latLng) {
-                      if (_mapMode == ExploreMapMode.navigating) return;
+                      final tap = LatLng(latLng.latitude, latLng.longitude);
+                      final cells = _latestCells;
+                      if (cells.isNotEmpty) {
+                        final cell = _findCellAt(tap, cells);
+                        if (cell != null) {
+                          _handleCellTap(cell);
+                          return;
+                        }
+                      }
                       final zones = _latestZones;
                       if (zones.isEmpty) return;
-                      final selected = _findNearestZone(
-                        LatLng(latLng.latitude, latLng.longitude),
-                        zones,
-                      );
+                      final selected = _findNearestZone(tap, zones);
                       if (selected != null) _handleZoneTap(selected);
                     },
                   ),
@@ -1401,20 +1281,23 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
                       onSearchTap: _toggleSearch,
                       onSearchClose: _toggleSearch,
                       onSearchChanged: (value) =>
-                          _applySearchFilter(value, zones),
+                          _onSearchQueryChanged(value, zones),
                       onSearchSubmitted: () => _submitSearch(zones),
                       onNotificationTap: () {},
                     ),
                     if (_showSearch &&
                         (_searchController.text.trim().isNotEmpty ||
-                            _searchFeedback != null)) ...[
+                            _searchFeedback != null ||
+                            _searchHits.isNotEmpty ||
+                            _searchBusy)) ...[
                       const SizedBox(height: 8),
                       Padding(
                         padding: const EdgeInsets.symmetric(horizontal: 16),
                         child: _SearchResultsCard(
-                          matches: _searchMatches,
+                          hits: _searchHits,
                           feedback: _searchFeedback,
-                          onSelect: _focusZoneFromSearch,
+                          loading: _searchBusy,
+                          onSelect: _focusSearchHit,
                         ),
                       ),
                     ],
@@ -1428,74 +1311,78 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
                       const SizedBox(height: 8),
                       _CacheNoticeBanner(message: zoneDataNotice),
                     ],
-                    const SizedBox(height: 8),
-                    const ExploreMapFilters(),
+                    const SizedBox(height: 6),
+                    ExploreMapFilterBar(
+                      enabledLayerKeys: _enabledLayerKeys,
+                      onToggleLayer: _toggleLayerKey,
+                    ),
                   ],
                 ),
               ),
               Positioned(
-                right: 18,
+                right: 8,
                 bottom: selectedZone != null ? (compact ? 242 : 264) : 152,
                 child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
-                    if (_mapMode == ExploreMapMode.navigating)
-                      _MapFab(
-                        heroTag: 'exit-nav-btn',
-                        icon: Icons.close_rounded,
-                        onPressed: _exitNavigation,
-                      )
-                    else
-                      Column(
-                        children: [
-                          _ZoomControl(
-                            onZoomIn: () => _adjustZoom(1),
-                            onZoomOut: () => _adjustZoom(-1),
+                    _MapFab(
+                      heroTag: 'zoom-in-btn',
+                      icon: Icons.zoom_in_rounded,
+                      onPressed: () => _adjustZoom(1),
+                    ),
+                    const SizedBox(height: 8),
+                    _MapFab(
+                      heroTag: 'zoom-out-btn',
+                      icon: Icons.zoom_out_rounded,
+                      onPressed: () => _adjustZoom(-1),
+                    ),
+                    const SizedBox(height: 8),
+                    _MapFab(
+                      heroTag: 'location-btn',
+                      icon: _followUser
+                          ? Icons.my_location_rounded
+                          : Icons.location_searching_rounded,
+                      onPressed: () {
+                        setState(() => _followUser = true);
+                        final here = ref.read(currentUserLocationProvider);
+                        if (_usingManualLocation &&
+                            here != null &&
+                            _isWithinCebuRegion(here)) {
+                          unawaited(_moveCameraToLocation(here, zoom: 14.5));
+                        } else {
+                          unawaited(_bootstrapCurrentLocation(force: true));
+                        }
+                      },
+                    ),
+                    const SizedBox(height: 8),
+                    _MapFab(
+                      heroTag: 'visit-pin-btn',
+                      icon: Icons.hiking_rounded,
+                      onPressed: () {
+                        final zone = ref.read(selectedZoneProvider);
+                        unawaited(
+                          _markVisitedHere(
+                            label: zone == null ? null : _zoneTitle(zone),
                           ),
-                          const SizedBox(height: 10),
-                          _MapFab(
-                            heroTag: 'location-btn',
-                            icon: _followUser
-                                ? Icons.my_location_rounded
-                                : Icons.location_searching_rounded,
-                            onPressed: () {
-                              setState(() => _followUser = true);
-                              final here = ref.read(currentUserLocationProvider);
-                              if (_usingManualLocation &&
-                                  here != null &&
-                                  _isWithinCebuRegion(here)) {
-                                unawaited(_moveCameraToLocation(here, zoom: 14.5));
-                              } else {
-                                unawaited(
-                                  _bootstrapCurrentLocation(force: true),
-                                );
-                              }
-                            },
-                          ),
-                          const SizedBox(height: 10),
-                          _MapFab(
-                            heroTag: 'layers-btn',
-                            icon: Icons.tune_rounded,
-                            onPressed: () {
-                              setState(
-                                () => _showLayerLegend = !_showLayerLegend,
-                              );
-                            },
-                          ),
-                        ],
-                      ),
+                        );
+                      },
+                    ),
                   ],
                 ),
               ),
-              if (_mapMode != ExploreMapMode.navigating)
+              if (searchPlaceTitle != null &&
+                  searchPlaceTitle.isNotEmpty &&
+                  selectedZone == null)
                 Positioned(
-                  left: 24,
-                  right: 24,
-                  bottom: selectedZone != null
-                      ? (compact ? 298 : 318)
-                      : (compact ? 28 : 34),
-                  child: const SizedBox.shrink(),
+                  left: 16,
+                  right: 16,
+                  bottom: 88,
+                  child: ExploreAreaInsightCard(
+                    placeTitle: searchPlaceTitle,
+                    onClose: _clearSearchInsight,
+                  ),
                 ),
-              if (selectedZone != null || _mapMode == ExploreMapMode.navigating)
+              if (selectedZone != null)
                 Positioned(
                   left: 16,
                   right: 16,
@@ -1503,48 +1390,22 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
                   child: zonesValue.when(
                     data: (zones) {
                       if (zones.isEmpty) {
-                        return const _LoadingZoneCard(message: 'No zones here');
-                      }
-                      final previewZone = selectedZone ?? zones.first;
-                      if (_mapMode == ExploreMapMode.navigating) {
-                        return _NavigationCard(
-                          zone: previewZone,
-                          metrics:
-                              _navigationMetrics ??
-                              _buildNavigationMetrics(
-                                userLocation: currentUserLocation,
-                                targetZone: previewZone,
-                              ),
-                          isFetchingRoute: _isFetchingRoute,
-                          followUser: _followUser,
-                          onToggleFollow: () {
-                            if (_usingManualLocation) {
-                              setState(() {
-                                _usingManualLocation = false;
-                                _followUser = true;
-                              });
-                              _bootstrapCurrentLocation(force: true);
-                              unawaited(
-                                _refreshRoadRoute(previewZone, force: true),
-                              );
-                              return;
-                            }
-                            setState(() => _followUser = !_followUser);
-                          },
-                          onExit: _exitNavigation,
-                          onDetails: () => showModalBottomSheet<void>(
-                            context: context,
-                            isScrollControlled: true,
-                            backgroundColor: Colors.transparent,
-                            barrierColor: Colors.black.withValues(alpha: 0.35),
-                            builder: (_) => const ZoneDetailSheet(),
-                          ),
+                        final hasFilters =
+                            ref.read(activeTravelerMixFilterProvider) != null ||
+                            ref.read(activePlaceTypeFilterProvider) != null ||
+                            ref.read(activeZoneFilterProvider) != null;
+                        return _LoadingZoneCard(
+                          message: hasFilters
+                              ? 'No zones match these filters here. Clear filters or pan to IT Park, Colon, or Ayala.'
+                              : 'No zones in this view. Pan to a tagged area or run backend seed (see README).',
                         );
                       }
+                      final previewZone = selectedZone;
                       return _SelectedZoneCard(
                         zone: previewZone,
                         onClose: _clearSelectedZone,
-                        onDirections: () => _startNavigation(previewZone),
+                        onDirections: () =>
+                            unawaited(_openGoogleMapsNavigation(previewZone)),
                         onDetails: () {
                           _selectZone(previewZone);
                           showModalBottomSheet<void>(
@@ -1564,131 +1425,12 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
                     ),
                   ),
                 ),
-              Positioned(
-                right: 18,
-                bottom: selectedZone != null ? (compact ? 358 : 386) : 254,
-                child: AnimatedOpacity(
-                  opacity: _showLayerLegend ? 1 : 0,
-                  duration: const Duration(milliseconds: 180),
-                  child: IgnorePointer(
-                    ignoring: !_showLayerLegend,
-                    child: _ZoneLegendPanel(
-                      expanded: true,
-                      enabledKeys: _enabledLayerKeys,
-                      onToggleExpanded: () {
-                        setState(() => _showLayerLegend = false);
-                      },
-                      onToggleLayer: _toggleLayerKey,
-                    ),
-                  ),
-                ),
-              ),
             ],
           );
         },
       ),
     );
   }
-}
-
-_NavigationMetrics _buildNavigationMetrics({
-  required LatLng? userLocation,
-  required ZoneModel targetZone,
-}) {
-  if (userLocation == null) {
-    return const _NavigationMetrics(
-      distanceText: 'Locating...',
-      etaText: '--',
-      nextStep: 'Getting your live location',
-      routeStatus: 'Preparing route',
-    );
-  }
-  final target = LatLng(targetZone.centroidLat, targetZone.centroidLng);
-  final meters = Geolocator.distanceBetween(
-    userLocation.latitude,
-    userLocation.longitude,
-    target.latitude,
-    target.longitude,
-  );
-  final distanceText = meters >= 1000
-      ? '${(meters / 1000).toStringAsFixed(1)} km'
-      : '${meters.round()} m';
-  final etaMinutes = (meters / 78).ceil().clamp(1, 120);
-  final heading = _directionFromBearing(
-    _bearingDegrees(
-      userLocation.latitude,
-      userLocation.longitude,
-      target.latitude,
-      target.longitude,
-    ),
-  );
-  return _NavigationMetrics(
-    distanceText: distanceText,
-    etaText: '$etaMinutes min',
-    nextStep: 'Head $heading toward ${_zoneTitle(targetZone)}',
-    routeStatus: 'Direct preview until road route loads',
-  );
-}
-
-String _formatDistance(double meters) {
-  if (meters <= 0) return '--';
-  return meters >= 1000
-      ? '${(meters / 1000).toStringAsFixed(1)} km'
-      : '${meters.round()} m';
-}
-
-String _formatDuration(double seconds) {
-  if (seconds <= 0) return '--';
-  final minutes = (seconds / 60).ceil().clamp(1, 240);
-  if (minutes >= 60) {
-    final hours = minutes ~/ 60;
-    final remainder = minutes % 60;
-    return remainder == 0 ? '${hours}h' : '${hours}h ${remainder}m';
-  }
-  return '$minutes min';
-}
-
-String _routeNextStep(Map route, ZoneModel zone) {
-  final legs = route['legs'];
-  if (legs is! List || legs.isEmpty || legs.first is! Map) {
-    return 'Follow fastest road route to ${_zoneTitle(zone)}';
-  }
-  final steps = (legs.first as Map)['steps'];
-  if (steps is! List || steps.isEmpty || steps.first is! Map) {
-    return 'Follow fastest road route to ${_zoneTitle(zone)}';
-  }
-  final firstStep = steps.first as Map;
-  final name = (firstStep['name'] ?? '').toString().trim();
-  final maneuver = firstStep['maneuver'];
-  final modifier = maneuver is Map
-      ? (maneuver['modifier'] ?? '').toString()
-      : '';
-  if (name.isNotEmpty && modifier.isNotEmpty) return 'Head $modifier on $name';
-  if (name.isNotEmpty) return 'Continue on $name';
-  return 'Follow fastest road route to ${_zoneTitle(zone)}';
-}
-
-double _bearingDegrees(double lat1, double lon1, double lat2, double lon2) {
-  final dLon = (lon2 - lon1) * 0.017453292519943295;
-  final rLat1 = lat1 * 0.017453292519943295;
-  final rLat2 = lat2 * 0.017453292519943295;
-  final y = math.sin(dLon) * math.cos(rLat2);
-  final x =
-      math.cos(rLat1) * math.sin(rLat2) -
-      math.sin(rLat1) * math.cos(rLat2) * math.cos(dLon);
-  final brng = math.atan2(y, x) * 57.29577951308232;
-  return (brng + 360) % 360;
-}
-
-String _directionFromBearing(double bearing) {
-  if (bearing < 22.5 || bearing >= 337.5) return 'north';
-  if (bearing < 67.5) return 'north-east';
-  if (bearing < 112.5) return 'east';
-  if (bearing < 157.5) return 'south-east';
-  if (bearing < 202.5) return 'south';
-  if (bearing < 247.5) return 'south-west';
-  if (bearing < 292.5) return 'west';
-  return 'north-west';
 }
 
 String _shortError(Object error) {
@@ -1708,9 +1450,6 @@ double _zoneFillOpacity({
 }) {
   if (lifecycle == 'decaying') {
     return selected ? 0.18 : 0.12;
-  }
-  if (mode == ExploreMapMode.navigating) {
-    return selected ? 0.20 : 0.18;
   }
   if (selected) {
     return 0.30;
@@ -1760,6 +1499,16 @@ double _zoneLifecycleLineOpacity(String lifecycle) {
   return 0.42;
 }
 
+String _cellLayerKey(CellModel cell) {
+  return switch (cell.travelerMix) {
+    'local' => 'local',
+    'international' => 'international',
+    _ => 'mixed',
+  };
+}
+
+Color _cellColor(CellModel cell) => TravelerGradient.colorForCell(cell);
+
 String _zoneLayerKey(ZoneModel zone) {
   return switch (zone.travelerMix) {
     'local' => 'local',
@@ -1768,13 +1517,7 @@ String _zoneLayerKey(ZoneModel zone) {
   };
 }
 
-Color _streetZoneColor(ZoneModel zone) {
-  return switch (_zoneLayerKey(zone)) {
-    'local' => AppColors.travelerLocal,
-    'international' => AppColors.travelerInternational,
-    _ => AppColors.travelerMixed,
-  };
-}
+Color _streetZoneColor(ZoneModel zone) => TravelerGradient.colorForZone(zone);
 
 String _zoneSubtitle(ZoneModel zone) {
   if (zone.reportCount >= 45) return 'Busy now';
@@ -1816,23 +1559,12 @@ String _hexFromColor(Color color) {
 }
 
 _ZonePalette _zonePalette(ZoneModel zone) {
-  return switch (zone.travelerMix) {
-    'local' => const _ZonePalette(
-      fill: AppColors.localFill,
-      border: AppColors.travelerLocal,
-      accent: AppColors.localAccent,
-    ),
-    'international' => const _ZonePalette(
-      fill: AppColors.touristFill,
-      border: AppColors.travelerInternational,
-      accent: AppColors.touristAccent,
-    ),
-    _ => const _ZonePalette(
-      fill: AppColors.mixedFill,
-      border: AppColors.travelerMixed,
-      accent: AppColors.mixedAccent,
-    ),
-  };
+  final ratio = TravelerGradient.localRatioForZone(zone);
+  return _ZonePalette(
+    fill: TravelerGradient.fillForRatio(ratio),
+    border: TravelerGradient.colorForRatio(ratio),
+    accent: TravelerGradient.colorForRatio(ratio),
+  );
 }
 
 class _ZonePalette {
@@ -2028,7 +1760,7 @@ class _MapTopBar extends StatelessWidget {
                       onChanged: onSearchChanged,
                       onSubmitted: (_) => onSearchSubmitted(),
                       decoration: InputDecoration(
-                        hintText: 'Search Cebu (IT Park, USPF, food…)',
+                        hintText: 'Mall, street, landmark, building…',
                         hintStyle: const TextStyle(
                           color: AppColors.mutedText,
                           fontSize: 13,
@@ -2086,8 +1818,8 @@ class _MapTopBar extends StatelessWidget {
                           Expanded(
                             child: Text(
                               zoneCount == null
-                                  ? 'Search places or zones…'
-                                  : 'Search $zoneCount zones',
+                                  ? 'Search Cebu places…'
+                                  : 'Search places & zones',
                               style: const TextStyle(
                                 color: AppColors.mutedText,
                                 fontSize: 13,
@@ -2168,21 +1900,24 @@ class _TopIconButton extends StatelessWidget {
 
 class _SearchResultsCard extends StatelessWidget {
   const _SearchResultsCard({
-    required this.matches,
+    required this.hits,
     required this.feedback,
+    required this.loading,
     required this.onSelect,
   });
 
-  final List<ZoneModel> matches;
+  final List<ExploreSearchHit> hits;
   final String? feedback;
-  final Future<void> Function(ZoneModel zone) onSelect;
+  final bool loading;
+  final Future<void> Function(ExploreSearchHit hit) onSelect;
 
   @override
   Widget build(BuildContext context) {
-    if (matches.isEmpty && feedback == null) {
+    if (hits.isEmpty && feedback == null && !loading) {
       return const SizedBox.shrink();
     }
     return Container(
+      constraints: const BoxConstraints(maxHeight: 280),
       decoration: BoxDecoration(
         color: Colors.white.withValues(alpha: 0.97),
         borderRadius: BorderRadius.circular(18),
@@ -2198,7 +1933,29 @@ class _SearchResultsCard extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          if (feedback != null)
+          if (loading)
+            const Padding(
+              padding: EdgeInsets.all(14),
+              child: Row(
+                children: [
+                  SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                  SizedBox(width: 10),
+                  Text(
+                    'Searching Cebu…',
+                    style: TextStyle(
+                      color: AppColors.mutedText,
+                      fontWeight: FontWeight.w700,
+                      fontSize: 12,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          if (feedback != null && hits.isEmpty && !loading)
             Padding(
               padding: const EdgeInsets.fromLTRB(14, 12, 14, 6),
               child: Align(
@@ -2213,92 +1970,52 @@ class _SearchResultsCard extends StatelessWidget {
                 ),
               ),
             ),
-          if (matches.isNotEmpty)
-            ...matches.map(
-              (zone) => ListTile(
-                dense: true,
-                leading: Icon(
-                  _zoneIcon(zone),
-                  color: _streetZoneColor(zone),
-                  size: 18,
-                ),
-                title: Text(
-                  _zoneTitle(zone),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontWeight: FontWeight.w800),
-                ),
-                subtitle: Text(
-                  _zoneIdentity(zone),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                onTap: () => onSelect(zone),
+          if (hits.isNotEmpty)
+            Flexible(
+              child: ListView.separated(
+                shrinkWrap: true,
+                padding: const EdgeInsets.only(bottom: 6),
+                itemCount: hits.length,
+                separatorBuilder: (_, _) => const Divider(height: 1),
+                itemBuilder: (context, index) {
+                  final hit = hits[index];
+                  final color = hit.localRatio != null
+                      ? TravelerGradient.colorForRatio(hit.localRatio!)
+                      : AppColors.mutedText;
+                  return ListTile(
+                    dense: true,
+                    leading: Icon(
+                      _hitIcon(hit.kind),
+                      color: color,
+                      size: 20,
+                    ),
+                    title: Text(
+                      hit.title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontWeight: FontWeight.w800),
+                    ),
+                    subtitle: Text(
+                      hit.subtitle,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    onTap: () => onSelect(hit),
+                  );
+                },
               ),
             ),
         ],
       ),
     );
   }
-}
 
-class _LifecycleLegendItem extends StatelessWidget {
-  const _LifecycleLegendItem({
-    required this.color,
-    required this.title,
-    required this.detail,
-    this.opacity = 1,
-  });
-
-  final Color color;
-  final String title;
-  final String detail;
-  final double opacity;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 7),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            width: 18,
-            height: 18,
-            margin: const EdgeInsets.only(top: 2),
-            decoration: BoxDecoration(
-              color: color.withValues(alpha: opacity),
-              borderRadius: BorderRadius.circular(5),
-              border: Border.all(color: color, width: 1.4),
-            ),
-          ),
-          const SizedBox(width: 9),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  style: const TextStyle(
-                    color: AppColors.primaryText,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w900,
-                  ),
-                ),
-                Text(
-                  detail,
-                  style: const TextStyle(
-                    color: AppColors.mutedText,
-                    fontSize: 10,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
+  static IconData _hitIcon(ExploreSearchHitKind kind) {
+    return switch (kind) {
+      ExploreSearchHitKind.zone => Icons.hexagon_outlined,
+      ExploreSearchHitKind.landmark => Icons.place_outlined,
+      ExploreSearchHitKind.address => Icons.signpost_outlined,
+    };
   }
 }
 
@@ -2460,8 +2177,8 @@ class _SelectedZoneCard extends StatelessWidget {
                 Expanded(
                   child: OutlinedButton.icon(
                     onPressed: onDirections,
-                    icon: const Icon(Icons.near_me_outlined, size: 18),
-                    label: const Text('Directions'),
+                    icon: const Icon(Icons.map_outlined, size: 18),
+                    label: const Text('Google Maps'),
                   ),
                 ),
               ],
@@ -2619,151 +2336,6 @@ class _ValidationPill extends StatelessWidget {
   }
 }
 
-class _NavigationCard extends StatelessWidget {
-  const _NavigationCard({
-    required this.zone,
-    required this.metrics,
-    required this.isFetchingRoute,
-    required this.followUser,
-    required this.onToggleFollow,
-    required this.onExit,
-    required this.onDetails,
-  });
-
-  final ZoneModel zone;
-  final _NavigationMetrics metrics;
-  final bool isFetchingRoute;
-  final bool followUser;
-  final VoidCallback onToggleFollow;
-  final VoidCallback onExit;
-  final VoidCallback onDetails;
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = _zonePalette(zone);
-    return Container(
-      padding: const EdgeInsets.fromLTRB(16, 14, 12, 14),
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.98),
-        borderRadius: BorderRadius.circular(26),
-        border: Border.all(color: Colors.white),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x260F172A),
-            blurRadius: 26,
-            offset: Offset(0, 12),
-          ),
-        ],
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 48,
-            height: 48,
-            decoration: BoxDecoration(
-              color: AppColors.primaryAction,
-              borderRadius: BorderRadius.circular(18),
-            ),
-            child: const Icon(
-              Icons.navigation_rounded,
-              color: Colors.white,
-              size: 25,
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  'Navigating to ${_zoneTitle(zone)}',
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: AppColors.primaryText,
-                    fontWeight: FontWeight.w900,
-                    fontSize: 16,
-                  ),
-                ),
-                const SizedBox(height: 3),
-                Text(
-                  '${_zoneIdentity(zone)} • ${metrics.routeStatus}',
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: palette.accent,
-                    fontWeight: FontWeight.w800,
-                    fontSize: 12,
-                  ),
-                ),
-                const SizedBox(height: 3),
-                Text(
-                  '${metrics.distanceText} • ${metrics.etaText}',
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: AppColors.primaryText,
-                    fontWeight: FontWeight.w900,
-                    fontSize: 12,
-                  ),
-                ),
-                const SizedBox(height: 1),
-                Text(
-                  metrics.nextStep,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: AppColors.mutedText,
-                    fontWeight: FontWeight.w700,
-                    fontSize: 11,
-                  ),
-                ),
-                if (isFetchingRoute) ...[
-                  const SizedBox(height: 5),
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(999),
-                    child: const LinearProgressIndicator(minHeight: 3),
-                  ),
-                ],
-              ],
-            ),
-          ),
-          IconButton(
-            tooltip: followUser ? 'Disable follow mode' : 'Enable follow mode',
-            onPressed: onToggleFollow,
-            icon: Icon(
-              followUser
-                  ? Icons.gps_fixed_rounded
-                  : Icons.gps_not_fixed_rounded,
-            ),
-          ),
-          IconButton(
-            tooltip: 'Details',
-            onPressed: onDetails,
-            icon: const Icon(Icons.info_outline_rounded),
-          ),
-          IconButton(
-            tooltip: 'Exit navigation',
-            onPressed: onExit,
-            icon: const Icon(Icons.close_rounded),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _NavigationMetrics {
-  const _NavigationMetrics({
-    required this.distanceText,
-    required this.etaText,
-    required this.nextStep,
-    required this.routeStatus,
-  });
-
-  final String distanceText;
-  final String etaText;
-  final String nextStep;
-  final String routeStatus;
-}
-
 class _MetricCell extends StatelessWidget {
   const _MetricCell({
     required this.icon,
@@ -2880,158 +2452,6 @@ class _LoadingZoneCard extends StatelessWidget {
   }
 }
 
-class _ZoneLegendPanel extends StatelessWidget {
-  const _ZoneLegendPanel({
-    required this.expanded,
-    required this.enabledKeys,
-    required this.onToggleExpanded,
-    required this.onToggleLayer,
-  });
-
-  final bool expanded;
-  final Set<String> enabledKeys;
-  final VoidCallback onToggleExpanded;
-  final ValueChanged<String> onToggleLayer;
-
-  static const _items = <({String key, String label, Color color})>[
-    (key: 'local', label: 'Local', color: AppColors.localAccent),
-    (
-      key: 'international',
-      label: 'International',
-      color: AppColors.touristAccent,
-    ),
-    (key: 'mixed', label: 'Mixed', color: AppColors.mixedAccent),
-    (key: 'commercial', label: 'Commercial', color: AppColors.commercialAccent),
-    (key: 'food', label: 'Food', color: AppColors.foodAccent),
-    (key: 'transport', label: 'Transport', color: AppColors.transportAccent),
-    (key: 'school', label: 'School', color: AppColors.studentAccent),
-    (key: 'tourist', label: 'Tourist', color: AppColors.touristAccent),
-    (key: 'safety', label: 'Safety', color: AppColors.safetyAccent),
-    (key: 'hotel', label: 'Hotel', color: AppColors.zoneCommercial),
-  ];
-
-  @override
-  Widget build(BuildContext context) {
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 180),
-      padding: const EdgeInsets.all(10),
-      constraints: BoxConstraints(maxWidth: expanded ? 250 : 52),
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.95),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppColors.border),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x120F172A),
-            blurRadius: 16,
-            offset: Offset(0, 8),
-          ),
-        ],
-      ),
-      child: expanded
-          ? Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Row(
-                  children: [
-                    const Text(
-                      'Zone Layers',
-                      style: TextStyle(
-                        color: AppColors.primaryText,
-                        fontWeight: FontWeight.w800,
-                        fontSize: 12,
-                      ),
-                    ),
-                    const Spacer(),
-                    InkWell(
-                      onTap: onToggleExpanded,
-                      borderRadius: BorderRadius.circular(999),
-                      child: const Padding(
-                        padding: EdgeInsets.all(2),
-                        child: Icon(
-                          Icons.close_rounded,
-                          size: 16,
-                          color: AppColors.mutedText,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                Wrap(
-                  spacing: 6,
-                  runSpacing: 6,
-                  children: _items.map((item) {
-                    final active = enabledKeys.contains(item.key);
-                    return FilterChip(
-                      selected: active,
-                      onSelected: (_) => onToggleLayer(item.key),
-                      label: Text(item.label),
-                      side: BorderSide(
-                        color: active ? item.color : AppColors.border,
-                      ),
-                      selectedColor: item.color.withValues(alpha: 0.12),
-                      checkmarkColor: item.color,
-                      labelStyle: TextStyle(
-                        color: active ? item.color : AppColors.secondaryText,
-                        fontWeight: FontWeight.w700,
-                        fontSize: 11,
-                      ),
-                      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    );
-                  }).toList(),
-                ),
-                const Divider(height: 18),
-                const Text(
-                  'Lifecycle',
-                  style: TextStyle(
-                    color: AppColors.primaryText,
-                    fontWeight: FontWeight.w800,
-                    fontSize: 12,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                const _LifecycleLegendItem(
-                  color: Color(0xFFCBD5E1),
-                  title: 'Emerging / low confidence',
-                  detail: 'Few matching signals',
-                  opacity: 0.45,
-                ),
-                const _LifecycleLegendItem(
-                  color: Color(0xFF22C55E),
-                  title: 'Validated zone',
-                  detail: 'Consensus threshold met',
-                ),
-                const _LifecycleLegendItem(
-                  color: AppColors.safetyAccent,
-                  title: 'Safety concern',
-                  detail: 'Recent caution tags',
-                ),
-                const _LifecycleLegendItem(
-                  color: Color(0xFF94A3B8),
-                  title: 'Decaying / old signal',
-                  detail: 'Fading confidence',
-                  opacity: 0.35,
-                ),
-              ],
-            )
-          : InkWell(
-              onTap: onToggleExpanded,
-              borderRadius: BorderRadius.circular(12),
-              child: const SizedBox(
-                width: 32,
-                height: 32,
-                child: Icon(
-                  Icons.layers_outlined,
-                  color: AppColors.primaryText,
-                ),
-              ),
-            ),
-    );
-  }
-}
-
 class _MapFab extends StatelessWidget {
   const _MapFab({
     required this.heroTag,
@@ -3046,79 +2466,14 @@ class _MapFab extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return SizedBox(
-      width: 56,
-      height: 56,
+      width: 48,
+      height: 48,
       child: FloatingActionButton(
         heroTag: heroTag,
-        elevation: 6,
+        elevation: 4,
         backgroundColor: Colors.white.withValues(alpha: 0.96),
         onPressed: onPressed,
-        child: Icon(icon, color: const Color(0xFF2563EB), size: 24),
-      ),
-    );
-  }
-}
-
-class _ZoomControl extends StatelessWidget {
-  const _ZoomControl({required this.onZoomIn, required this.onZoomOut});
-
-  final VoidCallback onZoomIn;
-  final VoidCallback onZoomOut;
-
-  @override
-  Widget build(BuildContext context) {
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.96),
-        borderRadius: BorderRadius.circular(18),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x140F172A),
-            blurRadius: 14,
-            offset: Offset(0, 6),
-          ),
-        ],
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          _ZoomButton(label: '+', onTap: onZoomIn),
-          Container(width: 26, height: 1, color: const Color(0xFFE2E8F0)),
-          _ZoomButton(label: '-', onTap: onZoomOut),
-        ],
-      ),
-    );
-  }
-}
-
-class _ZoomButton extends StatelessWidget {
-  const _ZoomButton({required this.label, required this.onTap});
-
-  final String label;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(18),
-        onTap: onTap,
-        child: SizedBox(
-          width: 42,
-          height: 38,
-          child: Center(
-            child: Text(
-              label,
-              style: const TextStyle(
-                color: Color(0xFF2563EB),
-                fontSize: 24,
-                fontWeight: FontWeight.w900,
-                height: 1,
-              ),
-            ),
-          ),
-        ),
+        child: Icon(icon, color: const Color(0xFF2563EB), size: 22),
       ),
     );
   }

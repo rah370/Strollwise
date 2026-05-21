@@ -7,9 +7,12 @@ import 'package:go_router/go_router.dart';
 import 'package:maplibre_gl/maplibre_gl.dart';
 
 import '../../../app/theme/colors.dart';
+import '../../../shared/data/origin_locations.dart';
 import '../../../shared/location/cebu_place_geocode.dart';
+import '../../../shared/widgets/origin_location_picker.dart';
 import '../../../shared/models/report.dart';
 import '../../../shared/models/user_contributions.dart';
+import '../../../shared/models/visit_pin.dart';
 import '../../../shared/models/user_me.dart';
 import '../../../shared/models/zone.dart';
 import '../../../shared/network/api_client.dart';
@@ -36,11 +39,23 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     });
   }
 
+  void _openVisitOnMap(VisitPinModel pin) {
+    final location = LatLng(pin.latitude, pin.longitude);
+    ref.read(selectedZoneProvider.notifier).state = null;
+    ref.read(mapSearchFocusProvider.notifier).state = location;
+    ref.read(mapSearchPlaceTitleProvider.notifier).state =
+        pin.label ?? 'Visited spot';
+    ref.read(exploreFocusLocationProvider.notifier).state = location;
+    ref.invalidate(currentZoneOverviewProvider);
+    context.go('/explore');
+  }
+
   Future<void> _refreshProfileData() async {
     final token = ref.read(authTokenProvider);
     if (token == null || token == 'demo-token-local') return;
     ref.invalidate(userMeProvider);
     ref.invalidate(savedZonesProfileProvider);
+    ref.invalidate(ownVisitHistoryProvider);
     await ref.read(userContributionsProvider.notifier).refresh();
     try {
       await ref.read(userMeProvider.future);
@@ -189,6 +204,17 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                       ),
                       const SizedBox(height: 14),
                       _ProfileSectionCard(
+                        icon: Icons.hiking_rounded,
+                        title: 'Places you\'ve been',
+                        subtitle:
+                            'Private pins only you see — add tags to grow this map',
+                        child: _VisitHistoryList(
+                          visits: ref.watch(ownVisitHistoryProvider),
+                          onOpenVisit: _openVisitOnMap,
+                        ),
+                      ),
+                      const SizedBox(height: 14),
+                      _ProfileSectionCard(
                         icon: Icons.visibility_outlined,
                         title: 'Privacy',
                         subtitle: 'How your tags appear on the map',
@@ -258,10 +284,10 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
       );
       return;
     }
-    if (result.country.trim().isEmpty || result.city.trim().isEmpty) {
+    if (!OriginLocationCatalog.isValidPair(result.country, result.city)) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Country and city of origin are required.'),
+          content: Text('Choose a valid country and city from the lists.'),
         ),
       );
       return;
@@ -557,24 +583,26 @@ class _EditProfileDialogState extends State<_EditProfileDialog> {
   ];
 
   late final TextEditingController _nameController;
-  late final TextEditingController _countryController;
-  late final TextEditingController _cityController;
+  late String _country;
+  late String _city;
   late String _userType;
 
   @override
   void initState() {
     super.initState();
     _nameController = TextEditingController(text: widget.initialName);
-    _countryController = TextEditingController(text: widget.initialCountry);
-    _cityController = TextEditingController(text: widget.initialCity);
+    final resolved = OriginLocationCatalog.resolveSelection(
+      country: widget.initialCountry,
+      city: widget.initialCity,
+    );
+    _country = resolved.country;
+    _city = resolved.city;
     _userType = widget.initialUserType;
   }
 
   @override
   void dispose() {
     _nameController.dispose();
-    _countryController.dispose();
-    _cityController.dispose();
     super.dispose();
   }
 
@@ -597,20 +625,12 @@ class _EditProfileDialogState extends State<_EditProfileDialog> {
               ),
             ),
             const SizedBox(height: 12),
-            TextField(
-              controller: _countryController,
-              textCapitalization: TextCapitalization.words,
-              decoration: const InputDecoration(
-                labelText: 'Country of origin',
-              ),
-            ),
-            const SizedBox(height: 10),
-            TextField(
-              controller: _cityController,
-              textCapitalization: TextCapitalization.words,
-              decoration: const InputDecoration(
-                labelText: 'City of origin',
-              ),
+            OriginLocationPicker(
+              dense: true,
+              country: _country,
+              city: _city,
+              onCountryChanged: (value) => setState(() => _country = value),
+              onCityChanged: (value) => setState(() => _city = value),
             ),
             const SizedBox(height: 10),
             DropdownButtonFormField<String>(
@@ -642,8 +662,8 @@ class _EditProfileDialogState extends State<_EditProfileDialog> {
           onPressed: () => Navigator.of(context).pop(
             _ProfileEditResult(
               displayName: _nameController.text,
-              country: _countryController.text,
-              city: _cityController.text,
+              country: _country,
+              city: _city,
               userType: _userType,
             ),
           ),
@@ -1308,6 +1328,134 @@ class _BadgesWrap extends StatelessWidget {
         );
       }).toList(),
     );
+  }
+}
+
+class _VisitHistoryList extends StatelessWidget {
+  const _VisitHistoryList({
+    required this.visits,
+    required this.onOpenVisit,
+  });
+
+  final AsyncValue<List<VisitPinModel>> visits;
+  final void Function(VisitPinModel pin) onOpenVisit;
+
+  @override
+  Widget build(BuildContext context) {
+    return visits.when(
+      loading: () => const Center(
+        child: Padding(
+          padding: EdgeInsets.symmetric(vertical: 12),
+          child: CircularProgressIndicator(strokeWidth: 2),
+        ),
+      ),
+      error: (_, _) => const Text(
+        'Could not load your visit map.',
+        style: TextStyle(
+          color: AppColors.mutedText,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+      data: (pins) {
+        if (pins.isEmpty) {
+          return const Text(
+            'No visits saved yet. On Explore, tap the hiking icon to mark where you\'ve been, or add a tag — each tag adds a private pin only you see.',
+            style: TextStyle(
+              color: AppColors.mutedText,
+              fontWeight: FontWeight.w700,
+              height: 1.35,
+            ),
+          );
+        }
+        return Column(
+          children: [
+            for (var i = 0; i < pins.length; i++) ...[
+              _VisitHistoryRow(
+                pin: pins[i],
+                onTap: () => onOpenVisit(pins[i]),
+              ),
+              if (i < pins.length - 1)
+                const Divider(height: 16, color: AppColors.border),
+            ],
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _VisitHistoryRow extends StatelessWidget {
+  const _VisitHistoryRow({
+    required this.pin,
+    required this.onTap,
+  });
+
+  final VisitPinModel pin;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final label = pin.label ?? 'Visited spot';
+    final when = _formatVisitDate(pin.lastVisitedAt);
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(12),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 4),
+          child: Row(
+            children: [
+              const Text('🧦', style: TextStyle(fontSize: 22)),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      label,
+                      style: const TextStyle(
+                        color: AppColors.primaryText,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      pin.visitCount > 1
+                          ? '$when · ${pin.visitCount} visits'
+                          : when,
+                      style: const TextStyle(
+                        color: AppColors.mutedText,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    const Text(
+                      'View on map',
+                      style: TextStyle(
+                        color: AppColors.secondaryAction,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const Icon(
+                Icons.chevron_right_rounded,
+                color: AppColors.mutedText,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  String _formatVisitDate(DateTime dt) {
+    final local = dt.toLocal();
+    return '${local.month}/${local.day}/${local.year}';
   }
 }
 

@@ -22,7 +22,7 @@ class AppColors {
 
   static const travelerLocal = Color(0xFF22C55E);
   static const travelerInternational = Color(0xFF3B82F6);
-  static const travelerMixed = Color(0xFF14B8A6);
+  static const travelerMixed = Color(0xFF2FB7C8);
 
   static const localFill = Color(0xFFDDF5E8);
   static const localAccent = Color(0xFF15803D);

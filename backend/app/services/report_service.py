@@ -22,6 +22,7 @@ from app.services import h3_service
 from app.services.aggregation_service import AggregationService
 from app.services.audit_service import AuditService
 from app.services.place_service import PlaceService
+from app.services.visit_pin_service import VisitPinService
 from app.services.zone_merge_service import ZoneMergeService
 from app.utils.user_type_utils import traveler_type_from_user_type
 
@@ -171,6 +172,18 @@ class ReportService:
         self.db.add(user)
         self.db.commit()
         self.db.refresh(report)
+        try:
+            label = self._visit_label_from_payload(payload)
+            VisitPinService(self.db).record_visit(
+                user,
+                payload.latitude,
+                payload.longitude,
+                label=label,
+                source="tag",
+                report_id=report.id,
+            )
+        except Exception:
+            log.exception("Failed to record private visit pin for report %s", report.id)
         self._write_pending_cache(h3_index)
         cache_delete_pattern("zones:feed*")
         aggregation = self._build_aggregation_feedback(h3_index, report.category)
@@ -188,6 +201,12 @@ class ReportService:
         return ReportSubmissionResult(report=report, aggregation=aggregation)
 
     # --- helpers ---------------------------------------------------------
+
+    @staticmethod
+    def _visit_label_from_payload(payload: ReportCreate) -> str | None:
+        if payload.tags:
+            return payload.tags[0].strip().title()
+        return payload.category.replace("_", " ").title()
 
     @staticmethod
     def _validate(payload: ReportCreate) -> None:

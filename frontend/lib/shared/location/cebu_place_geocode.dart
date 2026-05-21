@@ -2,6 +2,8 @@ import 'package:dio/dio.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:maplibre_gl/maplibre_gl.dart';
 
+import '../traveler_gradient.dart';
+
 const double cebuServiceAreaRadiusM = 120000;
 const LatLng cebuServiceAreaCenter = LatLng(10.3157, 123.8854);
 
@@ -41,7 +43,26 @@ const Map<String, LatLng> cebuKnownPlaces = {
   'jy square lahug': LatLng(10.3359, 123.9023),
   'jy': LatLng(10.3359, 123.9023),
   'cebu doctors': LatLng(10.3099, 123.8916),
+  'winland tower': LatLng(10.31873, 123.89346),
+  'winland': LatLng(10.31873, 123.89346),
+  'landmark premier': LatLng(10.3170, 123.9050),
+  'robinsons galleria': LatLng(10.3170, 123.9170),
 };
+
+/// Cebu metro viewbox for Nominatim (west,south,east,north).
+const _nominatimViewbox = '123.70,10.15,124.15,10.50';
+
+class CebuPlaceSearchHit {
+  const CebuPlaceSearchHit({
+    required this.title,
+    required this.subtitle,
+    required this.location,
+  });
+
+  final String title;
+  final String subtitle;
+  final LatLng location;
+}
 
 bool cebuPlaceWithinServiceArea(LatLng location) {
   return Geolocator.distanceBetween(
@@ -65,38 +86,138 @@ LatLng? lookupCebuPlaceLocal(String query) {
   return null;
 }
 
+/// Search malls, streets, landmarks, and buildings in greater Cebu.
+Future<List<CebuPlaceSearchHit>> searchCebuPlaces(
+  Dio dio,
+  String rawQuery, {
+  int maxResults = 8,
+}) async {
+  final query = rawQuery.trim();
+  if (query.length < 2) return const [];
+
+  final q = query.toLowerCase();
+  final seen = <String>{};
+  final hits = <CebuPlaceSearchHit>[];
+
+  void add(CebuPlaceSearchHit hit) {
+    if (hits.length >= maxResults) return;
+    final key = '${hit.location.latitude.toStringAsFixed(5)}-'
+        '${hit.location.longitude.toStringAsFixed(5)}';
+    if (!seen.add(key)) return;
+    hits.add(hit);
+  }
+
+  for (final place in cebuKnownPlaces.entries) {
+    if (!_matchesQuery(place.key, q)) continue;
+    add(
+      CebuPlaceSearchHit(
+        title: _titleCase(place.key),
+        subtitle: 'Cebu landmark',
+        location: place.value,
+      ),
+    );
+  }
+
+  await ZoneCatalog.ensureLoaded();
+  for (final entry in ZoneCatalog.entries) {
+    final hay = '${entry.zoneName} ${entry.city}'.toLowerCase();
+    if (!_matchesQuery(hay, q)) continue;
+    add(
+      CebuPlaceSearchHit(
+        title: entry.zoneName,
+        subtitle: '${entry.city} · ${TravelerGradient.dominanceLabel(entry.defaultLocalRatio)}',
+        location: LatLng(entry.centerLat, entry.centerLng),
+      ),
+    );
+  }
+
+  final remote = await _nominatimHits(dio, query, limit: maxResults - hits.length);
+  for (final hit in remote) {
+    add(hit);
+  }
+
+  return hits;
+}
+
 /// Resolves a free-text place (street, mall, landmark) inside greater Cebu.
 Future<LatLng?> geocodeCebuPlace(Dio dio, String query) async {
-  final local = lookupCebuPlaceLocal(query);
-  if (local != null) return local;
+  final hits = await searchCebuPlaces(dio, query, maxResults: 1);
+  return hits.isEmpty ? null : hits.first.location;
+}
+
+Future<List<CebuPlaceSearchHit>> _nominatimHits(
+  Dio dio,
+  String query, {
+  required int limit,
+}) async {
+  if (limit <= 0) return const [];
   try {
     final response = await dio.getUri(
       Uri.https('nominatim.openstreetmap.org', '/search', {
         'format': 'json',
-        'limit': '8',
-        'addressdetails': '0',
+        'limit': limit.clamp(1, 8).toString(),
+        'addressdetails': '1',
         'countrycodes': 'ph',
+        'viewbox': _nominatimViewbox,
+        'bounded': '0',
         'q': '$query, Cebu, Philippines',
       }),
       options: Options(
         headers: const {
-          'User-Agent':
-              'StrollWise location search (contact: strollwise)',
+          'User-Agent': 'StrollWise/1.0 (Cebu place search)',
         },
+        receiveTimeout: const Duration(seconds: 8),
       ),
     );
     final results = response.data;
-    if (results is! List || results.isEmpty) return null;
+    if (results is! List) return const [];
+
+    final hits = <CebuPlaceSearchHit>[];
     for (final raw in results) {
       if (raw is! Map) continue;
       final lat = double.tryParse(raw['lat']?.toString() ?? '');
       final lng = double.tryParse(raw['lon']?.toString() ?? '');
       if (lat == null || lng == null) continue;
-      final candidate = LatLng(lat, lng);
-      if (cebuPlaceWithinServiceArea(candidate)) return candidate;
+      final loc = LatLng(lat, lng);
+      if (!cebuPlaceWithinServiceArea(loc)) continue;
+
+      final display = (raw['display_name'] ?? query).toString();
+      final parts = display.split(',');
+      final title = parts.isNotEmpty ? parts.first.trim() : query;
+      hits.add(
+        CebuPlaceSearchHit(
+          title: title,
+          subtitle: _nominatimSubtitle(raw, parts),
+          location: loc,
+        ),
+      );
     }
-    return null;
+    return hits;
   } catch (_) {
-    return null;
+    return const [];
   }
+}
+
+String _nominatimSubtitle(Map raw, List<String> parts) {
+  final type = (raw['type'] ?? raw['class'] ?? '').toString();
+  final category = (raw['category'] ?? '').toString();
+  if (type.isNotEmpty && category.isNotEmpty) {
+    return '${_titleCase(category)} · ${_titleCase(type)}';
+  }
+  if (parts.length >= 2) {
+    return parts.sublist(1, parts.length.clamp(1, 3)).join(', ').trim();
+  }
+  return 'Street or building in Cebu';
+}
+
+bool _matchesQuery(String haystack, String query) {
+  final terms = query.split(RegExp(r'\s+')).where((t) => t.length >= 2);
+  return terms.every(haystack.contains);
+}
+
+String _titleCase(String value) {
+  return value
+      .split(' ')
+      .map((w) => w.isEmpty ? w : '${w[0].toUpperCase()}${w.substring(1)}')
+      .join(' ');
 }

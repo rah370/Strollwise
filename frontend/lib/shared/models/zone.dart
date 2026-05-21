@@ -1,3 +1,4 @@
+import '../traveler_gradient.dart';
 import 'place.dart';
 
 /// Mirrors the `ZoneListItem` / `ZoneDetail` schema returned by the
@@ -26,6 +27,8 @@ class ZoneModel {
     required this.centroidLng,
     required this.crowdLevel,
     required this.localPresencePercent,
+    this.localRatio,
+    this.mapColor,
     required this.peakTimeLabel,
     required this.confidenceScore,
     required this.priorityScore,
@@ -88,6 +91,8 @@ class ZoneModel {
 
   final double crowdLevel;
   final double localPresencePercent;
+  final double? localRatio;
+  final String? mapColor;
   final String? peakTimeLabel;
 
   final double confidenceScore;
@@ -157,27 +162,12 @@ class ZoneModel {
 
   /// Default fill / border hex codes derived from the function type. The
   /// backend no longer ships `style` metadata; the frontend owns styling.
-  String get fillColor {
-    switch (travelerMix) {
-      case 'local':
-        return '#DDF5E8';
-      case 'international':
-        return '#DCEBFF';
-      default:
-        return '#D9F6F4';
-    }
-  }
+  double get behavioralLocalRatio => TravelerGradient.localRatioForZone(this);
 
-  String get borderColor {
-    switch (travelerMix) {
-      case 'local':
-        return '#22C55E';
-      case 'international':
-        return '#3B82F6';
-      default:
-        return '#14B8A6';
-    }
-  }
+  String get fillColor => TravelerGradient.fillHexForRatio(behavioralLocalRatio);
+
+  String get borderColor =>
+      mapColor ?? TravelerGradient.hexForRatio(behavioralLocalRatio);
 
   double get opacity => 0.55;
 
@@ -220,6 +210,8 @@ class ZoneModel {
       centroidLng: _asDouble(centroid['lng']),
       crowdLevel: crowdLevel,
       localPresencePercent: _asDouble(json['local_presence_percent']),
+      localRatio: (json['local_ratio'] as num?)?.toDouble(),
+      mapColor: json['map_color'] as String?,
       peakTimeLabel: json['peak_time_label'] as String?,
       confidenceScore: confidence,
       priorityScore: _asDouble(json['priority_score']),

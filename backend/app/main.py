@@ -5,7 +5,7 @@ import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routers import analytics, auth, places, reports, uploads, users, zones
+from app.api.routers import analytics, auth, cells, places, reports, uploads, users, zones
 from app.core.config import settings
 from app.core.logging import configure_logging
 
@@ -33,6 +33,7 @@ def create_app() -> FastAPI:
     app.include_router(users.router, prefix=prefix)
     app.include_router(reports.router, prefix=prefix)
     app.include_router(zones.router, prefix=prefix)
+    app.include_router(cells.router, prefix=prefix)
     app.include_router(places.router, prefix=prefix)
     app.include_router(analytics.router, prefix=prefix)
     app.include_router(uploads.router, prefix=prefix)

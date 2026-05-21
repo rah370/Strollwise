@@ -15,6 +15,7 @@ from app.models.place import Place
 from app.models.report import Report
 from app.models.saved_zone import SavedZone
 from app.models.user import User
+from app.models.user_visit_pin import UserVisitPin
 from app.models.zone_snapshot import ZoneSnapshot
 
 __all__ = [
@@ -32,6 +33,7 @@ __all__ = [
     "SourceType",
     "TravelerType",
     "User",
+    "UserVisitPin",
     "VisibilityStatus",
     "ZoneSnapshot",
 ]

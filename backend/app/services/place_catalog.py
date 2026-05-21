@@ -27,6 +27,16 @@ def _ring_from_bbox(
     ]
 
 
+def _ring_from_center(lat: float, lng: float, radius_deg: float) -> list[list[float]]:
+    """Small square footprint around a district center (~street block scale)."""
+    return _ring_from_bbox(
+        lat - radius_deg,
+        lng - radius_deg,
+        lat + radius_deg,
+        lng + radius_deg,
+    )
+
+
 def _polygon(ring: list[list[float]]) -> dict[str, Any]:
     return {"type": "Polygon", "coordinates": [ring]}
 
@@ -88,6 +98,55 @@ CEBU_PLACE_CATALOG: tuple[CatalogPlace, ...] = (
             _ring_from_bbox(10.3090, 123.8910, 10.3120, 123.8935)
         ),
         tag_aliases=frozenset({"fuente", "fuente osmena", "fuente osmeña"}),
+    ),
+    CatalogPlace(
+        slug="lahug_residential",
+        display_name="Lahug",
+        default_place_type="residential",
+        polygon_geojson=_polygon(_ring_from_center(10.3388, 123.8893, 0.004)),
+        tag_aliases=frozenset({"lahug", "residential", "neighborhood"}),
+    ),
+    CatalogPlace(
+        slug="usc_campus",
+        display_name="USC Main Campus",
+        default_place_type="school",
+        polygon_geojson=_polygon(_ring_from_center(10.3139, 123.8920, 0.002)),
+        tag_aliases=frozenset({"usc", "usc main", "university of san carlos"}),
+    ),
+    CatalogPlace(
+        slug="usc_talamban",
+        display_name="USC Talamban",
+        default_place_type="school",
+        polygon_geojson=_polygon(_ring_from_center(10.3545, 123.9139, 0.003)),
+        tag_aliases=frozenset({"usc talamban", "talamban"}),
+    ),
+    CatalogPlace(
+        slug="sm_seaside",
+        display_name="SM Seaside",
+        default_place_type="commercial",
+        polygon_geojson=_polygon(_ring_from_center(10.2712, 123.8795, 0.003)),
+        tag_aliases=frozenset({"sm seaside", "seaside", "il corso", "srp"}),
+    ),
+    CatalogPlace(
+        slug="pier_port",
+        display_name="Pier / Port Area",
+        default_place_type="transport",
+        polygon_geojson=_polygon(_ring_from_center(10.2925, 123.9160, 0.003)),
+        tag_aliases=frozenset({"pier", "port", "terminal"}),
+    ),
+    CatalogPlace(
+        slug="busay_tops",
+        display_name="Busay / Tops",
+        default_place_type="tourist",
+        polygon_geojson=_polygon(_ring_from_center(10.3700, 123.8780, 0.004)),
+        tag_aliases=frozenset({"busay", "tops", "temple of leah", "mountain"}),
+    ),
+    CatalogPlace(
+        slug="taoist_temple",
+        display_name="Cebu Taoist Temple",
+        default_place_type="tourist",
+        polygon_geojson=_polygon(_ring_from_center(10.3410, 123.8885, 0.0025)),
+        tag_aliases=frozenset({"taoist", "taoist temple"}),
     ),
 )
 

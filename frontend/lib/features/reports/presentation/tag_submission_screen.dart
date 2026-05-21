@@ -154,6 +154,16 @@ class _TagSubmissionScreenState extends ConsumerState<TagSubmissionScreen> {
   LatLng? _pickedLocation;
   bool _searchBusy = false;
   bool _gpsBusy = false;
+  List<CebuPlaceSearchHit> _placeHits = const [];
+  String? _searchFeedback;
+  Timer? _searchDebounce;
+  int _searchRequestGen = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    placeSearchController.addListener(_onPlaceQueryChanged);
+  }
 
   _TagType get _selectedType =>
       _tagTypes.firstWhere((type) => type.label == _selectedTypeLabel);
@@ -163,18 +173,52 @@ class _TagSubmissionScreenState extends ConsumerState<TagSubmissionScreen> {
       (_selectedDetail.isNotEmpty || noteController.text.trim().isNotEmpty);
 
   void _applyLocation(LatLng location) {
+    ref.read(tagSubmissionPinLocationProvider.notifier).state = location;
     setState(() => _pickedLocation = location);
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      ref.read(tagSubmissionPinLocationProvider.notifier).state = location;
-    });
   }
 
   @override
   void dispose() {
+    _searchDebounce?.cancel();
     noteController.dispose();
     placeSearchController.dispose();
     super.dispose();
+  }
+
+  void _onPlaceQueryChanged() {
+    _searchDebounce?.cancel();
+    final query = placeSearchController.text.trim();
+    if (query.length < 2) {
+      setState(() {
+        _placeHits = const [];
+        _searchFeedback = null;
+        _searchBusy = false;
+      });
+      return;
+    }
+    setState(() => _searchBusy = true);
+    final gen = ++_searchRequestGen;
+    _searchDebounce = Timer(const Duration(milliseconds: 380), () async {
+      final hits = await searchCebuPlaces(ref.read(dioProvider), query);
+      if (!mounted || gen != _searchRequestGen) return;
+      setState(() {
+        _placeHits = hits;
+        _searchBusy = false;
+        _searchFeedback = hits.isEmpty
+            ? 'No places found in Cebu for "$query".'
+            : null;
+      });
+    });
+  }
+
+  void _selectPlaceHit(CebuPlaceSearchHit hit) {
+    FocusScope.of(context).unfocus();
+    placeSearchController.text = hit.title;
+    setState(() {
+      _placeHits = const [];
+      _searchFeedback = null;
+    });
+    _applyLocation(hit.location);
   }
 
   Future<void> _submit() async {
@@ -254,30 +298,40 @@ class _TagSubmissionScreenState extends ConsumerState<TagSubmissionScreen> {
     return 'Submission failed. Please try again.';
   }
 
-  Future<void> _runPlaceSearch() async {
-    final q = placeSearchController.text.trim();
-    if (q.isEmpty) {
+  Future<void> _commitPlaceSearch() async {
+    final query = placeSearchController.text.trim();
+    if (query.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Enter a street, mall, or landmark.')),
       );
       return;
     }
+    if (_placeHits.isNotEmpty) {
+      _selectPlaceHit(_placeHits.first);
+      return;
+    }
     FocusScope.of(context).unfocus();
     setState(() => _searchBusy = true);
-    final found = await geocodeCebuPlace(ref.read(dioProvider), q);
+    final hits = await searchCebuPlaces(ref.read(dioProvider), query);
     if (!mounted) return;
-    setState(() => _searchBusy = false);
-    if (found == null) {
+    setState(() {
+      _searchBusy = false;
+      _placeHits = hits;
+      _searchFeedback = hits.isEmpty
+          ? 'No places found in Cebu for "$query".'
+          : null;
+    });
+    if (hits.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text(
-            'No match in greater Cebu. Try another spelling or a shorter name.',
+            'No match in greater Cebu. Try another spelling or pick a suggestion.',
           ),
         ),
       );
       return;
     }
-    _applyLocation(found);
+    _selectPlaceHit(hits.first);
   }
 
   Future<void> _useGps() async {
@@ -335,9 +389,12 @@ class _TagSubmissionScreenState extends ConsumerState<TagSubmissionScreen> {
     final selectedZone = ref.watch(selectedZoneProvider);
     final zoneFlow = ref.watch(tagFlowZoneOverviewNotifierProvider);
     final bottom = MediaQuery.paddingOf(context).bottom;
-    final zone = zoneFlow.overview?.currentZone ?? selectedZone;
-    final selectedType = _selectedType;
     final hasLocation = _pickedLocation != null;
+    final ZoneModel? zone = hasLocation
+        ? zoneFlow.overview?.currentZone
+        : (zoneFlow.overview?.currentZone ?? selectedZone);
+    final zoneRefreshing = hasLocation && zoneFlow.refreshing;
+    final selectedType = _selectedType;
 
     return PopScope(
       onPopInvokedWithResult: (didPop, _) {
@@ -379,7 +436,8 @@ class _TagSubmissionScreenState extends ConsumerState<TagSubmissionScreen> {
             _ZoneCard(
               title: hasLocation ? 'Zone at this point' : 'Current zone',
               zone: zone,
-              refreshing: zoneFlow.refreshing,
+              refreshing: zoneRefreshing,
+              pendingLocation: hasLocation && zone == null,
             ),
             const SizedBox(height: 16),
             _LocationCard(
@@ -387,11 +445,26 @@ class _TagSubmissionScreenState extends ConsumerState<TagSubmissionScreen> {
               pickedLocation: _pickedLocation,
               searchBusy: _searchBusy,
               gpsBusy: _gpsBusy,
-              onSearch: _runPlaceSearch,
+              placeHits: _placeHits,
+              searchFeedback: _searchFeedback,
+              onPlaceSubmitted: _commitPlaceSearch,
+              onSelectPlaceHit: _selectPlaceHit,
               onGps: _useGps,
               onExploreCenter: _useExploreMapCenter,
+              onClearSearch: () {
+                setState(() {
+                  _placeHits = const [];
+                  _searchFeedback = null;
+                });
+                placeSearchController.clear();
+              },
               onClear: () {
-                setState(() => _pickedLocation = null);
+                setState(() {
+                  _pickedLocation = null;
+                  _placeHits = const [];
+                  _searchFeedback = null;
+                });
+                placeSearchController.clear();
                 ref.read(tagSubmissionPinLocationProvider.notifier).state =
                     null;
               },
@@ -533,11 +606,13 @@ class _ZoneCard extends StatelessWidget {
     required this.title,
     required this.zone,
     required this.refreshing,
+    this.pendingLocation = false,
   });
 
   final String title;
   final ZoneModel? zone;
   final bool refreshing;
+  final bool pendingLocation;
 
   @override
   Widget build(BuildContext context) {
@@ -575,7 +650,9 @@ class _ZoneCard extends StatelessWidget {
             Text(
               zone != null
                   ? '${zoneDisplayTitle(zone!)} · ${zoneMapSubtitle(zone!)}'
-                  : 'Zone loads after you set a location.',
+                  : pendingLocation || refreshing
+                      ? 'Looking up zone for this point…'
+                      : 'Zone loads after you set a location.',
               style: const TextStyle(
                 color: AppColors.secondaryText,
                 fontWeight: FontWeight.w600,
@@ -595,9 +672,13 @@ class _LocationCard extends ConsumerWidget {
     required this.pickedLocation,
     required this.searchBusy,
     required this.gpsBusy,
-    required this.onSearch,
+    required this.placeHits,
+    required this.searchFeedback,
+    required this.onPlaceSubmitted,
+    required this.onSelectPlaceHit,
     required this.onGps,
     required this.onExploreCenter,
+    required this.onClearSearch,
     required this.onClear,
   });
 
@@ -605,9 +686,13 @@ class _LocationCard extends ConsumerWidget {
   final LatLng? pickedLocation;
   final bool searchBusy;
   final bool gpsBusy;
-  final Future<void> Function() onSearch;
+  final List<CebuPlaceSearchHit> placeHits;
+  final String? searchFeedback;
+  final Future<void> Function() onPlaceSubmitted;
+  final void Function(CebuPlaceSearchHit hit) onSelectPlaceHit;
   final Future<void> Function() onGps;
   final VoidCallback onExploreCenter;
+  final VoidCallback onClearSearch;
   final VoidCallback onClear;
 
   @override
@@ -650,30 +735,42 @@ class _LocationCard extends ConsumerWidget {
             TextField(
               controller: placeSearchController,
               textInputAction: TextInputAction.search,
-              onSubmitted: (_) => onSearch(),
-              decoration: const InputDecoration(
-                hintText: 'Street, mall, landmark…',
-                prefixIcon: Icon(Icons.search_rounded),
-                border: OutlineInputBorder(),
+              onSubmitted: (_) => onPlaceSubmitted(),
+              decoration: InputDecoration(
+                hintText: 'Mall, street, landmark, building…',
+                prefixIcon: const Icon(Icons.search_rounded),
+                suffixIcon: searchBusy
+                    ? const Padding(
+                        padding: EdgeInsets.all(12),
+                        child: SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
+                      )
+                    : (placeSearchController.text.trim().isNotEmpty
+                          ? IconButton(
+                              icon: const Icon(Icons.close_rounded, size: 20),
+                              onPressed: onClearSearch,
+                            )
+                          : null),
+                border: const OutlineInputBorder(),
                 isDense: true,
               ),
             ),
+            if (placeHits.isNotEmpty ||
+                searchFeedback != null ||
+                (searchBusy && placeSearchController.text.trim().length >= 2))
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: _TagPlaceSearchResults(
+                  hits: placeHits,
+                  feedback: searchFeedback,
+                  loading: searchBusy,
+                  onSelect: onSelectPlaceHit,
+                ),
+              ),
             const SizedBox(height: 10),
-            FilledButton.icon(
-              onPressed: searchBusy ? null : () => onSearch(),
-              icon: searchBusy
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: Colors.white,
-                      ),
-                    )
-                  : const Icon(Icons.travel_explore_rounded),
-              label: const Text('Search place'),
-            ),
-            const SizedBox(height: 8),
             OutlinedButton.icon(
               onPressed: gpsBusy ? null : () => onGps(),
               icon: gpsBusy
@@ -760,6 +857,109 @@ class _LocationCard extends ConsumerWidget {
             ],
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _TagPlaceSearchResults extends StatelessWidget {
+  const _TagPlaceSearchResults({
+    required this.hits,
+    required this.feedback,
+    required this.loading,
+    required this.onSelect,
+  });
+
+  final List<CebuPlaceSearchHit> hits;
+  final String? feedback;
+  final bool loading;
+  final void Function(CebuPlaceSearchHit hit) onSelect;
+
+  @override
+  Widget build(BuildContext context) {
+    if (hits.isEmpty && feedback == null && !loading) {
+      return const SizedBox.shrink();
+    }
+    return Container(
+      constraints: const BoxConstraints(maxHeight: 220),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFB),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (loading && hits.isEmpty)
+            const Padding(
+              padding: EdgeInsets.all(12),
+              child: Row(
+                children: [
+                  SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                  SizedBox(width: 10),
+                  Text(
+                    'Searching Cebu…',
+                    style: TextStyle(
+                      color: AppColors.mutedText,
+                      fontWeight: FontWeight.w700,
+                      fontSize: 12,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          if (feedback != null && hits.isEmpty && !loading)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 10, 12, 6),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  feedback!,
+                  style: const TextStyle(
+                    color: AppColors.mutedText,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ),
+          if (hits.isNotEmpty)
+            Flexible(
+              child: ListView.separated(
+                shrinkWrap: true,
+                padding: const EdgeInsets.only(bottom: 4),
+                itemCount: hits.length,
+                separatorBuilder: (_, _) => const Divider(height: 1),
+                itemBuilder: (context, index) {
+                  final hit = hits[index];
+                  return ListTile(
+                    dense: true,
+                    leading: const Icon(
+                      Icons.place_outlined,
+                      size: 20,
+                      color: AppColors.mutedText,
+                    ),
+                    title: Text(
+                      hit.title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontWeight: FontWeight.w800),
+                    ),
+                    subtitle: Text(
+                      hit.subtitle,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    onTap: () => onSelect(hit),
+                  );
+                },
+              ),
+            ),
+        ],
       ),
     );
   }

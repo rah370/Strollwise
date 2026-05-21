@@ -22,6 +22,9 @@ final GoRouter appRouter = GoRouter(
   refreshListenable: routerRefreshListenable,
   redirect: (BuildContext context, GoRouterState state) {
     final container = ProviderScope.containerOf(context);
+    if (!container.read(authBootstrapCompleteProvider)) {
+      return null;
+    }
     final token = container.read(authTokenProvider);
     final loc = state.matchedLocation;
     final loggedIn = token != null && token.isNotEmpty;

@@ -4,7 +4,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../app/theme/colors.dart';
+import '../../../shared/data/origin_locations.dart';
 import '../../../shared/providers/app_providers.dart';
+import '../../../shared/widgets/origin_location_picker.dart';
 
 const _kUserTypeChoices = <(String value, String label)>[
   ('local_resident', 'Local resident'),
@@ -23,20 +25,18 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   final _displayNameController = TextEditingController();
-  final _countryController = TextEditingController();
-  final _cityController = TextEditingController();
   AuthMode _mode = AuthMode.login;
   bool _obscurePassword = true;
   bool _acceptedResearchConsent = false;
   String _userTypeValue = 'local_resident';
+  String _countryOfOrigin = OriginLocationCatalog.defaultCountry;
+  String _cityOfOrigin = OriginLocationCatalog.defaultCity;
 
   @override
   void dispose() {
     _emailController.dispose();
     _passwordController.dispose();
     _displayNameController.dispose();
-    _countryController.dispose();
-    _cityController.dispose();
     super.dispose();
   }
 
@@ -69,18 +69,19 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
     }
     if (_mode == AuthMode.register) {
       final displayName = _displayNameController.text.trim();
-      final country = _countryController.text.trim();
-      final city = _cityController.text.trim();
       if (displayName.isEmpty) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Display name is required.')),
         );
         return;
       }
-      if (country.isEmpty || city.isEmpty) {
+      if (!OriginLocationCatalog.isValidPair(
+        _countryOfOrigin,
+        _cityOfOrigin,
+      )) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Country and city of origin are required.'),
+            content: Text('Choose a valid country and city from the lists.'),
           ),
         );
         return;
@@ -102,8 +103,8 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
             email: email,
             password: password,
             displayName: _displayNameController.text,
-            countryOfOrigin: _countryController.text,
-            cityOfOrigin: _cityController.text,
+            countryOfOrigin: _countryOfOrigin,
+            cityOfOrigin: _cityOfOrigin,
             userType: _userTypeValue,
             acceptedResearchConsent: _acceptedResearchConsent,
           );
@@ -122,11 +123,17 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
     if (error is DioException) {
       if (error.type == DioExceptionType.connectionError ||
           error.type == DioExceptionType.connectionTimeout) {
-        return 'Server is unreachable. Use Demo Login or start the backend.';
+        return 'Cannot reach the server. Start the backend and run the app with '
+            '--dart-define=API_URL=http://127.0.0.1:8000';
       }
+      final status = error.response?.statusCode;
       final detail = error.response?.data;
       if (detail is Map && detail['detail'] != null) {
-        return detail['detail'].toString();
+        final msg = detail['detail'].toString();
+        if (status == 409 && mode == AuthMode.register) {
+          return 'This email is already registered. Switch to Sign in.';
+        }
+        return msg;
       }
     }
     return mode == AuthMode.login
@@ -286,24 +293,13 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
                         ),
                         if (isRegister) ...[
                           const SizedBox(height: 10),
-                          TextField(
-                            controller: _countryController,
-                            textInputAction: TextInputAction.next,
-                            textCapitalization: TextCapitalization.words,
-                            decoration: const InputDecoration(
-                              hintText: 'Country of origin',
-                              prefixIcon: Icon(Icons.public_outlined),
-                            ),
-                          ),
-                          const SizedBox(height: 10),
-                          TextField(
-                            controller: _cityController,
-                            textInputAction: TextInputAction.next,
-                            textCapitalization: TextCapitalization.words,
-                            decoration: const InputDecoration(
-                              hintText: 'City of origin',
-                              prefixIcon: Icon(Icons.location_city_outlined),
-                            ),
+                          OriginLocationPicker(
+                            country: _countryOfOrigin,
+                            city: _cityOfOrigin,
+                            onCountryChanged: (value) =>
+                                setState(() => _countryOfOrigin = value),
+                            onCityChanged: (value) =>
+                                setState(() => _cityOfOrigin = value),
                           ),
                           const SizedBox(height: 10),
                           DropdownButtonFormField<String>(

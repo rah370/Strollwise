@@ -50,4 +50,7 @@ class User(Base):
     )
 
     reports = relationship("Report", back_populates="user", cascade="all, delete-orphan")
+    visit_pins = relationship(
+        "UserVisitPin", back_populates="user", cascade="all, delete-orphan"
+    )
     saved_zones = relationship("SavedZone", back_populates="user", cascade="all, delete-orphan")

@@ -25,6 +25,8 @@ class ZoneListItem(ORMModel):
     centroid: Centroid
     crowd_level: float
     local_presence_percent: float
+    local_ratio: float = 0.5
+    map_color: str = "#2FB7C8"
     peak_time_label: str | None = None
     confidence_score: float
     priority_score: float
@@ -48,6 +50,8 @@ class ZoneDetail(ORMModel):
     centroid: Centroid
     crowd_level: float
     local_presence_percent: float
+    local_ratio: float = 0.5
+    map_color: str = "#2FB7C8"
     peak_time_label: str | None = None
     top_activities: list[str] = Field(default_factory=list)
     confidence_score: float

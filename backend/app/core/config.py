@@ -31,6 +31,8 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = Field(default=60 * 24 * 7)
 
     h3_resolution: int = Field(default=8)
+    # Cap how many H3 cells can expand a place/zone footprint (prevents city-wide blobs).
+    max_h3_cells_per_place: int = Field(default=24)
     city_center_lat: float = Field(default=10.3157)
     city_center_lng: float = Field(default=123.8854)
 

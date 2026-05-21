@@ -9,6 +9,7 @@ from uuid import UUID, uuid4
 from sqlalchemy.orm import Session
 
 from app.core.cache import cache_delete_pattern
+from app.core.config import settings
 from app.models.h3_cell_aggregate import H3CellAggregate
 from app.models.place import Place
 from app.repositories.h3_repository import H3Repository
@@ -110,12 +111,22 @@ class PlaceService:
             self.place_repo.upsert(place)
             return place
 
-        h3_indexes = [c.h3_index for c in cells]
-        function_counter: dict[str, int] = defaultdict(int)
-        for c in cells:
-            function_counter[c.function_type] += 1
-
         catalog = catalog_by_slug(place.slug)
+        scoped_cells = _cells_within_catalog(cells, catalog) if catalog else cells
+        if not scoped_cells:
+            scoped_cells = cells
+
+        h3_indexes = _cap_h3_indexes(
+            [c.h3_index for c in scoped_cells],
+            max_cells=settings.max_h3_cells_per_place,
+            anchor_lat=place.centroid_lat,
+            anchor_lng=place.centroid_lng,
+        )
+        function_counter: dict[str, int] = defaultdict(int)
+        for c in scoped_cells:
+            if c.h3_index in h3_indexes:
+                function_counter[c.function_type] += 1
+
         if function_counter:
             derived = dominant_place_type(dict(function_counter))
             if derived in {"emerging", "general"} and catalog:
@@ -126,18 +137,35 @@ class PlaceService:
             place.place_type = catalog.default_place_type
 
         place.source_h3_indexes_json = h3_indexes
-        place.polygon_geojson = PolygonService.cells_to_geojson_polygon(h3_indexes)
+        if catalog is not None:
+            # Catalog places keep a fixed street-scale footprint (no H3 union stretch).
+            place.polygon_geojson = catalog.polygon_geojson
+        else:
+            place.polygon_geojson = PolygonService.cells_to_geojson_polygon(h3_indexes)
         place.polygon_geometry = PolygonService.geojson_to_postgis_geometry(
             place.polygon_geojson,
             dialect_name=self.db.get_bind().dialect.name,
         )
-        lat, lng = PolygonService.centroid_of_cells(h3_indexes)
+        anchor_lat, anchor_lng = place.centroid_lat, place.centroid_lng
+        if catalog is not None and catalog.polygon_geojson.get("type") == "Polygon":
+            ring = catalog.polygon_geojson["coordinates"][0]
+            if ring:
+                anchor_lat = sum(pt[1] for pt in ring) / len(ring)
+                anchor_lng = sum(pt[0] for pt in ring) / len(ring)
+        elif h3_indexes:
+            anchor_lat, anchor_lng = h3_service.cell_centroid(h3_indexes[0])
+        lat, lng = (
+            (anchor_lat, anchor_lng)
+            if catalog is not None
+            else PolygonService.centroid_of_cells(h3_indexes)
+        )
         place.centroid_lat = float(lat)
         place.centroid_lng = float(lng)
-        place.report_count = sum(c.report_count for c in cells)
+        active_cells = [c for c in scoped_cells if c.h3_index in h3_indexes]
+        place.report_count = sum(c.report_count for c in active_cells)
         place.confidence_score = round(
-            sum(c.confidence_score for c in cells) / len(cells), 2
-        )
+            sum(c.confidence_score for c in active_cells) / len(active_cells), 2
+        ) if active_cells else 0.0
         place.is_active = place.report_count > 0
         place.updated_at = datetime.utcnow()
         return self.place_repo.upsert(place)
@@ -182,19 +210,57 @@ class PlaceService:
         return None
 
     def _place_slug_from_cell_tags(self, cell: H3CellAggregate) -> str | None:
+        lat, lng = h3_service.cell_centroid(cell.h3_index)
         tag_counts = cell.tag_counts_json or {}
         normalized = {str(k).lower().strip(): int(v) for k, v in tag_counts.items()}
         for entry in CEBU_PLACE_CATALOG:
+            matched = False
             for alias in entry.tag_aliases:
                 if alias in normalized and normalized[alias] > 0:
-                    return entry.slug
-            for tag in normalized:
-                if any(alias in tag for alias in entry.tag_aliases):
-                    return entry.slug
+                    matched = True
+                    break
+            if not matched:
+                for tag in normalized:
+                    if any(alias in tag for alias in entry.tag_aliases):
+                        matched = True
+                        break
+            if matched and point_in_geojson(entry.polygon_geojson, lat=lat, lng=lng):
+                return entry.slug
         if cell.dominant_category == "school":
             for entry in CEBU_PLACE_CATALOG:
                 if entry.default_place_type == "school":
-                    lat, lng = h3_service.cell_centroid(cell.h3_index)
                     if point_in_geojson(entry.polygon_geojson, lat=lat, lng=lng):
                         return entry.slug
         return None
+
+
+def _cells_within_catalog(
+    cells: list[H3CellAggregate], catalog: CatalogPlace | None
+) -> list[H3CellAggregate]:
+    if catalog is None:
+        return cells
+    scoped: list[H3CellAggregate] = []
+    for cell in cells:
+        lat, lng = h3_service.cell_centroid(cell.h3_index)
+        if point_in_geojson(catalog.polygon_geojson, lat=lat, lng=lng):
+            scoped.append(cell)
+    return scoped
+
+
+def _cap_h3_indexes(
+    indexes: list[str],
+    *,
+    max_cells: int,
+    anchor_lat: float,
+    anchor_lng: float,
+) -> list[str]:
+    unique = list(dict.fromkeys(indexes))
+    if len(unique) <= max_cells:
+        return unique
+
+    def distance_sq(idx: str) -> float:
+        lat, lng = h3_service.cell_centroid(idx)
+        return (lat - anchor_lat) ** 2 + (lng - anchor_lng) ** 2
+
+    unique.sort(key=distance_sq)
+    return unique[:max_cells]

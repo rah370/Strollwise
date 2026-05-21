@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../app/theme/colors.dart';
 import 'models/zone.dart';
+import 'traveler_gradient.dart';
 
 /// Human label for API `place_type` values.
 String placeTypeLabel(String placeType) {
@@ -71,27 +72,37 @@ Color placeTypeAccentColor(String placeType) {
   }
 }
 
-Color travelerMixFillColor(String travelerMix) {
-  switch (travelerMix) {
-    case 'local':
-      return AppColors.localFill;
-    case 'international':
-      return AppColors.touristFill;
-    default:
-      return AppColors.mixedFill;
-  }
+Color travelerMixFillColor(
+  String travelerMix, {
+  double? localPresencePercent,
+  double? localRatio,
+}) {
+  final ratio = TravelerGradient.localRatioFromMix(
+    travelerMix,
+    localPresencePercent: localPresencePercent,
+    localRatio: localRatio,
+  );
+  return TravelerGradient.fillForRatio(ratio);
 }
 
-Color travelerMixBorderColor(String travelerMix) {
-  switch (travelerMix) {
-    case 'local':
-      return AppColors.travelerLocal;
-    case 'international':
-      return AppColors.travelerInternational;
-    default:
-      return AppColors.travelerMixed;
-  }
+Color travelerMixBorderColor(
+  String travelerMix, {
+  double? localPresencePercent,
+  double? localRatio,
+}) {
+  final ratio = TravelerGradient.localRatioFromMix(
+    travelerMix,
+    localPresencePercent: localPresencePercent,
+    localRatio: localRatio,
+  );
+  return TravelerGradient.colorForRatio(ratio);
 }
+
+Color travelerMixColorForZone(ZoneModel zone) =>
+    TravelerGradient.colorForZone(zone);
+
+Color travelerMixFillForZone(ZoneModel zone) =>
+    TravelerGradient.fillForZone(zone);
 
 String travelerMixLabel(String travelerMix) {
   switch (travelerMix) {

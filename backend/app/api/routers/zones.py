@@ -22,6 +22,11 @@ from app.schemas.common import Centroid
 from app.models.enums import BehaviorType, FunctionType, LiveStatus
 from app.schemas.place import PlaceSummary
 from app.schemas.zone import CurrentZoneOverview, ZoneDetail, ZoneLaunchContext, ZoneListItem
+from app.services.zone_catalog import default_local_ratio_for_name
+from app.utils.traveler_gradient import (
+    local_ratio_from_traveler_mix,
+    map_color_hex,
+)
 from app.utils.traveler_mix_utils import behavior_to_traveler_mix
 from app.services.ranking_service import RankingService
 from app.services import h3_service
@@ -67,8 +72,8 @@ def zones_in_viewport(
     repo = ZoneRepository(db)
     # Fast path: ask PostGIS via ST_Intersects.
     in_viewport = repo.list_active_in_bbox(min_lat, min_lng, max_lat, max_lng)
-    if in_viewport is None:
-        # Fallback for non-PostGIS backends (e.g. SQLite tests): filter in Python.
+    if in_viewport is None or not in_viewport:
+        # Fallback when PostGIS is unavailable or polygon_geometry is missing on rows.
         in_viewport = [
             z
             for z in repo.list_active()
@@ -206,6 +211,7 @@ def zone_detail(zone_id: UUID, db: Session = Depends(get_db)) -> ZoneDetail:
     primary_place = place_repo.get(zone.place_id) if zone.place_id else None
     places_here = _places_for_zone_detail(place_repo, zone, primary_place)
     mix, place_name, place_type = _zone_place_fields(zone, primary_place)
+    local_ratio = _zone_local_ratio(zone, mix)
     return ZoneDetail(
         zone_id=zone.zone_id,
         display_name=zone.display_name,
@@ -222,6 +228,8 @@ def zone_detail(zone_id: UUID, db: Session = Depends(get_db)) -> ZoneDetail:
         centroid=Centroid(lat=zone.centroid_lat, lng=zone.centroid_lng),
         crowd_level=zone.crowd_level,
         local_presence_percent=zone.local_presence_percent,
+        local_ratio=round(local_ratio, 3),
+        map_color=map_color_hex(local_ratio),
         peak_time_label=zone.peak_time_label,
         top_activities=list(zone.top_activities_json or []),
         confidence_score=zone.confidence_score,
@@ -315,10 +323,18 @@ def _places_for_zone_detail(place_repo, zone, primary_place) -> list[PlaceSummar
     return items[:6]
 
 
+def _zone_local_ratio(zone, mix: str) -> float:
+    pct = float(zone.local_presence_percent or 0.0)
+    if pct > 0:
+        return local_ratio_from_traveler_mix(mix, local_presence_percent=pct)
+    return default_local_ratio_for_name(zone.display_name, mix, pct)
+
+
 def _to_list_item(zone) -> ZoneListItem:
     mix = zone.traveler_mix or behavior_to_traveler_mix(zone.behavior_type)
     place_name = getattr(zone, "_place_display_name", None)
     place_type = getattr(zone, "_place_type", None)
+    local_ratio = _zone_local_ratio(zone, mix)
     return ZoneListItem(
         zone_id=zone.zone_id,
         display_name=zone.display_name,
@@ -334,6 +350,8 @@ def _to_list_item(zone) -> ZoneListItem:
         centroid=Centroid(lat=zone.centroid_lat, lng=zone.centroid_lng),
         crowd_level=zone.crowd_level,
         local_presence_percent=zone.local_presence_percent,
+        local_ratio=round(local_ratio, 3),
+        map_color=map_color_hex(local_ratio),
         peak_time_label=zone.peak_time_label,
         confidence_score=zone.confidence_score,
         priority_score=zone.priority_score,

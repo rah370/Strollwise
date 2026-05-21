@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'dart:io';
 
 import '../../core/constants/api_constants.dart';
+import '../providers/app_providers.dart';
 
 final dioProvider = Provider<Dio>((ref) {
   final dio = Dio(
@@ -13,6 +14,20 @@ final dioProvider = Provider<Dio>((ref) {
       connectTimeout: const Duration(seconds: 6),
       receiveTimeout: const Duration(seconds: 12),
       contentType: 'application/json',
+    ),
+  );
+
+  dio.interceptors.add(
+    InterceptorsWrapper(
+      onRequest: (options, handler) {
+        final token = ref.read(authTokenProvider);
+        if (token != null &&
+            token.isNotEmpty &&
+            token != 'demo-token-local') {
+          options.headers['Authorization'] = 'Bearer $token';
+        }
+        handler.next(options);
+      },
     ),
   );
 

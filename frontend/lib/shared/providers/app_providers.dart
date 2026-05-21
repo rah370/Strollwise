@@ -9,13 +9,16 @@ import 'package:h3_flutter/h3_flutter.dart';
 import 'package:maplibre_gl/maplibre_gl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../shared/models/cell.dart';
 import '../../shared/models/current_zone_overview.dart';
+import '../traveler_gradient.dart';
 import '../../shared/models/layer_settings.dart';
 import '../../shared/models/place.dart';
 import '../../shared/models/place_list_item.dart';
 import '../../shared/models/place_tag_marker.dart';
 import '../../shared/models/report.dart';
 import '../../shared/models/user_contributions.dart';
+import '../../shared/models/visit_pin.dart';
 import '../../shared/models/user_me.dart';
 import '../../shared/models/zone.dart';
 import '../../shared/network/api_client.dart';
@@ -53,12 +56,19 @@ Future<void> clearPersistedAuth() async {
   await prefs.remove(authPrefsUserJsonKey);
 }
 
-Future<void> restoreAuthFromPrefs(WidgetRef ref) async {
+/// True after [bootstrapAuthSession] finishes (avoids auth redirect flash).
+final authBootstrapCompleteProvider = StateProvider<bool>((ref) => false);
+
+/// Restores token + profile from disk. Safe to call more than once.
+Future<void> bootstrapAuthSession(dynamic ref) async {
   final prefs = await SharedPreferences.getInstance();
   final token = prefs.getString(authPrefsTokenKey);
   final email = prefs.getString(authPrefsEmailKey);
   final raw = prefs.getString(authPrefsUserJsonKey);
-  if (token != null && token.isNotEmpty) {
+
+  if (token != null &&
+      token.isNotEmpty &&
+      token != 'demo-token-local') {
     ref.read(authTokenProvider.notifier).state = token;
     if (email != null && email.isNotEmpty) {
       ref.read(authUserEmailProvider.notifier).state = email;
@@ -72,10 +82,20 @@ Future<void> restoreAuthFromPrefs(WidgetRef ref) async {
         }
       } catch (_) {}
     }
-    routerRefreshListenable.value++;
   }
+
+  ref.read(authBootstrapCompleteProvider.notifier).state = true;
+  routerRefreshListenable.value++;
+}
+
+Future<void> restoreAuthFromPrefs(WidgetRef ref) async {
+  await bootstrapAuthSession(ref);
 }
 final selectedZoneProvider = StateProvider<ZoneModel?>((ref) => null);
+final selectedCellProvider = StateProvider<CellModel?>((ref) => null);
+
+/// Set after login/register; Explore centers on GPS instead of default Cebu.
+final explorePendingGpsCenterProvider = StateProvider<bool>((ref) => false);
 
 /// Fetches full zone detail (including [ZoneModel.places]) when a zone is selected.
 final selectedZoneDetailProvider = FutureProvider<ZoneModel?>((ref) async {
@@ -180,6 +200,67 @@ final mapViewportProvider = StateProvider<MapViewport>(
   ),
 );
 
+/// Private visit pins — only the logged-in user sees these on the map.
+final ownVisitPinsProvider = FutureProvider<List<VisitPinModel>>((ref) async {
+  final dio = ref.watch(dioProvider);
+  final viewport = ref.watch(mapViewportProvider);
+  final token = ref.watch(authTokenProvider);
+  if (token == null || token == 'demo-token-local') {
+    return const [];
+  }
+  try {
+    final response = await dio.get(
+      '/reports/my-visit-pins',
+      queryParameters: <String, dynamic>{
+        'min_lat': viewport.minLat,
+        'max_lat': viewport.maxLat,
+        'min_lng': viewport.minLng,
+        'max_lng': viewport.maxLng,
+        'limit': 120,
+      },
+      options: Options(headers: {'Authorization': 'Bearer $token'}),
+    );
+    final list = response.data;
+    if (list is! List) return const [];
+    return list
+        .map((e) => VisitPinModel.fromJson(e as Map<String, dynamic>))
+        .toList();
+  } on DioException {
+    return const [];
+  } on FormatException {
+    return const [];
+  } on TypeError {
+    return const [];
+  }
+});
+
+/// Chronological visit history for Profile.
+final ownVisitHistoryProvider = FutureProvider<List<VisitPinModel>>((ref) async {
+  final dio = ref.watch(dioProvider);
+  final token = ref.watch(authTokenProvider);
+  if (token == null || token == 'demo-token-local') {
+    return const [];
+  }
+  try {
+    final response = await dio.get(
+      '/reports/my-visit-history',
+      queryParameters: {'limit': 40},
+      options: Options(headers: {'Authorization': 'Bearer $token'}),
+    );
+    final list = response.data;
+    if (list is! List) return const [];
+    return list
+        .map((e) => VisitPinModel.fromJson(e as Map<String, dynamic>))
+        .toList();
+  } on DioException {
+    return const [];
+  } on FormatException {
+    return const [];
+  } on TypeError {
+    return const [];
+  }
+});
+
 /// Current user's pending tags in the viewport (private until validated).
 final ownPendingTagPinsProvider =
     FutureProvider<List<PlaceTagMarker>>((ref) async {
@@ -267,6 +348,37 @@ final resolvedPlaceAtPointProvider =
     }
   },
 );
+
+final visibleCellsProvider = FutureProvider<List<CellModel>>((ref) async {
+  final dio = ref.watch(dioProvider);
+  final viewport = ref.watch(mapViewportProvider);
+  final travelerMix = ref.watch(activeTravelerMixFilterProvider);
+  final placeType = ref.watch(activePlaceTypeFilterProvider);
+  try {
+    final response = await dio.get(
+      '/cells',
+      queryParameters: {
+        'min_lat': viewport.minLat,
+        'min_lng': viewport.minLng,
+        'max_lat': viewport.maxLat,
+        'max_lng': viewport.maxLng,
+        if (travelerMix != null && travelerMix.isNotEmpty)
+          'traveler_mix': travelerMix,
+        if (placeType != null && placeType.isNotEmpty) 'place_type': placeType,
+      },
+    );
+    return (response.data as List)
+        .map((item) => CellModel.fromJson(item as Map<String, dynamic>))
+        .where((cell) => cell.ring.length >= 3)
+        .toList();
+  } on DioException {
+    return const [];
+  } on FormatException {
+    return const [];
+  } on TypeError {
+    return const [];
+  }
+});
 
 final visibleZonesProvider = FutureProvider<List<ZoneModel>>((ref) async {
   final dio = ref.watch(dioProvider);
@@ -625,10 +737,17 @@ final cityPulseProvider = FutureProvider<CityPulseSnapshot>((ref) async {
   }
 });
 
+/// Set when user picks a search result so area behavior loads for that point.
+final mapSearchFocusProvider = StateProvider<LatLng?>((ref) => null);
+
+/// Label for the active search destination (shown on area insight card).
+final mapSearchPlaceTitleProvider = StateProvider<String?>((ref) => null);
+
 final currentZoneOverviewProvider = FutureProvider<CurrentZoneOverviewModel?>((
   ref,
 ) async {
-  final location = ref.watch(currentUserLocationProvider);
+  final searchFocus = ref.watch(mapSearchFocusProvider);
+  final location = searchFocus ?? ref.watch(currentUserLocationProvider);
   if (location == null) return null;
 
   final dio = ref.watch(dioProvider);
@@ -710,9 +829,8 @@ class TagFlowZoneOverviewNotifier extends StateNotifier<TagFlowZoneOverviewState
     final token = CancelToken();
     _cancelToken = token;
 
-    final previous = state.overview;
     if (_alive) {
-      state = TagFlowZoneOverviewState(overview: previous, refreshing: true);
+      state = const TagFlowZoneOverviewState(refreshing: true);
     }
 
     try {
@@ -735,10 +853,16 @@ class TagFlowZoneOverviewNotifier extends StateNotifier<TagFlowZoneOverviewState
         if (!_alive) {
           return;
         }
-        state = TagFlowZoneOverviewState(overview: previous, refreshing: false);
+        state = TagFlowZoneOverviewState(
+          overview: await _catalogOverviewFor(loc),
+          refreshing: false,
+        );
         return;
       }
-      final overview = CurrentZoneOverviewModel.fromJson(data);
+      final overview = await _overviewWithCatalogFallback(
+        CurrentZoneOverviewModel.fromJson(data),
+        loc,
+      );
       if (!_alive) {
         return;
       }
@@ -751,20 +875,96 @@ class TagFlowZoneOverviewNotifier extends StateNotifier<TagFlowZoneOverviewState
         return;
       }
       if (_alive) {
-        state = TagFlowZoneOverviewState(overview: previous, refreshing: false);
+        state = TagFlowZoneOverviewState(
+          overview: await _catalogOverviewFor(loc),
+          refreshing: false,
+        );
       }
     } on FormatException {
       if (!_alive) {
         return;
       }
-      state = TagFlowZoneOverviewState(overview: previous, refreshing: false);
+      state = TagFlowZoneOverviewState(
+        overview: await _catalogOverviewFor(loc),
+        refreshing: false,
+      );
     } on TypeError {
       if (!_alive) {
         return;
       }
-      state = TagFlowZoneOverviewState(overview: previous, refreshing: false);
+      state = TagFlowZoneOverviewState(
+        overview: await _catalogOverviewFor(loc),
+        refreshing: false,
+      );
     }
   }
+}
+
+Future<CurrentZoneOverviewModel?> _catalogOverviewFor(LatLng loc) async {
+  await ZoneCatalog.ensureLoaded();
+  final entry = ZoneCatalog.nearestEntry(loc.latitude, loc.longitude);
+  if (entry == null) return null;
+  final zone = _zoneModelFromCatalogEntry(entry);
+  return CurrentZoneOverviewModel(
+    currentZone: zone,
+    nearbyZones: const [],
+    alternativeZones: const [],
+    context: ZoneLaunchContextModel(
+      cityActivity: 'quiet',
+      crowdLevelPercent: zone.crowdLevel * 100,
+      localPresencePercent: zone.localPresencePercent,
+    ),
+  );
+}
+
+Future<CurrentZoneOverviewModel> _overviewWithCatalogFallback(
+  CurrentZoneOverviewModel overview,
+  LatLng loc,
+) async {
+  if (overview.currentZone != null) return overview;
+  final fallback = await _catalogOverviewFor(loc);
+  if (fallback?.currentZone == null) return overview;
+  return CurrentZoneOverviewModel(
+    currentZone: fallback!.currentZone,
+    nearbyZones: overview.nearbyZones,
+    alternativeZones: overview.alternativeZones,
+    context: overview.context,
+  );
+}
+
+ZoneModel _zoneModelFromCatalogEntry(ZoneCatalogEntry entry) {
+  final ratio = entry.defaultLocalRatio;
+  final travelerMix = ratio >= 0.85
+      ? 'local'
+      : ratio <= 0.15
+          ? 'international'
+          : 'mixed';
+  final functionType = switch (entry.zoneType.toUpperCase()) {
+    'LOCAL' => 'residential_zone',
+    'INTERNATIONAL' => 'tourist_hotspot',
+    _ => 'commercial_zone',
+  };
+  return ZoneModel(
+    zoneId: entry.zoneId,
+    displayName: entry.zoneName,
+    behaviorType: 'mixed_area',
+    functionType: functionType,
+    travelerMix: travelerMix,
+    summary: '${entry.zoneName} · ${entry.city}',
+    liveStatus: 'unknown',
+    polygonGeoJson: const {},
+    boundary: const [],
+    polygonParts: const [],
+    centroidLat: entry.centerLat,
+    centroidLng: entry.centerLng,
+    crowdLevel: 0.5,
+    localPresencePercent: ratio * 100,
+    localRatio: ratio,
+    peakTimeLabel: '',
+    confidenceScore: 50,
+    priorityScore: 50,
+    reportCount: 0,
+  );
 }
 
 final tagFlowZoneOverviewNotifierProvider =
@@ -813,16 +1013,16 @@ List<ZoneModel> _h3FallbackZoneList(H3 h3) {
     _fallbackZoneFromH3(
       h3,
       zoneId: 'dev-it-park',
-      displayName: 'IT Park Commercial + Food Zone',
+      displayName: 'IT Park Business Zone',
       behaviorType: 'tourist_area',
       functionType: 'commercial_zone',
       summary:
-          'Mixed food, coworking, study, and nightlife behavior around IT Park.',
+          'Digital nomads, business travelers, hotels, and nightlife around IT Park.',
       liveStatus: 'busy_now',
-      lat: 10.3315,
-      lng: 123.9062,
+      lat: 10.3305,
+      lng: 123.9066,
       crowd: 78,
-      localPresence: 38,
+      localPresence: 22,
       confidence: 82,
       priority: 94,
       reports: 64,
@@ -830,14 +1030,14 @@ List<ZoneModel> _h3FallbackZoneList(H3 h3) {
     _fallbackZoneFromH3(
       h3,
       zoneId: 'dev-ayala',
-      displayName: 'Ayala Commercial + Cafe Zone',
+      displayName: 'Ayala Center Cebu',
       behaviorType: 'mixed_area',
       functionType: 'commercial_zone',
       summary:
-          'Commercial cafe and mall movement with mixed local and visitor activity.',
+          'Shopping, offices, tourists, and locals overlapping at Ayala Center.',
       liveStatus: 'active_now',
-      lat: 10.3182,
-      lng: 123.9058,
+      lat: 10.3176,
+      lng: 123.9053,
       crowd: 67,
       localPresence: 55,
       confidence: 76,
@@ -847,16 +1047,16 @@ List<ZoneModel> _h3FallbackZoneList(H3 h3) {
     _fallbackZoneFromH3(
       h3,
       zoneId: 'dev-colon',
-      displayName: 'Colon Heritage + Local Food Zone',
-      behaviorType: 'local_area',
+      displayName: 'Colon Basilica Heritage Zone',
+      behaviorType: 'tourist_area',
       functionType: 'food_hotspot',
       summary:
-          'Local-heavy heritage, street food, market, and shopping behavior.',
+          'Heritage sites, tourism, historical landmarks, and guided tours.',
       liveStatus: 'busy_now',
-      lat: 10.2966,
-      lng: 123.8992,
+      lat: 10.2943,
+      lng: 123.9018,
       crowd: 72,
-      localPresence: 74,
+      localPresence: 18,
       confidence: 79,
       priority: 88,
       reports: 61,
@@ -914,16 +1114,16 @@ List<ZoneModel> _h3FallbackZoneList(H3 h3) {
     _fallbackZoneFromH3(
       h3,
       zoneId: 'dev-carbon',
-      displayName: 'Carbon Market Local Food + Shopping Zone',
-      behaviorType: 'local_area',
+      displayName: 'Carbon Market Area',
+      behaviorType: 'mixed_area',
       functionType: 'food_hotspot',
       summary:
-          'Wet-market food, budget meals, and practical shopping movement.',
+          'Local market, heritage, tourist interest, and commercial activity.',
       liveStatus: 'busy_now',
-      lat: 10.2944,
-      lng: 123.9006,
+      lat: 10.2932,
+      lng: 123.8997,
       crowd: 74,
-      localPresence: 86,
+      localPresence: 58,
       confidence: 81,
       priority: 87,
       reports: 55,
@@ -931,16 +1131,16 @@ List<ZoneModel> _h3FallbackZoneList(H3 h3) {
     _fallbackZoneFromH3(
       h3,
       zoneId: 'dev-fuente',
-      displayName: 'Fuente Transit + Food Zone',
-      behaviorType: 'local_area',
+      displayName: 'Fuente Osmeña',
+      behaviorType: 'mixed_area',
       functionType: 'transport_zone',
       summary:
-          'Evening commute, Larsian food, and shopping overlap near Fuente.',
+          'Hotels, hospitals, restaurants, and transport hub activity.',
       liveStatus: 'busy_now',
-      lat: 10.3105,
-      lng: 123.8921,
+      lat: 10.3099,
+      lng: 123.8915,
       crowd: 70,
-      localPresence: 78,
+      localPresence: 52,
       confidence: 77,
       priority: 84,
       reports: 50,
@@ -964,15 +1164,16 @@ List<ZoneModel> _h3FallbackZoneList(H3 h3) {
     _fallbackZoneFromH3(
       h3,
       zoneId: 'dev-mactan',
-      displayName: 'Mactan Resort + Beach Zone',
+      displayName: 'Mactan Resort Zone',
       behaviorType: 'tourist_area',
       functionType: 'tourist_hotspot',
-      summary: 'Beach clubs, resorts, diving, seafood, and afternoon leisure.',
+      summary:
+          'Resorts, hotels, airport access, and foreign visitor movement.',
       liveStatus: 'active_now',
-      lat: 10.2983,
-      lng: 124.0155,
+      lat: 10.2995,
+      lng: 124.0118,
       crowd: 59,
-      localPresence: 18,
+      localPresence: 12,
       confidence: 72,
       priority: 81,
       reports: 43,
@@ -1322,11 +1523,21 @@ ZoneModel _fallbackZoneFromH3(
   final polygonGeoJson = _geoJsonFromH3MultiPolygon(mp);
   final sourceH3Rings = _ringsForDisplayCells(h3, displayCells);
   final centroid = h3.cellToGeo(parent);
+  final mix = behaviorType == 'local_area'
+      ? 'local'
+      : behaviorType == 'tourist_area'
+      ? 'international'
+      : 'mixed';
+  final localRatio = TravelerGradient.localRatioFromMix(
+    mix,
+    localPresencePercent: localPresence,
+  );
 
   return ZoneModel.fromJson({
     'zone_id': zoneId,
     'display_name': displayName,
     'behavior_type': behaviorType,
+    'traveler_mix': mix,
     'function_type': functionType,
     'summary': summary,
     'live_status': liveStatus,
@@ -1334,6 +1545,8 @@ ZoneModel _fallbackZoneFromH3(
     'centroid': {'lat': centroid.lat, 'lng': centroid.lon},
     'crowd_level': crowd,
     'local_presence_percent': localPresence,
+    'local_ratio': localRatio,
+    'map_color': TravelerGradient.hexForRatio(localRatio),
     'peak_time_label': '4PM-9PM',
     'confidence_score': confidence,
     'priority_score': priority,
@@ -1557,8 +1770,11 @@ class TagSubmissionController
         // responsive while still refreshing local fallback providers.
         await Future<void>.delayed(const Duration(milliseconds: 350));
         ref.invalidate(visibleZonesProvider);
+        ref.invalidate(visibleCellsProvider);
         ref.invalidate(selectedZoneDetailProvider);
         ref.invalidate(ownPendingTagPinsProvider);
+        ref.invalidate(ownVisitPinsProvider);
+        ref.invalidate(ownVisitHistoryProvider);
         ref.invalidate(feedProvider);
         ref.invalidate(zoneFeedProvider);
         ref.invalidate(cityPulseProvider);
@@ -1584,8 +1800,11 @@ class TagSubmissionController
         data['aggregation'] as Map<String, dynamic>,
       );
       ref.invalidate(visibleZonesProvider);
+      ref.invalidate(visibleCellsProvider);
       ref.invalidate(selectedZoneDetailProvider);
       ref.invalidate(ownPendingTagPinsProvider);
+      ref.invalidate(ownVisitPinsProvider);
+      ref.invalidate(ownVisitHistoryProvider);
       ref.invalidate(feedProvider);
       ref.invalidate(zoneFeedProvider);
       ref.invalidate(cityPulseProvider);
@@ -1694,10 +1913,12 @@ class AuthActionController extends StateNotifier<AsyncValue<void>> {
       ref.read(cachedUserMeProvider.notifier).state = userMe;
       await persistAuthCredentials(
         token: token,
-        email: email.trim(),
+        email: userMe?.email ?? email.trim(),
         user: userMe,
       );
+      ref.read(authBootstrapCompleteProvider.notifier).state = true;
       routerRefreshListenable.value++;
+      ref.read(explorePendingGpsCenterProvider.notifier).state = true;
       ref.invalidate(userMeProvider);
       ref.invalidate(userContributionsProvider);
       ref.invalidate(savedZonesProfileProvider);
@@ -1710,6 +1931,7 @@ class AuthActionController extends StateNotifier<AsyncValue<void>> {
 
   void loginDemoUser() {
     unawaited(clearPersistedAuth());
+    ref.read(explorePendingGpsCenterProvider.notifier).state = true;
     ref.read(authTokenProvider.notifier).state = 'demo-token-local';
     ref.read(authUserEmailProvider.notifier).state = 'demo@strollwise.local';
     ref.read(cachedUserMeProvider.notifier).state = null;

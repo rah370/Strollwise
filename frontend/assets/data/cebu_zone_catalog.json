@@ -1,0 +1,134 @@
+[
+  {
+    "zone_id": "Z001",
+    "zone_name": "Talamban",
+    "city": "Cebu City",
+    "zone_type": "LOCAL",
+    "radius_km": 3,
+    "color": "green",
+    "center": { "lat": 10.3550, "lng": 123.9180 },
+    "characteristics": ["residential", "schools", "daily_commute", "local_businesses"],
+    "default_local_ratio": 1.0
+  },
+  {
+    "zone_id": "Z002",
+    "zone_name": "Pardo",
+    "city": "Cebu City",
+    "zone_type": "LOCAL",
+    "radius_km": 4,
+    "color": "green",
+    "center": { "lat": 10.2815, "lng": 123.8450 },
+    "characteristics": ["community_area", "public_transport", "residential", "local_markets"],
+    "default_local_ratio": 0.88
+  },
+  {
+    "zone_id": "Z003",
+    "zone_name": "Minglanilla Proper",
+    "city": "Minglanilla",
+    "zone_type": "LOCAL",
+    "radius_km": 5,
+    "color": "green",
+    "center": { "lat": 10.2441, "lng": 123.7964 },
+    "characteristics": ["suburban", "residential", "local_activity", "routine_movement"],
+    "default_local_ratio": 0.90
+  },
+  {
+    "zone_id": "Z004",
+    "zone_name": "Talisay Residential Area",
+    "city": "Talisay",
+    "zone_type": "LOCAL",
+    "radius_km": 3,
+    "color": "green",
+    "center": { "lat": 10.2447, "lng": 123.8494 },
+    "characteristics": ["housing", "schools", "daily_life", "community_services"],
+    "default_local_ratio": 0.87
+  },
+  {
+    "zone_id": "Z005",
+    "zone_name": "Mactan Resort Zone",
+    "city": "Lapu-Lapu City",
+    "zone_type": "INTERNATIONAL",
+    "radius_km": 6,
+    "color": "blue",
+    "center": { "lat": 10.2995, "lng": 124.0118 },
+    "characteristics": ["resorts", "hotels", "airport_access", "foreign_visitors"],
+    "default_local_ratio": 0.0
+  },
+  {
+    "zone_id": "Z006",
+    "zone_name": "Colon Basilica Heritage Zone",
+    "city": "Cebu City",
+    "zone_type": "INTERNATIONAL",
+    "radius_km": 2,
+    "color": "blue",
+    "center": { "lat": 10.2943, "lng": 123.9018 },
+    "characteristics": ["heritage_sites", "tourism", "historical_landmarks", "guided_tours"],
+    "default_local_ratio": 0.18
+  },
+  {
+    "zone_id": "Z007",
+    "zone_name": "IT Park Business Zone",
+    "city": "Cebu City",
+    "zone_type": "INTERNATIONAL",
+    "radius_km": 2,
+    "color": "blue",
+    "center": { "lat": 10.3305, "lng": 123.9066 },
+    "characteristics": ["digital_nomads", "business_travelers", "hotels", "nightlife"],
+    "default_local_ratio": 0.22
+  },
+  {
+    "zone_id": "Z008",
+    "zone_name": "SRP Tourism Belt",
+    "city": "Cebu City",
+    "zone_type": "INTERNATIONAL",
+    "radius_km": 4,
+    "color": "blue",
+    "center": { "lat": 10.2867, "lng": 123.8805 },
+    "characteristics": ["tourist_destinations", "entertainment", "large_events", "visitor_activity"],
+    "default_local_ratio": 0.15
+  },
+  {
+    "zone_id": "Z009",
+    "zone_name": "Ayala Center Cebu",
+    "city": "Cebu City",
+    "zone_type": "MIXED",
+    "radius_km": 3,
+    "color": "yellow",
+    "center": { "lat": 10.3176, "lng": 123.9053 },
+    "characteristics": ["shopping", "offices", "tourists", "locals"],
+    "default_local_ratio": 0.55
+  },
+  {
+    "zone_id": "Z010",
+    "zone_name": "Fuente Osmeña",
+    "city": "Cebu City",
+    "zone_type": "MIXED",
+    "radius_km": 2,
+    "color": "yellow",
+    "center": { "lat": 10.3099, "lng": 123.8915 },
+    "characteristics": ["hotels", "hospitals", "restaurants", "transport_hub"],
+    "default_local_ratio": 0.52
+  },
+  {
+    "zone_id": "Z011",
+    "zone_name": "SM City Cebu",
+    "city": "Cebu City",
+    "zone_type": "MIXED",
+    "radius_km": 3,
+    "color": "yellow",
+    "center": { "lat": 10.3113, "lng": 123.9180 },
+    "characteristics": ["shopping", "ferry_passengers", "locals", "tourists"],
+    "default_local_ratio": 0.48
+  },
+  {
+    "zone_id": "Z012",
+    "zone_name": "Carbon Market Area",
+    "city": "Cebu City",
+    "zone_type": "MIXED",
+    "radius_km": 2.5,
+    "color": "yellow",
+    "center": { "lat": 10.2932, "lng": 123.8997 },
+    "characteristics": ["local_market", "heritage", "tourist_interest", "commercial_activity"],
+    "default_local_ratio": 0.58
+  }
+]

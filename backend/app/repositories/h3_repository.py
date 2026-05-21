@@ -30,3 +30,25 @@ class H3Repository:
             return []
         stmt = select(H3CellAggregate).where(H3CellAggregate.h3_index.in_(idxs))
         return list(self.db.execute(stmt).scalars())
+
+    def list_active_in_bbox(
+        self,
+        min_lat: float,
+        min_lng: float,
+        max_lat: float,
+        max_lng: float,
+        *,
+        limit: int = 400,
+    ) -> list[H3CellAggregate]:
+        """Active cells whose centroid falls in the viewport (Python filter)."""
+        cells = self.list_all_active()
+        in_box: list[H3CellAggregate] = []
+        from app.services import h3_service
+
+        for cell in cells:
+            lat, lng = h3_service.cell_centroid(cell.h3_index)
+            if min_lat <= lat <= max_lat and min_lng <= lng <= max_lng:
+                in_box.append(cell)
+            if len(in_box) >= limit:
+                break
+        return in_box
