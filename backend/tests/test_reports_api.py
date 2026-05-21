@@ -58,13 +58,26 @@ def test_create_report_converts_latlng_into_h3(client):
 
 
 def test_single_user_cannot_form_cell_with_multiple_reports(client):
-    """Three tags from one account still count as one person."""
+    """One tag per cell per user; extra submits are rejected before aggregation."""
     token = _register(client, "solo@example.com")
-    for i in range(3):
-        body = _post_food_report(client, token, f"Solo report {i}")
-        assert body["aggregation"]["matching_count"] == 1
-        assert body["aggregation"]["threshold_met"] is False
-        assert body["aggregation"]["remaining_to_threshold"] == 2
+    body = _post_food_report(client, token, "Solo report")
+    assert body["aggregation"]["matching_count"] == 1
+    assert body["aggregation"]["threshold_met"] is False
+    assert body["aggregation"]["remaining_to_threshold"] == 2
+
+    dup = client.post(
+        "/api/v1/reports",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "latitude": 10.3157,
+            "longitude": 123.8854,
+            "category": "food",
+            "tags": ["food", "cafe"],
+            "note_text": "Duplicate attempt",
+        },
+    )
+    assert dup.status_code == 422
+    assert "pending tag" in dup.json()["detail"].lower()
 
 
 def test_zones_endpoint_returns_list(client):
@@ -103,6 +116,136 @@ def test_report_rejects_unknown_category(client):
         },
     )
     assert resp.status_code == 422
+
+
+def test_rejects_duplicate_pending_in_same_cell(client):
+    token = _register(client, "dup-pending@example.com")
+    first = client.post(
+        "/api/v1/reports",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "latitude": 10.3157,
+            "longitude": 123.8854,
+            "category": "food",
+            "tags": ["food"],
+        },
+    )
+    assert first.status_code == 201
+    second = client.post(
+        "/api/v1/reports",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "latitude": 10.3157,
+            "longitude": 123.8854,
+            "category": "food",
+            "tags": ["cafe"],
+        },
+    )
+    assert second.status_code == 422
+    assert "pending tag" in second.json()["detail"].lower()
+
+
+def test_rejects_per_cell_cooldown_after_visible_report(
+    client, db_session, monkeypatch
+):
+    from datetime import datetime, timedelta, timezone
+
+    from sqlalchemy import desc, select
+
+    from app.core.config import get_settings
+    from app.models.report import Report
+
+    monkeypatch.setenv("REPORT_COOLDOWN_HOURS_PER_CELL", "24")
+    get_settings.cache_clear()
+
+    token = _register(client, "cooldown@example.com")
+    lat, lng = 10.3188, 123.8888
+    first = client.post(
+        "/api/v1/reports",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "latitude": lat,
+            "longitude": lng,
+            "category": "food",
+            "tags": ["cooldown_test"],
+        },
+    )
+    assert first.status_code == 201
+    h3_index = first.json()["h3_index"]
+
+    stmt = (
+        select(Report)
+        .where(Report.h3_index == h3_index)
+        .order_by(desc(Report.created_at))
+        .limit(1)
+    )
+    report = db_session.execute(stmt).scalars().first()
+    assert report is not None
+    report.visibility_status = "visible"
+    report.created_at = datetime.now(timezone.utc) - timedelta(hours=1)
+    db_session.commit()
+
+    second = client.post(
+        "/api/v1/reports",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "latitude": lat,
+            "longitude": lng,
+            "category": "food",
+            "tags": ["cooldown_retry"],
+        },
+    )
+    assert second.status_code == 422
+    assert "recently" in second.json()["detail"].lower()
+
+
+def test_rejects_hourly_rate_limit(client, monkeypatch):
+    from app.core.config import get_settings
+    from app.services import h3_service
+
+    monkeypatch.setenv("REPORT_MAX_PER_USER_PER_HOUR", "2")
+    monkeypatch.setenv("REPORT_COOLDOWN_HOURS_PER_CELL", "0")
+    get_settings.cache_clear()
+
+    token = _register(client, "ratelimit@example.com")
+    cfg = get_settings()
+    seen_cells: set[str] = set()
+    locations: list[tuple[float, float]] = []
+    lat, lng = 10.3157, 123.8854
+    while len(locations) < 3:
+        cell = h3_service.latlng_to_cell(lat, lng, cfg.h3_resolution)
+        if cell not in seen_cells:
+            seen_cells.add(cell)
+            locations.append((lat, lng))
+        lat += 0.012
+        lng += 0.012
+
+    for lat, lng in locations[:2]:
+        resp = client.post(
+            "/api/v1/reports",
+            headers={"Authorization": f"Bearer {token}"},
+            json={
+                "latitude": lat,
+                "longitude": lng,
+                "category": "food",
+                "tags": ["rate_limit_probe"],
+            },
+        )
+        assert resp.status_code == 201, resp.text
+
+    lat, lng = locations[2]
+    blocked = client.post(
+        "/api/v1/reports",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "latitude": lat,
+            "longitude": lng,
+            "category": "food",
+            "tags": ["rate_limit_probe"],
+        },
+    )
+    assert blocked.status_code == 422
+    assert "last hour" in blocked.json()["detail"].lower()
 
 
 def test_report_rejects_sensitive_area(client):

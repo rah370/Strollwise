@@ -21,6 +21,7 @@ import '../../../shared/map/map_viewport.dart';
 import '../../../shared/providers/app_providers.dart';
 import '../../../shared/traveler_gradient.dart';
 import '../../../shared/zone_place_ui.dart';
+import '../../../shared/zone_validation_metrics.dart';
 import 'cell_detail_sheet.dart';
 import 'explore_area_insight_card.dart';
 import 'explore_map_filters.dart';
@@ -797,6 +798,7 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
   }
 
   void _selectZone(ZoneModel zone) {
+    ref.read(zoneValidationLiveProvider.notifier).state = null;
     ref.read(selectedCellProvider.notifier).state = null;
     ref.read(mapSearchPlaceTitleProvider.notifier).state = null;
     ref.read(selectedZoneProvider.notifier).state =
@@ -839,6 +841,7 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
   }
 
   void _clearSelectedZone() {
+    ref.read(zoneValidationLiveProvider.notifier).state = null;
     ref.read(selectedZoneProvider.notifier).state = null;
     ref.read(selectedCellProvider.notifier).state = null;
     setState(() {
@@ -2346,41 +2349,15 @@ String _localPresence(ZoneModel zone) {
   return '${pct.round()}%';
 }
 
-int _matchingSignalCount(ZoneModel zone) {
-  final total = zone.reportCount < 1 ? 1 : zone.reportCount;
-  return math.max(1, (total * (zone.confidenceScore / 100)).round());
-}
-
-String _topAgreedCategory(ZoneModel zone) {
-  final raw = (zone.placeName ?? zone.zoneType).replaceAll('_', ' ');
-  return raw
-      .split(' ')
-      .where((part) => part.isNotEmpty)
-      .map((part) => '${part[0].toUpperCase()}${part.substring(1)}')
-      .join(' ');
-}
-
-String _lastUpdatedLabel(ZoneModel zone) {
-  final updated = zone.updatedAt;
-  if (updated == null) return 'Recent';
-  final local = updated.toLocal();
-  final now = DateTime.now();
-  final diff = now.difference(local);
-  if (diff.inMinutes < 1) return 'Just now';
-  if (diff.inHours < 1) return '${diff.inMinutes}m ago';
-  if (diff.inDays < 1) return '${diff.inHours}h ago';
-  return '${local.month}/${local.day} ${local.hour.toString().padLeft(2, '0')}:${local.minute.toString().padLeft(2, '0')}';
-}
-
-class _ValidationMiniDashboard extends StatelessWidget {
+class _ValidationMiniDashboard extends ConsumerWidget {
   const _ValidationMiniDashboard({required this.zone, required this.palette});
 
   final ZoneModel zone;
   final _ZonePalette palette;
 
   @override
-  Widget build(BuildContext context) {
-    final matching = _matchingSignalCount(zone);
+  Widget build(BuildContext context, WidgetRef ref) {
+    final metrics = ZoneValidationMetrics.forZone(ref, zone);
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(10),
@@ -2411,17 +2388,23 @@ class _ValidationMiniDashboard extends StatelessWidget {
             spacing: 6,
             runSpacing: 6,
             children: [
-              _ValidationPill(label: 'Signals', value: '${zone.reportCount}'),
-              _ValidationPill(label: 'Matching', value: '$matching'),
+              _ValidationPill(
+                label: 'Signals',
+                value: '${metrics.totalSignals}',
+              ),
+              _ValidationPill(
+                label: 'Matching',
+                value: '${metrics.matchingSignals}',
+              ),
               _ValidationPill(
                 label: 'Confidence',
-                value: '${zone.confidenceScore.toStringAsFixed(0)}%',
+                value: '${metrics.confidence.toStringAsFixed(0)}%',
               ),
               _ValidationPill(
                 label: 'Category',
-                value: _topAgreedCategory(zone),
+                value: metrics.topCategory,
               ),
-              _ValidationPill(label: 'Updated', value: _lastUpdatedLabel(zone)),
+              _ValidationPill(label: 'Updated', value: metrics.lastUpdated),
             ],
           ),
         ],

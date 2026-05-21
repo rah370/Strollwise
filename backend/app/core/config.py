@@ -47,6 +47,9 @@ class Settings(BaseSettings):
     # can form / go public, plus category agreement in report_service.
     pending_min_reports_per_cell: int = Field(default=3)
     pending_agreement_ratio: float = Field(default=0.6)
+    # Per-user anti-spam on POST /reports (0 disables that guard).
+    report_cooldown_hours_per_cell: int = Field(default=24)
+    report_max_per_user_per_hour: int = Field(default=30)
 
     s3_bucket_name: str | None = Field(default=None)
     s3_access_key: str | None = Field(default=None)

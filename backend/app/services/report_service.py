@@ -4,13 +4,13 @@ from __future__ import annotations
 import logging
 from collections import Counter
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 from sqlalchemy.orm import Session
 
 from app.core.cache import cache_delete_pattern, cache_set
-from app.core.config import settings
+from app.core.config import get_settings, settings
 from app.models.enums import ReportCategory, VisibilityStatus
 from app.models.media import Media
 from app.models.report import Report
@@ -124,6 +124,7 @@ class ReportService:
         h3_index = h3_service.latlng_to_cell(
             payload.latitude, payload.longitude, settings.h3_resolution
         )
+        self._validate_submission_limits(user, h3_index)
         report = Report(
             user_id=user.id,
             h3_index=h3_index,
@@ -236,6 +237,37 @@ class ReportService:
                     f"{area.kind} area. Choose a nearby public area instead."
                 )
 
+    def _validate_submission_limits(self, user: User, h3_index: str) -> None:
+        """Block duplicate pending tags, per-cell cooldown, and hourly floods."""
+        cfg = get_settings()
+        if self.reports.has_user_pending_in_h3(user.id, h3_index):
+            raise ReportValidationError(
+                "You already have a pending tag in this map cell. "
+                "Wait for community validation or choose a nearby spot."
+            )
+
+        cooldown_hours = cfg.report_cooldown_hours_per_cell
+        if cooldown_hours > 0:
+            since = datetime.now(timezone.utc) - timedelta(hours=cooldown_hours)
+            if (
+                self.reports.latest_user_report_in_h3_since(
+                    user.id, h3_index, since
+                )
+                is not None
+            ):
+                raise ReportValidationError(
+                    "You tagged this map cell recently. "
+                    f"Try again after {cooldown_hours} hours or pick a nearby area."
+                )
+
+        max_per_hour = cfg.report_max_per_user_per_hour
+        if max_per_hour > 0:
+            since = datetime.now(timezone.utc) - timedelta(hours=1)
+            if self.reports.count_user_reports_since(user.id, since) >= max_per_hour:
+                raise ReportValidationError(
+                    "Too many tags in the last hour. Please wait before submitting again."
+                )
+
     def recent_feed(self, limit: int = 50) -> list[Report]:
         return self.reports.list_recent(limit)
 
@@ -326,7 +358,7 @@ class ReportService:
         pending_reports = self.reports.list_pending_by_h3_index(h3_index)
         has_uspf = any(_tags_refer_to_uspf(r.tags_json) for r in pending_reports)
         # Campus "USPF" tags: one submission in the cell is enough to validate and
-        # publish the zone (still subject to duplicate checks elsewhere).
+        # publish the zone (per-user cooldown / duplicate pending still apply on submit).
         min_reports = (
             1
             if has_uspf

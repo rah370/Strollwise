@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy import desc, func, select
@@ -27,6 +28,39 @@ class ReportRepository:
         self.db.add(report)
         self.db.flush()
         return report
+
+    def has_user_pending_in_h3(self, user_id: UUID, h3_index: str) -> bool:
+        stmt = select(func.count()).select_from(Report).where(
+            Report.user_id == user_id,
+            Report.h3_index == h3_index,
+            Report.visibility_status == "pending",
+        )
+        return int(self.db.scalar(stmt) or 0) > 0
+
+    def latest_user_report_in_h3_since(
+        self,
+        user_id: UUID,
+        h3_index: str,
+        since: datetime,
+    ) -> Report | None:
+        stmt = (
+            select(Report)
+            .where(
+                Report.user_id == user_id,
+                Report.h3_index == h3_index,
+                Report.created_at >= since,
+            )
+            .order_by(desc(Report.created_at))
+            .limit(1)
+        )
+        return self.db.execute(stmt).scalars().first()
+
+    def count_user_reports_since(self, user_id: UUID, since: datetime) -> int:
+        stmt = select(func.count()).select_from(Report).where(
+            Report.user_id == user_id,
+            Report.created_at >= since,
+        )
+        return int(self.db.scalar(stmt) or 0)
 
     def get_by_id(self, report_id: UUID) -> Report | None:
         return self.db.get(Report, report_id)

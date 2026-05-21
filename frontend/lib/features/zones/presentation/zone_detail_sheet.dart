@@ -7,6 +7,7 @@ import 'package:go_router/go_router.dart';
 import '../../../app/theme/colors.dart';
 import '../../../shared/models/zone.dart';
 import '../../../shared/providers/app_providers.dart';
+import '../../../shared/zone_validation_metrics.dart';
 
 class ZoneDetailSheet extends ConsumerWidget {
   const ZoneDetailSheet({super.key});
@@ -280,6 +281,7 @@ class _ZoneBody extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final validation = ZoneValidationMetrics.forZone(ref, zone);
     final overview = ref.watch(currentZoneOverviewProvider).valueOrNull;
     final alternatives = overview?.alternativeZones ?? const <ZoneModel>[];
     final nearby = overview?.nearbyZones ?? const <ZoneModel>[];
@@ -331,7 +333,7 @@ class _ZoneBody extends ConsumerWidget {
                 borderRadius: BorderRadius.circular(14),
               ),
               child: Text(
-                '${zone.reportCount}',
+                '${validation.totalSignals}',
                 style: const TextStyle(
                   fontWeight: FontWeight.w800,
                   color: AppColors.primaryText,
@@ -381,13 +383,7 @@ class _ZoneBody extends ConsumerWidget {
         const SizedBox(height: 20),
         _SectionHeading(title: 'Validation Dashboard'),
         const SizedBox(height: 10),
-        _ZoneValidationDashboard(
-          totalSignals: zone.reportCount,
-          matchingSignals: _matchingSignalCount(zone),
-          confidence: zone.confidenceScore,
-          topCategory: _topAgreedCategory(zone),
-          lastUpdated: _lastUpdatedLabel(zone),
-        ),
+        _ZoneValidationDashboard(zone: zone),
         const SizedBox(height: 20),
         _SectionHeading(title: 'About this Zone'),
         const SizedBox(height: 8),
@@ -538,25 +534,6 @@ class _ZoneBody extends ConsumerWidget {
       _ => 'local movement, activity patterns, and zone-level behavior',
     };
     return 'This zone shows $traveler $behavior. Confidence is $confidence% based on recent community tags, with $peak activity.';
-  }
-
-  int _matchingSignalCount(ZoneModel zone) {
-    final total = zone.reportCount < 1 ? 1 : zone.reportCount;
-    return math.max(1, (total * (zone.confidenceScore / 100)).round());
-  }
-
-  String _topAgreedCategory(ZoneModel zone) =>
-      _titleize(zone.placeName ?? zone.zoneType);
-
-  String _lastUpdatedLabel(ZoneModel zone) {
-    final updated = zone.updatedAt;
-    if (updated == null) return 'Recent';
-    final local = updated.toLocal();
-    final diff = DateTime.now().difference(local);
-    if (diff.inMinutes < 1) return 'Just now';
-    if (diff.inHours < 1) return '${diff.inMinutes}m ago';
-    if (diff.inDays < 1) return '${diff.inHours}h ago';
-    return '${local.month}/${local.day} ${local.hour.toString().padLeft(2, '0')}:${local.minute.toString().padLeft(2, '0')}';
   }
 
   String _localsKnow(ZoneModel zone) {
@@ -712,23 +689,14 @@ class _SectionHeading extends StatelessWidget {
   }
 }
 
-class _ZoneValidationDashboard extends StatelessWidget {
-  const _ZoneValidationDashboard({
-    required this.totalSignals,
-    required this.matchingSignals,
-    required this.confidence,
-    required this.topCategory,
-    required this.lastUpdated,
-  });
+class _ZoneValidationDashboard extends ConsumerWidget {
+  const _ZoneValidationDashboard({required this.zone});
 
-  final int totalSignals;
-  final int matchingSignals;
-  final double confidence;
-  final String topCategory;
-  final String lastUpdated;
+  final ZoneModel zone;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final metrics = ZoneValidationMetrics.forZone(ref, zone);
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
@@ -742,13 +710,13 @@ class _ZoneValidationDashboard extends StatelessWidget {
             children: [
               _ValidationTile(
                 label: 'Total signals',
-                value: '$totalSignals',
+                value: '${metrics.totalSignals}',
                 icon: Icons.tag_rounded,
               ),
               const SizedBox(width: 10),
               _ValidationTile(
                 label: 'Matching',
-                value: '$matchingSignals',
+                value: '${metrics.matchingSignals}',
                 icon: Icons.how_to_reg_rounded,
               ),
             ],
@@ -758,13 +726,13 @@ class _ZoneValidationDashboard extends StatelessWidget {
             children: [
               _ValidationTile(
                 label: 'Confidence',
-                value: '${confidence.toStringAsFixed(0)}%',
+                value: '${metrics.confidence.toStringAsFixed(0)}%',
                 icon: Icons.verified_user_outlined,
               ),
               const SizedBox(width: 10),
               _ValidationTile(
                 label: 'Updated',
-                value: lastUpdated,
+                value: metrics.lastUpdated,
                 icon: Icons.schedule_rounded,
               ),
             ],
@@ -788,7 +756,7 @@ class _ZoneValidationDashboard extends StatelessWidget {
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                    'Top agreed category: $topCategory',
+                    'Top agreed category: ${metrics.topCategory}',
                     style: const TextStyle(
                       color: Color(0xFF334155),
                       fontWeight: FontWeight.w800,

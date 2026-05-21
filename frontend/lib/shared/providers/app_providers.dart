@@ -23,6 +23,7 @@ import '../../shared/models/user_me.dart';
 import '../../shared/models/zone.dart';
 import '../../shared/map/map_viewport.dart';
 import '../../shared/network/api_client.dart';
+import '../../shared/zone_validation_metrics.dart';
 
 final authTokenProvider = StateProvider<String?>((ref) => null);
 final authUserEmailProvider = StateProvider<String?>((ref) => null);
@@ -1785,6 +1786,103 @@ final tagSubmissionProvider =
       return TagSubmissionController(ref);
     });
 
+/// After a tag submit, refresh zone selection and validation metrics so the
+/// Explore card and zone detail sheet update immediately.
+Future<void> _applyZoneValidationAfterTag(
+  Ref ref,
+  TagSubmissionPayload payload,
+  TagSubmissionFeedback feedback,
+) async {
+  ref.invalidate(currentZoneOverviewProvider);
+
+  final token = ref.read(authTokenProvider);
+  final isDemoSession = token == null || token == 'demo-token-local';
+  ZoneModel? fromApi;
+
+  if (!isDemoSession) {
+    try {
+      final dio = ref.read(dioProvider);
+      final response = await dio.get(
+        '/zones/current',
+        queryParameters: {
+          'lat': payload.latitude,
+          'lng': payload.longitude,
+          'ring': 2,
+          'limit': 8,
+        },
+      );
+      final overview = CurrentZoneOverviewModel.fromJson(
+        response.data as Map<String, dynamic>,
+      );
+      fromApi = overview.currentZone;
+    } catch (_) {}
+  }
+
+  var selected = ref.read(selectedZoneProvider);
+  ZoneModel? base = selected;
+  if (fromApi != null) {
+    if (base == null ||
+        base.zoneId.isEmpty ||
+        base.zoneId == fromApi.zoneId) {
+      base = fromApi;
+    }
+  }
+
+  if (base == null) {
+    final zones = ref.read(visibleZonesProvider).valueOrNull ?? const <ZoneModel>[];
+    base = _nearestZoneForTag(zones, payload.latitude, payload.longitude);
+  }
+
+  if (base == null) return;
+
+  final enriched = enrichZoneForAreaCard(base);
+  final totalSignals = enriched.reportCount + 1;
+  final matchingSignals = math.max(
+    matchingSignalCount(
+      withReportCount(enriched, totalSignals),
+    ),
+    feedback.matchingCount,
+  );
+  final now = DateTime.now();
+  final bumped = withReportCount(
+    enriched,
+    totalSignals,
+    updatedAt: now,
+  );
+
+  ref.read(zoneValidationLiveProvider.notifier).state = liveMetricsAfterTag(
+    zone: bumped,
+    totalSignals: totalSignals,
+    matchingSignals: matchingSignals,
+    tags: payload.tags,
+  );
+
+  if (selected == null ||
+      selected.zoneId.isEmpty ||
+      selected.zoneId == bumped.zoneId) {
+    ref.read(selectedZoneProvider.notifier).state = bumped;
+  }
+}
+
+ZoneModel? _nearestZoneForTag(
+  List<ZoneModel> zones,
+  double lat,
+  double lng,
+) {
+  ZoneModel? nearest;
+  var bestKm = double.infinity;
+  for (final zone in zones) {
+    final dLat = zone.centroidLat - lat;
+    final dLng = zone.centroidLng - lng;
+    final km = math.sqrt(dLat * dLat + dLng * dLng) * 111.0;
+    if (km < bestKm) {
+      bestKm = km;
+      nearest = zone;
+    }
+  }
+  return nearest;
+}
+
 class TagSubmissionController
     extends StateNotifier<AsyncValue<TagSubmissionFeedback?>> {
   TagSubmissionController(this.ref) : super(const AsyncData(null));
@@ -1810,6 +1908,8 @@ class TagSubmissionController
         ref.invalidate(feedProvider);
         ref.invalidate(zoneFeedProvider);
         ref.invalidate(cityPulseProvider);
+        final feedback = _demoFeedback(payload);
+        await _applyZoneValidationAfterTag(ref, payload, feedback);
         try {
           await ref.read(userContributionsProvider.notifier).refresh();
         } catch (_) {}
@@ -1818,7 +1918,6 @@ class TagSubmissionController
           await ref.read(userMeProvider.future);
         } catch (_) {}
         ref.invalidate(savedZonesProfileProvider);
-        final feedback = _demoFeedback(payload);
         state = AsyncData(feedback);
         return feedback;
       }
@@ -1840,6 +1939,7 @@ class TagSubmissionController
       ref.invalidate(feedProvider);
       ref.invalidate(zoneFeedProvider);
       ref.invalidate(cityPulseProvider);
+      await _applyZoneValidationAfterTag(ref, payload, feedback);
       try {
         await ref.read(userContributionsProvider.notifier).refresh();
       } catch (_) {}
