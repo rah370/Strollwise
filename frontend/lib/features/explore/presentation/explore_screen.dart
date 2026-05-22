@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:math' as math;
 
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
@@ -19,6 +18,8 @@ import '../../../shared/maps/google_maps_launcher.dart';
 import '../../../shared/network/api_client.dart';
 import '../../../shared/map/map_viewport.dart';
 import '../../../shared/providers/app_providers.dart';
+import '../../../shared/notifications/app_notification_sheet.dart';
+import '../../../shared/notifications/app_notifications.dart';
 import '../../../shared/traveler_gradient.dart';
 import '../../../shared/zone_place_ui.dart';
 import '../../../shared/zone_validation_metrics.dart';
@@ -158,13 +159,6 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
       await _moveCameraToLocation(cue.focus, zoom: 16.4);
       final zones = ref.read(visibleZonesProvider).valueOrNull ?? _latestZones;
       await _drawZones(zones);
-      if (!mounted) return;
-      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-        SnackBar(
-          content: Text(cue.summary),
-          duration: const Duration(seconds: 5),
-        ),
-      );
     });
   }
 
@@ -907,11 +901,11 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
     final token = ref.read(authTokenProvider);
     if (token == null || token == 'demo-token-local') {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          behavior: SnackBarBehavior.floating,
-          content: Text('Sign in to save private visit pins on your map.'),
-        ),
+      pushAppNotification(
+        ref,
+        title: 'Sign in required',
+        message: 'Log in to save private visit pins on your map.',
+        kind: AppNotificationKind.warning,
       );
       return;
     }
@@ -936,18 +930,14 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
       final zones = ref.read(visibleZonesProvider).valueOrNull ?? [];
       if (mounted) {
         unawaited(_drawZones(zones));
-        ScaffoldMessenger.of(context)
-          ..hideCurrentSnackBar()
-          ..showSnackBar(
-            SnackBar(
-              behavior: SnackBarBehavior.floating,
-              content: Text(
-                label == null
-                    ? 'Saved to your private visit map.'
-                    : 'Saved visit: $label',
-              ),
-            ),
-          );
+        pushAppNotification(
+          ref,
+          title: 'Visit saved',
+          message: label == null
+              ? 'Saved to your private visit map.'
+              : 'Saved visit: $label',
+          kind: AppNotificationKind.success,
+        );
       }
     } on DioException catch (e) {
       if (!mounted) return;
@@ -955,8 +945,11 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
       final message = detail is Map && detail['detail'] != null
           ? detail['detail'].toString()
           : 'Could not save visit pin.';
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(behavior: SnackBarBehavior.floating, content: Text(message)),
+      pushAppNotification(
+        ref,
+        title: 'Visit not saved',
+        message: message,
+        kind: AppNotificationKind.error,
       );
     }
   }
@@ -977,16 +970,12 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
     );
     if (!mounted) return;
     if (!opened) {
-      ScaffoldMessenger.of(context)
-        ..hideCurrentSnackBar()
-        ..showSnackBar(
-          const SnackBar(
-            behavior: SnackBarBehavior.floating,
-            content: Text(
-              'Could not open Google Maps. Install the app or try again.',
-            ),
-          ),
-        );
+      pushAppNotification(
+        ref,
+        title: 'Directions',
+        message: 'Could not open Google Maps. Install the app or try again.',
+        kind: AppNotificationKind.warning,
+      );
     }
   }
 
@@ -1209,6 +1198,16 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
         });
       },
     );
+    ref.listen<LatLng?>(exploreFocusLocationProvider, (previous, next) {
+      if (next == null) return;
+      WidgetsBinding.instance.addPostFrameCallback((_) async {
+        if (!mounted) return;
+        await _moveCameraToLocation(next, zoom: 15.4);
+        ref.read(exploreFocusLocationProvider.notifier).state = null;
+        final zones = ref.read(visibleZonesProvider).valueOrNull ?? _latestZones;
+        await _drawZones(zones);
+      });
+    });
     ref.listen<bool>(explorePendingGpsCenterProvider, (prev, next) {
       if (next != true) return;
       ref.read(explorePendingGpsCenterProvider.notifier).state = false;
@@ -1296,7 +1295,18 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
     final searchPlaceTitle = ref.watch(mapSearchPlaceTitleProvider);
     ref.watch(currentZoneOverviewProvider);
     final zoneDataNotice = ref.watch(zoneDataNoticeProvider);
+    final unreadNotifications = ref.watch(unreadNotificationCountProvider);
     final zones = zonesValue.valueOrNull ?? _latestZones;
+
+    ref.listen<String?>(zoneDataNoticeProvider, (previous, next) {
+      if (next == null || next.isEmpty || next == previous) return;
+      pushAppNotification(
+        ref,
+        title: 'Map data',
+        message: next,
+        kind: AppNotificationKind.info,
+      );
+    });
 
     return Scaffold(
       body: LayoutBuilder(
@@ -1389,7 +1399,9 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
                       onSearchChanged: (value) =>
                           _onSearchQueryChanged(value, zones),
                       onSearchSubmitted: () => _submitSearch(zones),
-                      onNotificationTap: () {},
+                      onNotificationTap: () =>
+                          showAppNotificationSheet(context, ref),
+                      showNotificationDot: unreadNotifications > 0,
                     ),
                     if (_showSearch &&
                         (_searchController.text.trim().isNotEmpty ||
@@ -1811,6 +1823,7 @@ class _MapTopBar extends StatelessWidget {
     required this.onSearchChanged,
     required this.onSearchSubmitted,
     required this.onNotificationTap,
+    this.showNotificationDot = false,
   });
 
   final int? zoneCount;
@@ -1822,6 +1835,7 @@ class _MapTopBar extends StatelessWidget {
   final ValueChanged<String> onSearchChanged;
   final VoidCallback onSearchSubmitted;
   final VoidCallback onNotificationTap;
+  final bool showNotificationDot;
 
   @override
   Widget build(BuildContext context) {
@@ -1943,7 +1957,7 @@ class _MapTopBar extends StatelessWidget {
           _TopIconButton(
             icon: Icons.notifications_none_rounded,
             onTap: onNotificationTap,
-            showDot: true,
+            showDot: showNotificationDot,
           ),
         ],
       ),

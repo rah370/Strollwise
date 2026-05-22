@@ -3,10 +3,12 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:maplibre_gl/maplibre_gl.dart';
 
 import '../../../app/theme/colors.dart';
 import '../../../shared/models/zone.dart';
 import '../../../shared/providers/app_providers.dart';
+import '../../../shared/traveler_gradient.dart';
 import '../../../shared/zone_validation_metrics.dart';
 
 class ZoneDetailSheet extends ConsumerWidget {
@@ -283,10 +285,17 @@ class _ZoneBody extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final validation = ZoneValidationMetrics.forZone(ref, zone);
     final overview = ref.watch(currentZoneOverviewProvider).valueOrNull;
-    final alternatives = overview?.alternativeZones ?? const <ZoneModel>[];
-    final nearby = overview?.nearbyZones ?? const <ZoneModel>[];
+    final alternatives = _alternativeZoneList(
+      zone,
+      overview?.alternativeZones ?? const <ZoneModel>[],
+    );
+    final nearbyHotspots = _nearbyHotspotZones(
+      zone,
+      overview?.nearbyZones ?? const <ZoneModel>[],
+    );
     final activityChips = _activityChips(zone);
-    final hotspotChips = _hotspotChips(zone, nearby, alternatives);
+    void openZone(ZoneModel candidate) =>
+        _openRelatedZone(context, ref, candidate);
     final intelligence = _zoneIntelligenceCopy(zone);
     final lat = zone.boundary.isNotEmpty
         ? zone.boundary.map((p) => p[1]).reduce((a, b) => a + b) /
@@ -420,8 +429,14 @@ class _ZoneBody extends ConsumerWidget {
         Wrap(
           spacing: 10,
           runSpacing: 10,
-          children: hotspotChips
-              .map((chip) => _IconLabel(icon: chip.$1, label: chip.$2))
+          children: nearbyHotspots
+              .map(
+                (candidate) => _ZoneLinkChip(
+                  icon: _iconForZoneType(candidate.zoneType),
+                  label: _titleize(candidate.displayName),
+                  onTap: () => openZone(candidate),
+                ),
+              )
               .toList(),
         ),
         const SizedBox(height: 20),
@@ -433,9 +448,10 @@ class _ZoneBody extends ConsumerWidget {
             runSpacing: 8,
             children: alternatives
                 .map(
-                  (candidate) => _IconLabel(
+                  (candidate) => _ZoneLinkChip(
                     icon: Icons.alt_route_rounded,
-                    label: candidate.displayName,
+                    label: _titleize(candidate.displayName),
+                    onTap: () => openZone(candidate),
                   ),
                 )
                 .toList(),
@@ -622,24 +638,71 @@ class _ZoneBody extends ConsumerWidget {
     }).toList();
   }
 
-  List<(IconData, String)> _hotspotChips(
+  static const _hotspotFallbackNames = [
+    'Escario',
+    'Ayala Center Cebu',
+    'Carbon Market Area',
+    'Colon Basilica Heritage Zone',
+  ];
+
+  static const _alternativeFallbackNames = [
+    'IT Park Business Zone',
+    'Carbon Market Area',
+    'Escario',
+  ];
+
+  void _openRelatedZone(
+    BuildContext context,
+    WidgetRef ref,
+    ZoneModel candidate,
+  ) {
+    ref.read(zoneValidationLiveProvider.notifier).state = null;
+    final enriched = enrichZoneForAreaCard(candidate);
+    final focus = LatLng(enriched.centroidLat, enriched.centroidLng);
+    ref.read(selectedZoneProvider.notifier).state = enriched;
+    ref.read(zoneLookupLocationProvider.notifier).state = focus;
+    ref.read(exploreFocusLocationProvider.notifier).state = focus;
+    ref.invalidate(currentZoneOverviewProvider);
+    ref.invalidate(selectedZoneDetailProvider);
+  }
+
+  List<ZoneModel> _nearbyHotspotZones(ZoneModel zone, List<ZoneModel> nearby) {
+    final fromApi =
+        nearby.where((z) => z.zoneId != zone.zoneId).take(4).toList();
+    if (fromApi.isNotEmpty) return fromApi;
+    return _zonesFromCatalogNames(_hotspotFallbackNames, excludeZoneId: zone.zoneId);
+  }
+
+  List<ZoneModel> _alternativeZoneList(
     ZoneModel zone,
-    List<ZoneModel> nearby,
     List<ZoneModel> alternatives,
   ) {
-    final candidates = [
-      ...nearby,
-      ...alternatives,
-    ].where((z) => z.zoneId != zone.zoneId).take(4).toList();
-    if (candidates.isEmpty) {
-      return const [
-        (Icons.location_on_outlined, 'City Center'),
-        (Icons.explore_outlined, 'Popular Area'),
-      ];
+    final fromApi =
+        alternatives.where((z) => z.zoneId != zone.zoneId).take(4).toList();
+    if (fromApi.isNotEmpty) return fromApi;
+    return _zonesFromCatalogNames(
+      _alternativeFallbackNames,
+      excludeZoneId: zone.zoneId,
+    );
+  }
+
+  List<ZoneModel> _zonesFromCatalogNames(
+    List<String> names, {
+    required String excludeZoneId,
+  }) {
+    final out = <ZoneModel>[];
+    final seen = <String>{};
+    for (final name in names) {
+      final entry = ZoneCatalog.lookup(name);
+      if (entry == null) continue;
+      final model = enrichZoneForAreaCard(zoneModelFromCatalogEntry(entry));
+      if (model.zoneId == excludeZoneId || seen.contains(model.zoneId)) {
+        continue;
+      }
+      seen.add(model.zoneId);
+      out.add(model);
     }
-    return candidates
-        .map((z) => (_iconForZoneType(z.zoneType), _titleize(z.displayName)))
-        .toList();
+    return out;
   }
 
   IconData _iconForZoneType(String zoneType) {
@@ -1084,6 +1147,65 @@ class _IconLabel extends StatelessWidget {
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ZoneLinkChip extends StatelessWidget {
+  const _ZoneLinkChip({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: const Color(0xFFF1F5F9),
+      borderRadius: BorderRadius.circular(14),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(14),
+        onTap: onTap,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 220),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: const Color(0xFFE2E8F0)),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(icon, size: 16, color: AppColors.accent),
+                const SizedBox(width: 6),
+                Flexible(
+                  child: Text(
+                    label,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      color: Color(0xFF0F172A),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 4),
+                const Icon(
+                  Icons.chevron_right_rounded,
+                  size: 16,
+                  color: Color(0xFF64748B),
+                ),
+              ],
+            ),
+          ),
         ),
       ),
     );

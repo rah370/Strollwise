@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../shared/notifications/app_notifications.dart';
 import '../shared/providers/app_providers.dart';
 import 'router.dart';
 import 'theme/app_theme.dart';
@@ -28,6 +29,7 @@ class _StrollWiseAppState extends ConsumerState<StrollWiseApp> {
     return MaterialApp.router(
       title: 'StrollWise',
       theme: buildAppTheme(),
+      scaffoldMessengerKey: rootScaffoldMessengerKey,
       routerConfig: appRouter,
       debugShowCheckedModeBanner: false,
     );

@@ -11,6 +11,7 @@ import '../../../app/theme/colors.dart';
 import '../../../shared/location/cebu_place_geocode.dart';
 import '../../../shared/models/zone.dart';
 import '../../../shared/network/api_client.dart';
+import '../../../shared/notifications/app_notifications.dart';
 import '../../../shared/providers/app_providers.dart';
 import '../../../shared/zone_place_ui.dart';
 
@@ -223,9 +224,12 @@ class _TagSubmissionScreenState extends ConsumerState<TagSubmissionScreen> {
 
   Future<void> _submit() async {
     if (_pickedLocation == null) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Set a location first.')));
+      pushAppNotification(
+        ref,
+        title: 'Location required',
+        message: 'Set a location on the map before submitting.',
+        kind: AppNotificationKind.warning,
+      );
       return;
     }
     if (!_canSubmit) return;
@@ -256,6 +260,12 @@ class _TagSubmissionScreenState extends ConsumerState<TagSubmissionScreen> {
 
       final focus = LatLng(payload.latitude, payload.longitude);
       final summary = _submissionExploreSummary(feedback);
+      pushAppNotification(
+        ref,
+        title: 'Tag submitted',
+        message: summary,
+        kind: AppNotificationKind.success,
+      );
       ref.read(explorePostSubmitCueProvider.notifier).state =
           ExplorePostSubmitCue(focus: focus, summary: summary);
       ref.read(tagSubmissionPinLocationProvider.notifier).state = null;
@@ -273,9 +283,12 @@ class _TagSubmissionScreenState extends ConsumerState<TagSubmissionScreen> {
       });
     } catch (error) {
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(_submissionErrorMessage(error))));
+      pushAppNotification(
+        ref,
+        title: 'Tag not submitted',
+        message: _submissionErrorMessage(error),
+        kind: AppNotificationKind.error,
+      );
     }
   }
 
