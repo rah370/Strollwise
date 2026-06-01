@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 from sqlalchemy import desc, func, select
 from sqlalchemy.orm import Session
 
 from app.models.report import Report
+from app.models.user import User
 
 
 def _tag_filter_matches(tag_l: str, tags_lower: list[str]) -> bool:
@@ -190,3 +191,89 @@ class ReportRepository:
             .limit(limit)
         )
         return list(self.db.execute(stmt).scalars())
+
+    def list_admin(
+        self,
+        *,
+        visibility_status: str | None = None,
+        h3_index: str | None = None,
+        page: int = 1,
+        page_size: int = 50,
+    ) -> tuple[list[Report], int]:
+        stmt = select(Report)
+        count_stmt = select(func.count()).select_from(Report)
+        if visibility_status:
+            stmt = stmt.where(Report.visibility_status == visibility_status)
+            count_stmt = count_stmt.where(Report.visibility_status == visibility_status)
+        if h3_index:
+            stmt = stmt.where(Report.h3_index == h3_index)
+            count_stmt = count_stmt.where(Report.h3_index == h3_index)
+        total = int(self.db.scalar(count_stmt) or 0)
+        offset = max(page - 1, 0) * page_size
+        stmt = stmt.order_by(desc(Report.created_at)).offset(offset).limit(page_size)
+        return list(self.db.execute(stmt).scalars()), total
+
+    def list_by_ids(self, report_ids: list[UUID]) -> list[Report]:
+        if not report_ids:
+            return []
+        stmt = select(Report).where(Report.id.in_(report_ids))
+        return list(self.db.execute(stmt).scalars())
+
+    def list_by_h3_and_category_since(
+        self,
+        h3_index: str,
+        category: str,
+        since: datetime,
+        *,
+        exclude_id: UUID | None = None,
+    ) -> list[Report]:
+        stmt = select(Report).where(
+            Report.h3_index == h3_index,
+            Report.category == category.lower(),
+            Report.created_at >= since,
+        )
+        if exclude_id:
+            stmt = stmt.where(Report.id != exclude_id)
+        stmt = stmt.order_by(desc(Report.created_at))
+        return list(self.db.execute(stmt).scalars())
+
+    def list_near_threshold_cells(self, threshold: int) -> list[str]:
+        """H3 cells with pending reports from fewer than threshold distinct contributors."""
+        stmt = (
+            select(Report.h3_index)
+            .where(Report.visibility_status == "pending")
+            .group_by(Report.h3_index)
+            .having(func.count(func.distinct(Report.user_id)) < threshold)
+        )
+        return [str(row[0]) for row in self.db.execute(stmt).all()]
+
+    def count_by_visibility(self, status: str) -> int:
+        stmt = select(func.count()).select_from(Report).where(
+            Report.visibility_status == status
+        )
+        return int(self.db.scalar(stmt) or 0)
+
+    def count_distinct_contributors_in_h3(
+        self, h3_index: str, *, visibility_status: str | None = None
+    ) -> int:
+        stmt = select(func.count(func.distinct(Report.user_id))).where(
+            Report.h3_index == h3_index
+        )
+        if visibility_status:
+            stmt = stmt.where(Report.visibility_status == visibility_status)
+        return int(self.db.scalar(stmt) or 0)
+
+    def count_reports_per_day(self, days: int = 30) -> list[tuple[str, int]]:
+        since = datetime.now(timezone.utc) - timedelta(days=days)
+        dialect = self.db.get_bind().dialect.name
+        if dialect == "postgresql":
+            day_expr = func.to_char(Report.created_at, "YYYY-MM-DD")
+        else:
+            day_expr = func.strftime("%Y-%m-%d", Report.created_at)
+        stmt = (
+            select(day_expr, func.count())
+            .where(Report.created_at >= since)
+            .group_by(day_expr)
+            .order_by(day_expr)
+        )
+        return [(str(d), int(c)) for d, c in self.db.execute(stmt).all() if d is not None]

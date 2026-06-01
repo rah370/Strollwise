@@ -103,6 +103,8 @@ No live Postgres needed for the test suite.
 | GET | `/places/resolve` | Place at lat/lng |
 | GET | `/analytics/city-pulse` | City summary |
 
+Admin routes (`/admin/*`, requires `is_admin`): moderation queue, zones, users, analytics export, catalog CRUD, pipeline rebuild, runtime config, audit log. See [`admin/README.md`](../admin/README.md).
+
 ## Caching
 
 Redis caches `/zones` and analytics. If Redis is not running, routes still work; cache helpers no-op after the first connection failure.

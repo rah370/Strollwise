@@ -22,7 +22,8 @@ from app.services import h3_service
 from app.services.aggregation_service import AggregationService
 from app.services.audit_service import AuditService
 from app.services.place_service import PlaceService
-from app.services.visit_pin_service import VisitPinService
+from app.services.system_settings_service import effective_settings
+from app.services.admin_events import publish_report_event, publish_zones_updated
 from app.services.zone_merge_service import ZoneMergeService
 from app.utils.user_type_utils import traveler_type_from_user_type
 
@@ -117,6 +118,7 @@ class ReportService:
         self.reports = ReportRepository(db)
         self.media = MediaRepository(db)
         self.audit = AuditService(db)
+        self._cfg = effective_settings(db)
 
     def create_report(self, payload: ReportCreate, user: User) -> ReportSubmissionResult:
         self._validate(payload)
@@ -192,8 +194,12 @@ class ReportService:
             log.exception("Failed to record private visit pin for report %s", report.id)
         self._write_pending_cache(h3_index)
         cache_delete_pattern("zones:feed*")
+        publish_report_event("created", report_id=str(report.id), h3_index=h3_index)
         aggregation = self._build_aggregation_feedback(h3_index, report.category)
         threshold_met = self._approve_if_threshold_met(h3_index)
+        if threshold_met:
+            publish_report_event("approved", h3_index=h3_index, source="auto_threshold")
+            publish_zones_updated(source="auto_threshold")
         if threshold_met:
             aggregation = AggregationFeedback(
                 h3_index=aggregation.h3_index,
@@ -239,7 +245,7 @@ class ReportService:
 
     def _validate_submission_limits(self, user: User, h3_index: str) -> None:
         """Block duplicate pending tags, per-cell cooldown, and hourly floods."""
-        cfg = get_settings()
+        cfg = self._cfg
         if self.reports.has_user_pending_in_h3(user.id, h3_index):
             raise ReportValidationError(
                 "You already have a pending tag in this map cell. "
@@ -335,7 +341,7 @@ class ReportService:
         min_reports = (
             1
             if has_uspf
-            else max(settings.pending_min_reports_per_cell, 1)
+            else max(self._cfg.pending_min_reports_per_cell, 1)
         )
         people_in_cell = _distinct_contributors(pending_reports)
         matching_count = people_in_cell
@@ -362,7 +368,7 @@ class ReportService:
         min_reports = (
             1
             if has_uspf
-            else max(settings.pending_min_reports_per_cell, 1)
+            else max(self._cfg.pending_min_reports_per_cell, 1)
         )
         if _distinct_contributors(pending_reports) < min_reports:
             return False
@@ -370,7 +376,7 @@ class ReportService:
         category_counts = Counter((r.category or "").lower() for r in pending_reports)
         top_count = max(category_counts.values(), default=0)
         agreement = (top_count / len(pending_reports)) if pending_reports else 0.0
-        if agreement < settings.pending_agreement_ratio:
+        if agreement < self._cfg.pending_agreement_ratio:
             return False
 
         for report in pending_reports:

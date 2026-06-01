@@ -41,10 +41,11 @@ class CityPulseService:
             category_counts: Counter[str] = Counter()
             peak_labels: Counter[str] = Counter()
             for zone in active:
-                category_counts[zone.function_type] += 1
+                if zone.function_type:
+                    category_counts[zone.function_type] += 1
                 if zone.peak_time_label:
                     peak_labels[zone.peak_time_label] += 1
-            top_categories = [c for c, _ in category_counts.most_common(5)]
+            top_categories = [c for c, _ in category_counts.most_common(5) if c]
 
             # If zones expose peak_hours, we could compute a fine-grained label; fall back to the most common textual label.
             peak_label = peak_labels.most_common(1)[0][0] if peak_labels else label_for_peak_hours([])

@@ -16,6 +16,7 @@ from app.api.routers import (
     users,
     zones,
 )
+from app.api.routers.admin import router as admin_router
 from app.core.config import settings
 from app.core.logging import configure_logging
 
@@ -48,6 +49,7 @@ def create_app() -> FastAPI:
     app.include_router(analytics.router, prefix=prefix)
     app.include_router(uploads.router, prefix=prefix)
     app.include_router(geocode.router, prefix=prefix)
+    app.include_router(admin_router, prefix=prefix)
 
     @app.get("/health", tags=["health"])
     def health_check() -> dict[str, str]:

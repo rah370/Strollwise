@@ -5,9 +5,9 @@ StrollWise is a crowd-sourced travel intelligence app. It uses **H3** hex cells 
 ## Architecture
 
 ```text
-Flutter (iOS, Android, desktop, web)
-        |  REST (Dio), JWT auth
-        v
+Flutter (iOS, Android, desktop, web)     admin/ (React web dashboard)
+        |  REST (Dio), JWT auth                    |  REST, JWT
+        v                                          v
 FastAPI  —  SQLAlchemy / GeoAlchemy2  —  PostgreSQL + PostGIS
         |
         +—  Redis (optional cache; app runs without it)
@@ -90,13 +90,25 @@ python scripts/verify_zone_placements_mapbox.py
 - **Android emulator:** `http://10.0.2.2:8000`
 - **Physical device:** your Mac’s LAN IP, e.g. `http://192.168.1.x:8000`
 
+### 4) Admin dashboard
+
+```bash
+cd admin
+npm install
+npm run dev
+# VITE_API_URL=http://127.0.0.1:8000
+```
+
+Login with the seeded admin (`admin@strollwise.dev` / `admin123456` after `python seed.py`). See [`admin/README.md`](admin/README.md).
+
 ## Repository layout
 
 | Path | Role |
 | --- | --- |
 | `frontend/` | Flutter app (Explore, tags, feed, profile) |
+| `admin/` | React web admin dashboard (moderation, analytics, pipeline) |
 | `backend/` | FastAPI, Alembic, `seed.py`, tests |
-| `backend/scripts/` | `dev.sh`, `init_local_db.sh` |
+| `backend/scripts/` | `dev.sh`, `init_local_db.sh`, `promote_admin.py` |
 
 Details: [`backend/README.md`](backend/README.md).
 

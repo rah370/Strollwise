@@ -88,6 +88,39 @@ def _catalog_place(entry: ZoneCatalogEntry) -> CatalogPlace:
     )
 
 
+def place_catalog_for_db(db) -> tuple[CatalogPlace, ...]:
+    """Build place footprints from DB-backed zone catalog (falls back to static)."""
+    from app.services.zone_catalog import load_catalog_from_db
+
+    entries = load_catalog_from_db(db)
+    return tuple(
+        _catalog_place(entry)
+        for entry in sorted(entries, key=lambda entry: entry.radius_km)
+    )
+
+
+def catalog_place_at_point_db(db, *, lat: float, lng: float) -> CatalogPlace | None:
+    """Among overlapping footprints, pick the zone whose center is closest."""
+    from app.services.zone_catalog import load_catalog_from_db
+
+    entries = load_catalog_from_db(db)
+    zone_by_slug = {entry.zone_id.lower(): entry for entry in entries}
+    places = place_catalog_for_db(db)
+    containing: list[tuple[float, CatalogPlace]] = []
+    for place in places:
+        if not point_in_geojson(place.polygon_geojson, lat=lat, lng=lng):
+            continue
+        zone = zone_by_slug.get(place.slug)
+        if zone is None:
+            continue
+        km = haversine_km(lat, lng, zone.center_lat, zone.center_lng)
+        containing.append((km, place))
+    if not containing:
+        return None
+    containing.sort(key=lambda pair: pair[0])
+    return containing[0][1]
+
+
 # Smaller footprints first so point-in-polygon picks the most specific zone.
 CEBU_PLACE_CATALOG: tuple[CatalogPlace, ...] = tuple(
     _catalog_place(entry)

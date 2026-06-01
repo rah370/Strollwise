@@ -57,14 +57,22 @@ class Settings(BaseSettings):
     s3_region: str = Field(default="us-east-1")
     upload_local_dir: str = Field(default="/tmp/strollwise-uploads")
 
-    cors_origins: str = Field(default="*")
+    cors_origins: str = Field(
+        default="http://localhost:5173,http://127.0.0.1:5173,http://localhost:8000,http://127.0.0.1:8000"
+    )
 
     @property
     def cors_origin_list(self) -> list[str]:
         raw = self.cors_origins.strip()
-        if raw == "*" or not raw:
-            return ["*"]
-        return [origin.strip() for origin in raw.split(",") if origin.strip()]
+        if not raw or raw == "*":
+            return [
+                "http://localhost:5173",
+                "http://127.0.0.1:5173",
+                "http://localhost:8000",
+                "http://127.0.0.1:8000",
+            ]
+        origins = [origin.strip() for origin in raw.split(",") if origin.strip()]
+        return origins if origins else ["http://localhost:5173"]
 
 
 @lru_cache

@@ -41,6 +41,7 @@ from app.models import (
 from app.services import h3_service
 from app.services.aggregation_service import AggregationService
 from app.services.place_service import PlaceService
+from app.services.admin_bootstrap import ensure_admin_user
 from app.services.zone_merge_service import ZoneMergeService
 from app.utils.user_type_utils import apply_user_type_to_user, traveler_type_from_user_type
 
@@ -49,6 +50,8 @@ random.seed(7)
 Faker.seed(7)
 
 from app.services.zone_catalog import CEBU_ZONE_CATALOG
+
+ADMIN_EMAIL = "admin@strollwise.dev"
 
 
 def _traveler_bias(local_ratio: float) -> str:
@@ -116,6 +119,8 @@ def clear_tables(db: Session) -> None:
 
 def seed_users(db: Session, count: int = 30) -> list[User]:
     users: list[User] = []
+    admin = ensure_admin_user(db)
+    users.append(admin)
     thesis_user_types = ["local_resident", "international_visitor", "domestic_traveler"]
     for i in range(count):
         email = f"demo{i}@example.com"
@@ -225,6 +230,9 @@ def main() -> None:
 
         print("Recomputing aggregates + publishing per-cell zones…")
         recompute_aggregates_and_zones(db, reports)
+
+        ensure_admin_user(db)
+        print(f"Admin account ready: {ADMIN_EMAIL} / admin123456")
 
         zone_count = db.query(MergedZone).count()
         cell_count = db.query(H3CellAggregate).count()

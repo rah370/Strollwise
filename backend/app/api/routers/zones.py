@@ -22,7 +22,7 @@ from app.schemas.common import Centroid
 from app.models.enums import BehaviorType, FunctionType, LiveStatus
 from app.schemas.place import PlaceSummary
 from app.schemas.zone import CurrentZoneOverview, ZoneDetail, ZoneLaunchContext, ZoneListItem
-from app.services.place_catalog import CEBU_PLACE_CATALOG, catalog_place_at_point
+from app.services.place_catalog import catalog_place_at_point_db
 from app.services.zone_catalog import (
     catalog_entry_for_name,
     default_local_ratio_for_name,
@@ -92,7 +92,7 @@ def zones_in_viewport(
             )
         ]
     _attach_place_metadata(db, in_viewport)
-    in_viewport = _filter_catalog_zones(in_viewport)
+    in_viewport = _filter_catalog_zones(db, in_viewport)
     ranked = RankingService.apply_viewport_filters(
         in_viewport,
         filter_key=filter,
@@ -127,7 +127,7 @@ def zones_feed(
     repo = ZoneRepository(db)
     all_zones = repo.list_active()
     _attach_place_metadata(db, all_zones)
-    all_zones = _filter_catalog_zones(all_zones)
+    all_zones = _filter_catalog_zones(db, all_zones)
     ranked = RankingService.rank(
         all_zones,
         filter_key=filter,
@@ -155,7 +155,7 @@ def current_zone_overview(
     repo = ZoneRepository(db)
     zones = repo.list_active()
     _attach_place_metadata(db, zones)
-    zones = _filter_catalog_zones(zones)
+    zones = _filter_catalog_zones(db, zones)
     if not zones:
         return CurrentZoneOverview(
             current_zone=None,
@@ -169,7 +169,7 @@ def current_zone_overview(
             ),
         )
 
-    current = _find_current_zone(zones, lat=lat, lng=lng)
+    current = _find_current_zone(db, zones, lat=lat, lng=lng)
     exclude_nearby: set[UUID] = set()
     if current is not None:
         exclude_nearby.add(current.zone_id)
@@ -281,7 +281,21 @@ def zone_nearby(
     return [_to_list_item(o) for _, o in distances[:limit]]
 
 
-_CATALOG_SLUGS = {entry.slug for entry in CEBU_PLACE_CATALOG}
+def _catalog_slugs(db: Session) -> set[str]:
+    from app.services.zone_catalog import load_catalog_from_db
+
+    return {entry.zone_id.lower() for entry in load_catalog_from_db(db)}
+
+
+def _filter_catalog_zones(db: Session, zones: list) -> list:
+    """Only curated thesis zones (one per catalog place)."""
+    slugs = _catalog_slugs(db)
+    filtered = []
+    for zone in zones:
+        slug = getattr(zone, "_place_slug", None)
+        if slug in slugs:
+            filtered.append(zone)
+    return filtered
 
 
 def _attach_place_metadata(db: Session, zones: list) -> None:
@@ -297,16 +311,6 @@ def _attach_place_metadata(db: Session, zones: list) -> None:
         zone._place_display_name = place.display_name  # type: ignore[attr-defined]
         zone._place_type = place.place_type  # type: ignore[attr-defined]
         zone._place_slug = place.slug  # type: ignore[attr-defined]
-
-
-def _filter_catalog_zones(zones: list) -> list:
-    """Only the 14 curated thesis zones (one per catalog place)."""
-    filtered = []
-    for zone in zones:
-        slug = getattr(zone, "_place_slug", None)
-        if slug in _CATALOG_SLUGS:
-            filtered.append(zone)
-    return filtered
 
 
 def _zone_place_fields(zone, primary_place) -> tuple[str, str | None, str | None]:
@@ -417,8 +421,8 @@ def _geojson_bbox_area_deg2(geojson: dict | None) -> float:
     return 1e9
 
 
-def _catalog_place_at_point(*, lat: float, lng: float):
-    return catalog_place_at_point(lat=lat, lng=lng)
+def _catalog_place_at_point(db: Session, *, lat: float, lng: float):
+    return catalog_place_at_point_db(db, lat=lat, lng=lng)
 
 
 def _zone_for_catalog_place(
@@ -446,8 +450,8 @@ def _zone_for_catalog_place(
     return candidates[0][2]
 
 
-def _find_current_zone(zones: list, *, lat: float, lng: float):
-    catalog_place = _catalog_place_at_point(lat=lat, lng=lng)
+def _find_current_zone(db: Session, zones: list, *, lat: float, lng: float):
+    catalog_place = _catalog_place_at_point(db, lat=lat, lng=lng)
     if catalog_place is not None:
         matched = _zone_for_catalog_place(
             zones, catalog_place, lat=lat, lng=lng

@@ -16,7 +16,7 @@ from app.repositories.h3_repository import H3Repository
 from app.repositories.place_repository import PlaceRepository
 from app.repositories.report_repository import ReportRepository
 from app.services import h3_service
-from app.services.place_catalog import CEBU_PLACE_CATALOG, CatalogPlace, catalog_by_slug
+from app.services.place_catalog import CatalogPlace, catalog_by_slug, place_catalog_for_db
 from app.services.polygon_service import PolygonService
 from app.utils.place_geometry import point_in_geojson
 from app.utils.place_type_utils import dominant_place_type, place_type_from_function
@@ -32,7 +32,7 @@ class PlaceService:
     def sync_catalog_places(self) -> list[Place]:
         """Ensure every catalog entry exists as a Place row."""
         synced: list[Place] = []
-        for entry in CEBU_PLACE_CATALOG:
+        for entry in place_catalog_for_db(self.db):
             existing = self.place_repo.get_by_slug(entry.slug)
             centroid_lat, centroid_lng = 0.0, 0.0
             if entry.polygon_geojson.get("type") == "Polygon":
@@ -208,9 +208,9 @@ class PlaceService:
     def _place_from_centroid(
         self, lat: float, lng: float, slug_to_place: dict[str, Place]
     ) -> Place | None:
-        from app.services.place_catalog import catalog_place_at_point
+        from app.services.place_catalog import catalog_place_at_point_db
 
-        entry = catalog_place_at_point(lat=lat, lng=lng)
+        entry = catalog_place_at_point_db(self.db, lat=lat, lng=lng)
         if entry is None:
             return None
         return slug_to_place.get(entry.slug)
@@ -219,7 +219,7 @@ class PlaceService:
         lat, lng = h3_service.cell_centroid(cell.h3_index)
         tag_counts = cell.tag_counts_json or {}
         normalized = {str(k).lower().strip(): int(v) for k, v in tag_counts.items()}
-        for entry in CEBU_PLACE_CATALOG:
+        for entry in place_catalog_for_db(self.db):
             matched = False
             for alias in entry.tag_aliases:
                 if alias in normalized and normalized[alias] > 0:
@@ -233,7 +233,7 @@ class PlaceService:
             if matched and point_in_geojson(entry.polygon_geojson, lat=lat, lng=lng):
                 return entry.slug
         if cell.dominant_category == "school":
-            for entry in CEBU_PLACE_CATALOG:
+            for entry in place_catalog_for_db(self.db):
                 if entry.default_place_type == "school":
                     if point_in_geojson(entry.polygon_geojson, lat=lat, lng=lng):
                         return entry.slug

@@ -400,3 +400,30 @@ def default_local_ratio_for_name(
         traveler_mix,
         local_presence_percent=local_presence_percent or None,
     )
+
+
+_catalog_db_cache: tuple[ZoneCatalogEntry, ...] | None = None
+
+
+def invalidate_catalog_cache() -> None:
+    global _catalog_db_cache
+    _catalog_db_cache = None
+
+
+def load_catalog_from_db(db) -> tuple[ZoneCatalogEntry, ...]:
+    """Load active catalog entries from DB, falling back to static CEBU_ZONE_CATALOG."""
+    global _catalog_db_cache
+    if _catalog_db_cache is not None:
+        return _catalog_db_cache
+    from app.repositories.catalog_repository import CatalogRepository
+
+    repo = CatalogRepository(db)
+    if repo.count() == 0:
+        repo.seed_from_static()
+        db.flush()
+    rows = repo.list_all(active_only=True)
+    if rows:
+        _catalog_db_cache = tuple(CatalogRepository.to_dataclass(r) for r in rows)
+        return _catalog_db_cache
+    _catalog_db_cache = CEBU_ZONE_CATALOG
+    return _catalog_db_cache
