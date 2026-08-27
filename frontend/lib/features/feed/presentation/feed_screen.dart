@@ -66,12 +66,27 @@ class _FeedScreenState extends ConsumerState<FeedScreen> {
   void _openZoneOnExplore(ZoneModel zone) {
     ref.read(zoneValidationLiveProvider.notifier).state = null;
     final enriched = enrichZoneForAreaCard(zone);
-    final focus = LatLng(enriched.centroidLat, enriched.centroidLng);
+    final focus = _mapFocusForZone(enriched);
     ref.read(selectedZoneProvider.notifier).state = enriched;
     ref.read(zoneLookupLocationProvider.notifier).state = focus;
     ref.read(exploreFocusLocationProvider.notifier).state = focus;
     ref.invalidate(selectedZoneDetailProvider);
     context.go('/explore');
+  }
+
+  static LatLng _mapFocusForZone(ZoneModel zone) {
+    if (zone.centroidLat != 0.0 || zone.centroidLng != 0.0) {
+      return LatLng(zone.centroidLat, zone.centroidLng);
+    }
+    final ring = zone.boundary;
+    if (ring.length >= 3) {
+      final lng =
+          ring.map((point) => point[0]).reduce((a, b) => a + b) / ring.length;
+      final lat =
+          ring.map((point) => point[1]).reduce((a, b) => a + b) / ring.length;
+      return LatLng(lat, lng);
+    }
+    return LatLng(zone.centroidLat, zone.centroidLng);
   }
 
   @override
@@ -566,56 +581,64 @@ class _FeaturedZoneFeedCard extends StatelessWidget {
     final accent = _ZoneFeedCard.parseAccent(zone);
     return Material(
       color: Colors.transparent,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(24),
-        onTap: onTap,
-        child: Container(
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(24),
-            gradient: LinearGradient(
-              colors: [
-                accent.withValues(alpha: 0.14),
-                Colors.white,
-              ],
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-            ),
-            border: Border.all(color: accent.withValues(alpha: 0.35)),
-            boxShadow: const [
-              BoxShadow(
-                color: Color(0x120F172A),
-                blurRadius: 20,
-                offset: Offset(0, 8),
-              ),
+      clipBehavior: Clip.antiAlias,
+      borderRadius: BorderRadius.circular(24),
+      child: Container(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(24),
+          gradient: LinearGradient(
+            colors: [
+              accent.withValues(alpha: 0.14),
+              Colors.white,
             ],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
           ),
-          child: Stack(
-            children: [
-              Positioned(
-                left: 0,
-                top: 0,
-                bottom: 0,
-                child: Container(
-                  width: 5,
-                  decoration: BoxDecoration(
-                    color: accent,
-                    borderRadius: const BorderRadius.horizontal(
-                      left: Radius.circular(24),
-                    ),
+          border: Border.all(color: accent.withValues(alpha: 0.35)),
+          boxShadow: const [
+            BoxShadow(
+              color: Color(0x120F172A),
+              blurRadius: 20,
+              offset: Offset(0, 8),
+            ),
+          ],
+        ),
+        child: Stack(
+          children: [
+            Positioned(
+              left: 0,
+              top: 0,
+              bottom: 0,
+              child: Container(
+                width: 5,
+                decoration: BoxDecoration(
+                  color: accent,
+                  borderRadius: const BorderRadius.horizontal(
+                    left: Radius.circular(24),
                   ),
                 ),
               ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(18, 16, 16, 16),
-                child: _ZoneFeedCardBody(
-                  zone: zone,
-                  seed: seed,
-                  featured: true,
-                  onViewMap: onTap,
-                ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(18, 16, 16, 16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  InkWell(
+                    onTap: onTap,
+                    borderRadius: BorderRadius.circular(16),
+                    child: _ZoneFeedCardBody(
+                      zone: zone,
+                      seed: seed,
+                      featured: true,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  _ViewOnMapButton(onPressed: onTap),
+                ],
               ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );
@@ -646,26 +669,62 @@ class _ZoneFeedCard extends StatelessWidget {
       color: Colors.white,
       borderRadius: BorderRadius.circular(20),
       clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: onTap,
-        child: Container(
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: const Color(0xFFE2E8F0)),
-            boxShadow: const [
-              BoxShadow(
-                color: Color(0x0D0F172A),
-                blurRadius: 14,
-                offset: Offset(0, 5),
+      child: Container(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: const Color(0xFFE2E8F0)),
+          boxShadow: const [
+            BoxShadow(
+              color: Color(0x0D0F172A),
+              blurRadius: 14,
+              offset: Offset(0, 5),
+            ),
+          ],
+        ),
+        padding: const EdgeInsets.fromLTRB(14, 14, 14, 12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            InkWell(
+              onTap: onTap,
+              borderRadius: BorderRadius.circular(12),
+              child: _ZoneFeedCardBody(
+                zone: zone,
+                seed: seed,
+                accent: accent,
               ),
-            ],
-          ),
-          padding: const EdgeInsets.fromLTRB(14, 14, 14, 12),
-          child: _ZoneFeedCardBody(
-            zone: zone,
-            seed: seed,
-            accent: accent,
-            onViewMap: onTap,
+            ),
+            const SizedBox(height: 10),
+            _ViewOnMapButton(onPressed: onTap),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ViewOnMapButton extends StatelessWidget {
+  const _ViewOnMapButton({required this.onPressed});
+
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: TextButton.icon(
+        onPressed: onPressed,
+        icon: const Icon(Icons.map_outlined, size: 16),
+        label: const Text('View on map'),
+        style: TextButton.styleFrom(
+          foregroundColor: FeedScreen._tealBg,
+          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+          minimumSize: const Size(48, 36),
+          tapTargetSize: MaterialTapTargetSize.padded,
+          alignment: Alignment.centerLeft,
+          textStyle: const TextStyle(
+            fontWeight: FontWeight.w800,
+            fontSize: 12,
           ),
         ),
       ),
@@ -677,14 +736,12 @@ class _ZoneFeedCardBody extends StatefulWidget {
   const _ZoneFeedCardBody({
     required this.zone,
     required this.seed,
-    required this.onViewMap,
     this.featured = false,
     this.accent,
   });
 
   final ZoneModel zone;
   final int seed;
-  final VoidCallback onViewMap;
   final bool featured;
   final Color? accent;
 
@@ -801,6 +858,7 @@ class _ZoneFeedCardBodyState extends State<_ZoneFeedCardBody> {
         if (detail != null) ...[
           const SizedBox(height: 8),
           GestureDetector(
+            behavior: HitTestBehavior.opaque,
             onTap: () => setState(() => _showDetail = !_showDetail),
             child: Text(
               _showDetail ? detail : 'Tap for zone summary',
@@ -817,25 +875,6 @@ class _ZoneFeedCardBodyState extends State<_ZoneFeedCardBody> {
             ),
           ),
         ],
-        const SizedBox(height: 10),
-        Align(
-          alignment: Alignment.centerLeft,
-          child: TextButton.icon(
-            onPressed: widget.onViewMap,
-            icon: const Icon(Icons.map_outlined, size: 16),
-            label: const Text('View on map'),
-            style: TextButton.styleFrom(
-              foregroundColor: FeedScreen._tealBg,
-              padding: EdgeInsets.zero,
-              minimumSize: Size.zero,
-              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-              textStyle: const TextStyle(
-                fontWeight: FontWeight.w800,
-                fontSize: 12,
-              ),
-            ),
-          ),
-        ),
       ],
     );
   }

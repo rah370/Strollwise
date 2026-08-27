@@ -89,6 +89,8 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
   DateTime? _lastFollowCameraAt;
   LatLng? _lastFollowCameraTarget;
   LatLng? _lastZoneLookupLocation;
+  LatLng? _pendingCameraTarget;
+  double _pendingCameraZoom = _defaultZoom;
   ExplorePlaceSearchService? _placeSearchService;
   int _searchRequestGen = 0;
   static const _cebuCityCenter = LatLng(10.3157, 123.8854);
@@ -132,15 +134,28 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
     if (focus == null) return false;
     ref.read(exploreFocusLocationProvider.notifier).state = null;
     ref.read(currentUserLocationProvider.notifier).state = focus;
+    // Keep the requested zone until the map is actually ready. Explore is
+    // recreated on each tab switch, so the provider used to be cleared while
+    // `_controller` was still null and the camera never moved.
+    _didApplyCurrentZone = true;
     if (mounted) {
       setState(() {
         _usingManualLocation = true;
         _followUser = false;
         _locationState = _LocationBootstrapState.ready;
+        if (ref.read(selectedZoneProvider) != null) {
+          _mapMode = ExploreMapMode.zoneSelected;
+        }
       });
     }
     unawaited(_moveCameraToLocation(focus, zoom: 15.2));
     return true;
+  }
+
+  Future<void> _flushPendingCamera() async {
+    final target = _pendingCameraTarget;
+    if (target == null || !mounted) return;
+    await _moveCameraToLocation(target, zoom: _pendingCameraZoom);
   }
 
   void _applyPostSubmitCue(ExplorePostSubmitCue cue) {
@@ -273,9 +288,20 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
       maxLng: target.longitude + lngDelta,
     );
     _applyMapViewport(next, refetchData: true);
+    _pendingCameraTarget = target;
+    _pendingCameraZoom = zoom;
     final controller = _controller;
-    if (controller != null) {
+    if (controller == null || !_mapStyleLoaded) {
+      _scheduleZoneLookupUpdate(target, immediate: true);
+      return;
+    }
+    try {
       await controller.moveCamera(CameraUpdate.newLatLngZoom(target, zoom));
+      if (_pendingCameraTarget == target) {
+        _pendingCameraTarget = null;
+      }
+    } catch (_) {
+      // Style or native view can reject an early move; retry on the next flush.
     }
     _scheduleZoneLookupUpdate(target, immediate: true);
   }
@@ -1220,6 +1246,12 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
         if (next.isLoading) return;
         next.whenData((overview) {
           if (_didApplyCurrentZone || overview?.currentZone == null) return;
+          // Feed / Trends "View on map" already picked a zone. Don't replace it
+          // with whatever GPS thinks is current.
+          if (ref.read(selectedZoneProvider) != null) {
+            _didApplyCurrentZone = true;
+            return;
+          }
           _didApplyCurrentZone = true;
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (!mounted) return;
@@ -1233,8 +1265,7 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
       if (next == null) return;
       WidgetsBinding.instance.addPostFrameCallback((_) async {
         if (!mounted) return;
-        await _moveCameraToLocation(next, zoom: 15.4);
-        ref.read(exploreFocusLocationProvider.notifier).state = null;
+        _consumeExploreFocus();
         final zones = ref.read(visibleZonesProvider).valueOrNull ?? _latestZones;
         await _drawZones(zones);
       });
@@ -1352,14 +1383,17 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
                   excluding: true,
                   child: MapLibreMap(
                     styleString: MapboxConfig.mapStyleUrl,
-                    initialCameraPosition: const CameraPosition(
-                      target: _cebuCityCenter,
-                      zoom: 14.7,
+                    initialCameraPosition: CameraPosition(
+                      target: _pendingCameraTarget ?? _cebuCityCenter,
+                      zoom: _pendingCameraTarget != null
+                          ? _pendingCameraZoom
+                          : _defaultZoom,
                     ),
                     minMaxZoomPreference: const MinMaxZoomPreference(7.8, 18),
                     rotateGesturesEnabled: false,
                     onMapCreated: (controller) {
                       _controller = controller;
+                      unawaited(_flushPendingCamera());
                     },
                     onStyleLoadedCallback: () async {
                       _mapStyleLoaded = true;
@@ -1369,6 +1403,13 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
                       await _applyBaseMapVisualTuning(controller);
                       _zoneBelowLayerId = await _resolveRoadLayerId(controller);
                       _consumeExploreFocus();
+                      await _flushPendingCamera();
+                      if (_pendingCameraTarget != null) {
+                        await Future<void>.delayed(
+                          const Duration(milliseconds: 160),
+                        );
+                        if (mounted) await _flushPendingCamera();
+                      }
                       final zones = ref.read(visibleZonesProvider).valueOrNull;
                       if (zones != null) {
                         unawaited(_drawZones(zones));

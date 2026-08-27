@@ -526,7 +526,8 @@ ZoneModel zoneModelFromCatalogEntry(ZoneCatalogEntry entry) {
 
 /// Ensures every catalog zone can show the full Explore area card.
 ZoneModel enrichZoneForAreaCard(ZoneModel zone) {
-  if (zone.reportCount >= 8 && zone.confidenceScore >= 45) {
+  final hasCentroid = zone.centroidLat != 0.0 || zone.centroidLng != 0.0;
+  if (zone.reportCount >= 8 && zone.confidenceScore >= 45 && hasCentroid) {
     return zone;
   }
   final entry = ZoneCatalog.entryForZone(zone);
@@ -553,8 +554,8 @@ ZoneModel enrichZoneForAreaCard(ZoneModel zone) {
     polygonParts: zone.polygonParts.isNotEmpty ? zone.polygonParts : preview.polygonParts,
     sourceH3Rings:
         zone.sourceH3Rings.isNotEmpty ? zone.sourceH3Rings : preview.sourceH3Rings,
-    centroidLat: zone.centroidLat,
-    centroidLng: zone.centroidLng,
+    centroidLat: hasCentroid ? zone.centroidLat : preview.centroidLat,
+    centroidLng: hasCentroid ? zone.centroidLng : preview.centroidLng,
     crowdLevel: zone.crowdLevel > 0 ? zone.crowdLevel : preview.crowdLevel,
     localPresencePercent: zone.localPresencePercent > 0
         ? zone.localPresencePercent
