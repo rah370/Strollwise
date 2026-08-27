@@ -29,8 +29,12 @@
   <!-- Favicon -->
   <link rel="icon" type="image/png" href="favicon.png"/>
 
-  <title>strollwise</title>
+  <title>StrollWise</title>
   <link rel="manifest" href="manifest.json">
+  <!-- maplibre_gl 0.25 web needs the JS library in the page. Without it the
+       Explore map is a blank gray canvas while Flutter chrome still draws. -->
+  <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+  <link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet" />
 </head>
 <body>
   <!--
