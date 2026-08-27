@@ -446,6 +446,11 @@ final visibleZonesProvider = FutureProvider<List<ZoneModel>>((ref) async {
         .map((zone) => ZoneModel.fromJson(zone as Map<String, dynamic>))
         .where((zone) => zone.boundary.length >= 3)
         .toList();
+    // Empty production DB is a successful [] — still show the Cebu catalog
+    // so Explore is not a grey basemap with no local↔visitor colors.
+    if (zones.isEmpty) {
+      return _cachedOrFallbackZones(ref, cacheKey, filter);
+    }
     unawaited(_writeZoneCache(cacheKey, response.data));
     ref.read(zoneDataNoticeProvider.notifier).state = null;
     await ZoneCatalog.ensureLoaded();
