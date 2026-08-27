@@ -449,7 +449,7 @@ final visibleZonesProvider = FutureProvider<List<ZoneModel>>((ref) async {
     // Empty production DB is a successful [] — still show the Cebu catalog
     // so Explore is not a grey basemap with no local↔visitor colors.
     if (zones.isEmpty) {
-      return _cachedOrFallbackZones(ref, cacheKey, filter);
+      return await _cachedOrFallbackZones(ref, cacheKey, filter);
     }
     unawaited(_writeZoneCache(cacheKey, response.data));
     ref.read(zoneDataNoticeProvider.notifier).state = null;
@@ -668,9 +668,13 @@ final zoneFeedProvider = FutureProvider<List<ZoneModel>>((ref) async {
         .map((z) => ZoneModel.fromJson(z as Map<String, dynamic>))
         .where((z) => z.boundary.length >= 3 || z.sourceH3Rings.isNotEmpty)
         .toList();
+    if (zones.isEmpty) {
+      return await _cachedOrFallbackZones(ref, cacheKey, null);
+    }
     unawaited(_writeZoneCache(cacheKey, response.data));
     ref.read(zoneDataNoticeProvider.notifier).state = null;
-    return zones;
+    await ZoneCatalog.ensureLoaded();
+    return zones.map(enrichZoneForAreaCard).toList(growable: false);
   } on DioException {
     return _cachedOrFallbackZones(ref, cacheKey, null);
   } on FormatException {
@@ -1017,14 +1021,18 @@ const int _kFallbackH3MaxDisplayCells = 600;
 
 Future<List<ZoneModel>> _fallbackVisibleZones(String? filter) async {
   await ZoneCatalog.ensureLoaded();
-  var zones = ZoneCatalog.entries
-      .map(zoneModelFromCatalogEntry)
-      .map(enrichZoneForAreaCard)
-      .toList(growable: false);
-  if (zones.isEmpty) {
-    zones = _h3FallbackZoneList(const H3Factory().load());
+  try {
+    var zones = ZoneCatalog.entries
+        .map(zoneModelFromCatalogEntry)
+        .map(enrichZoneForAreaCard)
+        .toList(growable: false);
+    if (zones.isEmpty) {
+      zones = _legacyBlobFallbackZoneList();
+    }
+    return _filterFallbackZones(zones, filter);
+  } catch (_) {
+    return _filterFallbackZones(_legacyBlobFallbackZoneList(), filter);
   }
-  return _filterFallbackZones(zones, filter);
 }
 
 List<ZoneModel> _filterToCatalogZones(List<ZoneModel> zones) {
@@ -1056,6 +1064,7 @@ List<ZoneModel> _filterFallbackZones(List<ZoneModel> zones, String? filter) {
       .toList(growable: false);
 }
 
+// ignore: unused_element
 List<ZoneModel> _h3FallbackZoneList(H3 h3) {
   return [
     _fallbackZoneFromH3(
@@ -1280,7 +1289,6 @@ List<ZoneModel> _h3FallbackZoneList(H3 h3) {
   ];
 }
 
-// ignore: unused_element
 List<ZoneModel> _legacyBlobFallbackZoneList() {
   return [
     _legacyBlobFallbackZone(

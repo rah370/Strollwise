@@ -283,23 +283,47 @@ List<H3Index> _catalogH3CellsForEntry(H3 h3, ZoneCatalogEntry entry) {
   return within.take(cap).map((e) => e.cell).toList(growable: false);
 }
 
+List<List<double>> _catalogBlobRing(ZoneCatalogEntry entry) {
+  const steps = 16;
+  final latRadius = (entry.radiusKm / 111.0).clamp(0.004, 0.03);
+  final lngScale = math.cos(entry.centerLat * math.pi / 180.0).abs();
+  final lngRadius =
+      (entry.radiusKm / (111.0 * (lngScale < 0.2 ? 0.2 : lngScale)))
+          .clamp(0.004, 0.03);
+  final ring = <List<double>>[
+    for (var i = 0; i < steps; i++)
+      [
+        entry.centerLng +
+            math.cos((math.pi * 2 * i) / steps) * lngRadius,
+        entry.centerLat +
+            math.sin((math.pi * 2 * i) / steps) * latRadius,
+      ],
+  ];
+  ring.add([ring.first[0], ring.first[1]]);
+  return ring;
+}
+
+/// Hex outlines when H3 is ready; a circular blob if the web WASM module is not.
 List<List<List<double>>> catalogH3RingsForEntry(ZoneCatalogEntry entry) {
-  final h3 = const H3Factory().load();
-  final cells = _catalogH3CellsForEntry(h3, entry);
-  final rings = <List<List<double>>>[];
-  for (final cell in cells) {
-    final boundary = h3.cellToBoundary(cell);
-    if (boundary.length < 3) continue;
-    final ring = boundary.map((g) => <double>[g.lon, g.lat]).toList();
-    if (ring.isEmpty) continue;
-    final first = ring.first;
-    final last = ring.last;
-    if (first[0] != last[0] || first[1] != last[1]) {
-      ring.add([first[0], first[1]]);
+  try {
+    final h3 = const H3Factory().load();
+    final cells = _catalogH3CellsForEntry(h3, entry);
+    final rings = <List<List<double>>>[];
+    for (final cell in cells) {
+      final boundary = h3.cellToBoundary(cell);
+      if (boundary.length < 3) continue;
+      final ring = boundary.map((g) => <double>[g.lon, g.lat]).toList();
+      if (ring.isEmpty) continue;
+      final first = ring.first;
+      final last = ring.last;
+      if (first[0] != last[0] || first[1] != last[1]) {
+        ring.add([first[0], first[1]]);
+      }
+      if (ring.length >= 4) rings.add(ring);
     }
-    if (ring.length >= 4) rings.add(ring);
-  }
-  return rings;
+    if (rings.isNotEmpty) return rings;
+  } catch (_) {}
+  return [_catalogBlobRing(entry)];
 }
 
 class _CatalogZonePreview {
@@ -532,7 +556,12 @@ ZoneModel enrichZoneForAreaCard(ZoneModel zone) {
   }
   final entry = ZoneCatalog.entryForZone(zone);
   if (entry == null) return zone;
-  final preview = zoneModelFromCatalogEntry(entry);
+  final ZoneModel preview;
+  try {
+    preview = zoneModelFromCatalogEntry(entry);
+  } catch (_) {
+    return zone;
+  }
   return ZoneModel(
     zoneId: zone.zoneId.isNotEmpty ? zone.zoneId : preview.zoneId,
     displayName: zone.displayName.isNotEmpty ? zone.displayName : preview.displayName,
