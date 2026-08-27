@@ -14,15 +14,16 @@ class MapboxConfig {
     defaultValue: 'mapbox/streets-v12',
   );
 
-  static const _cartoFallback =
-      'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json';
+  /// OpenFreeMap Liberty: OSM vector tiles, no API key, parks/water in color.
+  static const _openFreeMapLiberty =
+      'https://tiles.openfreemap.org/styles/liberty';
 
   static bool get isConfigured =>
       accessToken.trim().isNotEmpty && !accessToken.contains('your_');
 
   /// Style URL for [MapLibreMap.styleString].
   static String get mapStyleUrl {
-    if (!isConfigured) return _cartoFallback;
+    if (!isConfigured) return _openFreeMapLiberty;
     final token = Uri.encodeComponent(accessToken.trim());
     final style = styleId.trim();
     return 'https://api.mapbox.com/styles/v1/$style?access_token=$token';

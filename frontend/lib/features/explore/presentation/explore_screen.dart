@@ -9,6 +9,7 @@ import 'package:h3_flutter/h3_flutter.dart';
 import 'package:maplibre_gl/maplibre_gl.dart';
 
 import '../../../app/theme/colors.dart';
+import '../../../core/constants/mapbox_config.dart';
 import '../../../shared/models/cell.dart';
 import '../../../shared/models/current_zone_overview.dart';
 import '../../../shared/models/layer_settings.dart';
@@ -1320,8 +1321,7 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
                 ExcludeSemantics(
                   excluding: true,
                   child: MapLibreMap(
-                    styleString:
-                        'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json',
+                    styleString: MapboxConfig.mapStyleUrl,
                     initialCameraPosition: const CameraPosition(
                       target: _cebuCityCenter,
                       zoom: 14.7,
