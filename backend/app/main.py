@@ -5,7 +5,7 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
@@ -92,6 +92,23 @@ def create_app() -> FastAPI:
     local_media = Path(settings.upload_local_dir)
     local_media.mkdir(parents=True, exist_ok=True)
     app.mount("/media", StaticFiles(directory=str(local_media)), name="media")
+
+    @app.get("/", include_in_schema=False)
+    def root() -> HTMLResponse:
+        admin = "https://strollwise.onrender.com"
+        return HTMLResponse(
+            f"""<!doctype html>
+<html lang="en">
+  <head><meta charset="utf-8"><title>StrollWise API</title></head>
+  <body style="font-family:system-ui;max-width:40rem;margin:3rem auto;padding:0 1rem">
+    <h1>StrollWise API</h1>
+    <p>This URL is the backend, not the website.</p>
+    <p><a href="{admin}">Open the admin dashboard</a></p>
+    <p><a href="/health">Health</a> · <a href="/privacy">Privacy</a> · <a href="/terms">Terms</a></p>
+  </body>
+</html>
+"""
+        )
 
     @app.get("/health", tags=["health"])
     def health_check() -> JSONResponse:

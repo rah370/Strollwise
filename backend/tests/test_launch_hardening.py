@@ -43,6 +43,13 @@ def test_validate_for_launch_accepts_production_shape():
     settings.validate_for_launch()
 
 
+def test_root_explains_this_is_the_api(client):
+    resp = client.get("/")
+    assert resp.status_code == 200
+    assert "admin dashboard" in resp.text.lower()
+    assert "strollwise.onrender.com" in resp.text
+
+
 def test_health_includes_database(client):
     resp = client.get("/health")
     assert resp.status_code == 200
