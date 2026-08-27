@@ -132,7 +132,22 @@ DNS: CNAME `api` → `<app>.fly.dev` (or `fly ips list` + A/AAAA).
 
 Local container stack (not TLS): `docker compose up --build` from the repo root.
 
-## 5. Admin and Flutter web (Cloudflare Pages)
+## 5. Admin and Flutter web
+
+### Render static sites (current free path)
+
+Admin is already on Render (`admin` root, `npm ci && npm run build`, publish `dist`, `VITE_API_URL=https://strollwise-api.onrender.com`).
+
+Flutter web:
+
+1. Static site, root directory `frontend`, this hosting branch until merge.
+2. Build command: `bash scripts/render_web.sh`
+3. Publish directory: `build/web`
+4. Build env: `API_URL=https://strollwise-api.onrender.com`
+5. Rewrite `/*` → `/index.html`
+6. Add the site origin to API `CORS_ORIGINS`
+
+### Cloudflare Pages (optional later)
 
 Create two Pages projects: `strollwise-admin` and `strollwise-app`.
 
