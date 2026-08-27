@@ -74,28 +74,30 @@ export function DashboardPage() {
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
-        <Card className="xl:col-span-2 h-80">
-          <h2 className="font-black text-sw-ink mb-4">Reports (last 30 days)</h2>
-          <ResponsiveContainer width="100%" height="85%">
-            {chartData.length > 0 ? (
-            <LineChart data={chartData}>
-              <XAxis dataKey="date" tick={{ fontSize: 11 }} stroke={colors.mutedText} />
-              <YAxis allowDecimals={false} stroke={colors.mutedText} />
-              <Tooltip />
-              <Line
-                type="monotone"
-                dataKey="count"
-                stroke={colors.primary}
-                strokeWidth={3}
-                dot={{ fill: colors.primary, r: 3 }}
-              />
-            </LineChart>
-            ) : (
-              <div className="flex items-center justify-center h-full text-sw-muted text-sm">
-                No reports in the last 30 days yet.
-              </div>
-            )}
-          </ResponsiveContainer>
+        <Card className="xl:col-span-2 h-80 min-w-0 flex flex-col">
+          <h2 className="font-black text-sw-ink mb-4 shrink-0">Reports (last 30 days)</h2>
+          {chartData.length > 0 ? (
+            <div className="min-h-0 min-w-0 flex-1">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={chartData}>
+                  <XAxis dataKey="date" tick={{ fontSize: 11 }} stroke={colors.mutedText} />
+                  <YAxis allowDecimals={false} stroke={colors.mutedText} />
+                  <Tooltip />
+                  <Line
+                    type="monotone"
+                    dataKey="count"
+                    stroke={colors.primary}
+                    strokeWidth={3}
+                    dot={{ fill: colors.primary, r: 3 }}
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          ) : (
+            <p className="flex flex-1 items-center justify-center text-center text-sw-muted text-sm px-4">
+              No reports in the last 30 days yet.
+            </p>
+          )}
         </Card>
 
         <Card>
