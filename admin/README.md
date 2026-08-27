@@ -42,6 +42,8 @@ cd backend
 
 ## Environment
 
+Production `VITE_API_URL` must be the public API origin (see [`docs/HOSTING.md`](../docs/HOSTING.md)). Leave it empty locally to use the Vite proxy.
+
 | Variable | Default |
 | --- | --- |
 | `VITE_API_URL` | `http://127.0.0.1:8000` |

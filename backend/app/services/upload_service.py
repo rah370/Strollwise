@@ -1,4 +1,4 @@
-"""Handles image uploads. Uses S3 when configured, otherwise local disk."""
+"""Handles image uploads. Uses S3/R2 when configured, otherwise local disk in non-prod."""
 from __future__ import annotations
 
 import logging
@@ -41,37 +41,55 @@ class UploadService:
         if len(data) > MAX_UPLOAD_BYTES:
             raise UploadError("File exceeds the 10MB upload limit")
 
-        if settings.s3_bucket_name and settings.s3_access_key and settings.s3_secret_key:
+        if settings.s3_configured:
             return self._save_s3(filename, data, mime)
+        if settings.is_production:
+            raise UploadError(
+                "Object storage is not configured. Set S3_BUCKET_NAME and credentials."
+            )
         return self._save_local(filename, data, mime)
 
     def _save_local(self, filename: str, data: bytes, mime: str) -> dict[str, str | int]:
         path = self.local_dir / filename
         with open(path, "wb") as f:
             f.write(data)
+        relative = f"/media/{filename}"
+        base = settings.public_base_url.rstrip("/")
+        file_url = f"{base}{relative}" if base else relative
         return {
-            "file_url": f"file://{path.as_posix()}",
+            "file_url": file_url,
             "mime_type": mime,
             "size_bytes": len(data),
         }
 
     def _save_s3(self, filename: str, data: bytes, mime: str) -> dict[str, str | int]:
         try:
-            import boto3  # type: ignore
+            import boto3
         except ImportError as exc:  # pragma: no cover
             raise UploadError("boto3 not installed for S3 uploads") from exc
-        client = boto3.client(
-            "s3",
-            region_name=settings.s3_region,
-            aws_access_key_id=settings.s3_access_key,
-            aws_secret_access_key=settings.s3_secret_key,
-        )
+        client_kwargs: dict[str, str] = {
+            "region_name": settings.s3_region or "auto",
+            "aws_access_key_id": settings.s3_access_key or "",
+            "aws_secret_access_key": settings.s3_secret_key or "",
+        }
+        if settings.s3_endpoint_url:
+            client_kwargs["endpoint_url"] = settings.s3_endpoint_url
+        client = boto3.client("s3", **client_kwargs)
         key = f"uploads/{filename}"
+        extra: dict[str, str] = {"ContentType": mime}
         client.put_object(
             Bucket=settings.s3_bucket_name,
             Key=key,
             Body=data,
-            ContentType=mime,
+            **extra,
         )
-        url = f"https://{settings.s3_bucket_name}.s3.{settings.s3_region}.amazonaws.com/{key}"
+        url = self._public_object_url(key)
         return {"file_url": url, "mime_type": mime, "size_bytes": len(data)}
+
+    def _public_object_url(self, key: str) -> str:
+        public = (settings.s3_public_base_url or "").rstrip("/")
+        if public:
+            return f"{public}/{key}"
+        if settings.s3_endpoint_url:
+            raise UploadError("S3_PUBLIC_BASE_URL is required when using a custom S3 endpoint")
+        return f"https://{settings.s3_bucket_name}.s3.{settings.s3_region}.amazonaws.com/{key}"

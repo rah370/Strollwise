@@ -5,7 +5,9 @@ import os
 os.environ.setdefault("DATABASE_URL", "sqlite+pysqlite:///:memory:")
 os.environ.setdefault("REDIS_URL", "redis://localhost:6379/15")
 os.environ.setdefault("JWT_SECRET_KEY", "test-secret")
-os.environ.setdefault("DEBUG", "true")
+os.environ["DEBUG"] = "true"
+os.environ["ENV"] = "development"
+os.environ["RATE_LIMIT_ENABLED"] = "false"
 os.environ["PENDING_MIN_REPORTS_PER_CELL"] = "3"
 
 import pytest
@@ -94,6 +96,9 @@ def db_session(engine):
     try:
         yield session
     finally:
+        from app.services.zone_catalog import invalidate_catalog_cache
+
+        invalidate_catalog_cache()
         session.rollback()
         for table in reversed(Base.metadata.sorted_tables):
             session.execute(table.delete())

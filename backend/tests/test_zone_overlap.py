@@ -43,20 +43,20 @@ def _box(lng0, lat0, lng1, lat1, zid, name, **kwargs):
     )
 
 
-def test_find_current_zone_single_containment():
+def test_find_current_zone_single_containment(db_session):
     a = _box(0, 0, 2, 2, uuid.uuid4(), "Big A")
     b = _box(0.5, 0.5, 1.5, 1.5, uuid.uuid4(), "Small B")
     # Point only in A
-    z = _find_current_zone([a, b], lat=0.1, lng=0.1)
+    z = _find_current_zone(db_session, [a, b], lat=0.1, lng=0.1)
     assert z is not None
     assert z.display_name == "Big A"
 
 
-def test_find_current_zone_overlap_returns_mixed():
+def test_find_current_zone_overlap_returns_mixed(db_session):
     # Two unit squares sharing a 0.5x0.5 corner overlap: A [0,0]-[1,1], B [0.5,0.5]-[1.5,1.5]
     a = _box(0, 0, 1, 1, uuid.uuid4(), "Zone Alpha", crowd_level=0.3)
     b = _box(0.5, 0.5, 1.5, 1.5, uuid.uuid4(), "Zone Beta", crowd_level=0.5)
-    z = _find_current_zone([a, b], lat=0.75, lng=0.75)
+    z = _find_current_zone(db_session, [a, b], lat=0.75, lng=0.75)
     assert z is not None
     assert "overlap" in z.display_name
     assert "Zone Alpha" in z.display_name and "Zone Beta" in z.display_name

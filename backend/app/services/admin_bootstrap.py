@@ -13,8 +13,8 @@ LEGACY_ADMIN_EMAIL = "admin@strollwise.local"
 ADMIN_PASSWORD = "admin123456"
 
 
-def ensure_admin_user(db: Session) -> User:
-    """Create or repair the default admin account (idempotent)."""
+def ensure_admin_user(db: Session, *, reset_password: bool = False) -> User:
+    """Create the default local admin if missing. Never reset an existing hash unless asked."""
     repo = UserRepository(db)
     admin = repo.get_by_email(ADMIN_EMAIL)
     legacy = repo.get_by_email(LEGACY_ADMIN_EMAIL)
@@ -37,7 +37,7 @@ def ensure_admin_user(db: Session) -> User:
         )
         apply_user_type_to_user(admin)
         db.add(admin)
-    else:
+    elif reset_password:
         admin.password_hash = hash_password(ADMIN_PASSWORD)
 
     admin.is_admin = True

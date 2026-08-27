@@ -8,6 +8,7 @@ def _register_body(**overrides):
         "country_of_origin": "Philippines",
         "city_of_origin": "Cebu City",
         "user_type": "local_resident",
+        "accepted_research_consent": True,
     }
     base.update(overrides)
     return base
@@ -53,6 +54,17 @@ def test_login_flow(client):
     me = client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {token}"})
     assert me.status_code == 200
     assert me.json()["email"] == "loginuser@example.com"
+
+
+def test_register_requires_research_consent(client):
+    resp = client.post(
+        "/api/v1/auth/register",
+        json={
+            **_register_body(accepted_research_consent=False),
+            "email": "noconsent@example.com",
+        },
+    )
+    assert resp.status_code == 422
 
 
 def test_login_rejects_wrong_password(client):

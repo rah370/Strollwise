@@ -1,0 +1,123 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  backend-test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Pytest
+        run: pytest -q
+      - name: Ruff (launch-hardening modules)
+        run: >
+          ruff check
+          app/main.py
+          app/core/config.py
+          app/core/health.py
+          app/core/rate_limit.py
+          app/schemas/auth.py
+          app/services/admin_bootstrap.py
+          app/services/upload_service.py
+          tests/test_launch_hardening.py
+          tests/test_auth_api.py
+          scripts/create_admin.py
+          scripts/promote_admin.py
+          scripts/reset_admin_password.py
+
+  admin-build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: admin
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: admin/package-lock.json
+      - run: npm ci
+      - run: npm run build
+        env:
+          VITE_API_URL: https://api.strollwise.app
+
+  deploy-api:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [backend-test]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+        if: ${{ secrets.FLY_API_TOKEN != '' }}
+      - name: Deploy API
+        if: ${{ secrets.FLY_API_TOKEN != '' }}
+        working-directory: backend
+        run: flyctl deploy --remote-only
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+
+  deploy-admin:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [admin-build, backend-test]
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: admin
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: admin/package-lock.json
+      - run: npm ci
+      - run: npm run build
+        env:
+          VITE_API_URL: ${{ vars.VITE_API_URL || 'https://api.strollwise.app' }}
+      - name: Publish admin to Cloudflare Pages
+        if: ${{ secrets.CLOUDFLARE_API_TOKEN != '' }}
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: admin
+          command: pages deploy dist --project-name=strollwise-admin
+
+  deploy-app:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [backend-test]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+      - name: Build Flutter web
+        working-directory: frontend
+        run: |
+          flutter pub get
+          flutter build web --release \
+            --dart-define=API_URL=${{ vars.API_URL || 'https://api.strollwise.app' }} \
+            --dart-define=SENTRY_DSN=${{ vars.SENTRY_DSN_FLUTTER || '' }} \
+            --dart-define=SENTRY_ENVIRONMENT=production \
+            --dart-define=ENABLE_DEMO_LOGIN=false
+      - name: Publish app to Cloudflare Pages
+        if: ${{ secrets.CLOUDFLARE_API_TOKEN != '' }}
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: frontend
+          command: pages deploy build/web --project-name=strollwise-app

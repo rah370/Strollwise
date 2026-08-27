@@ -10,7 +10,7 @@ from uuid import UUID
 from sqlalchemy.orm import Session
 
 from app.core.cache import cache_delete_pattern, cache_set
-from app.core.config import get_settings, settings
+from app.core.config import settings
 from app.models.enums import ReportCategory, VisibilityStatus
 from app.models.media import Media
 from app.models.report import Report
@@ -19,11 +19,12 @@ from app.repositories.media_repository import MediaRepository
 from app.repositories.report_repository import ReportRepository
 from app.schemas.report import ReportCreate
 from app.services import h3_service
+from app.services.admin_events import publish_report_event, publish_zones_updated
 from app.services.aggregation_service import AggregationService
 from app.services.audit_service import AuditService
 from app.services.place_service import PlaceService
 from app.services.system_settings_service import effective_settings
-from app.services.admin_events import publish_report_event, publish_zones_updated
+from app.services.visit_pin_service import VisitPinService
 from app.services.zone_merge_service import ZoneMergeService
 from app.utils.user_type_utils import traveler_type_from_user_type
 
@@ -123,14 +124,15 @@ class ReportService:
     def create_report(self, payload: ReportCreate, user: User) -> ReportSubmissionResult:
         self._validate(payload)
         self._validate_not_restricted(payload.latitude, payload.longitude)
+        h3_resolution = self._cfg.h3_resolution
         h3_index = h3_service.latlng_to_cell(
-            payload.latitude, payload.longitude, settings.h3_resolution
+            payload.latitude, payload.longitude, h3_resolution
         )
         self._validate_submission_limits(user, h3_index)
         report = Report(
             user_id=user.id,
             h3_index=h3_index,
-            resolution=settings.h3_resolution,
+            resolution=h3_resolution,
             latitude_raw=payload.latitude,
             longitude_raw=payload.longitude,
             category=payload.category.lower(),

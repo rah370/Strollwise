@@ -1,8 +1,15 @@
 """Green–blue behavioral gradient for map zones and cells."""
 from __future__ import annotations
 
+import math
+
 LOCAL_RGB = (34, 197, 94)  # #22C55E
 INTL_RGB = (59, 130, 246)  # #3B82F6
+
+
+def _round_channel(value: float) -> int:
+    """Round half away from zero so Python matches Flutter `num.round()`."""
+    return int(math.copysign(math.floor(abs(value) + 0.5), value))
 
 
 def local_ratio_from_presence_percent(local_presence_percent: float) -> float:
@@ -42,9 +49,9 @@ def interpolate_rgb(local_ratio: float) -> tuple[int, int, int]:
     t = max(0.0, min(1.0, float(local_ratio)))
     lr, lg, lb = LOCAL_RGB
     ir, ig, ib = INTL_RGB
-    r = round(lr * t + ir * (1.0 - t))
-    g = round(lg * t + ig * (1.0 - t))
-    b = round(lb * t + ib * (1.0 - t))
+    r = _round_channel(lr * t + ir * (1.0 - t))
+    g = _round_channel(lg * t + ig * (1.0 - t))
+    b = _round_channel(lb * t + ib * (1.0 - t))
     return r, g, b
 
 

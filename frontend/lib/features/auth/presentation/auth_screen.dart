@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../app/theme/colors.dart';
+import '../../../core/constants/feature_flags.dart';
 import '../../../shared/data/origin_locations.dart';
 import '../../../shared/providers/app_providers.dart';
 import '../../../shared/widgets/origin_location_picker.dart';
@@ -87,7 +88,8 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
         return;
       }
     }
-    if (_mode == AuthMode.login &&
+    if (FeatureFlags.enableDemoLogin &&
+        _mode == AuthMode.login &&
         email.toLowerCase() == 'demo@strollwise.local' &&
         (password == 'demo12345' || password.toLowerCase() == 'demo')) {
       ref.read(authActionProvider.notifier).loginDemoUser();
@@ -385,21 +387,25 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
                             ),
                           ],
                         ),
-                        const SizedBox(height: 8),
-                        SizedBox(
-                          width: double.infinity,
-                          child: TextButton(
-                            onPressed: isLoading
-                                ? null
-                                : () {
-                                    ref
-                                        .read(authActionProvider.notifier)
-                                        .loginDemoUser();
-                                    context.go('/explore');
-                                  },
-                            child: const Text('Use Demo Login (offline mode)'),
+                        if (FeatureFlags.enableDemoLogin) ...[
+                          const SizedBox(height: 8),
+                          SizedBox(
+                            width: double.infinity,
+                            child: TextButton(
+                              onPressed: isLoading
+                                  ? null
+                                  : () {
+                                      ref
+                                          .read(authActionProvider.notifier)
+                                          .loginDemoUser();
+                                      context.go('/explore');
+                                    },
+                              child: const Text(
+                                'Use Demo Login (offline mode)',
+                              ),
+                            ),
                           ),
-                        ),
+                        ],
                         Row(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
@@ -464,19 +470,19 @@ class _ResearchConsentCard extends StatelessWidget {
         children: [
           Checkbox(value: value, onChanged: onChanged),
           const SizedBox(width: 6),
-          const Expanded(
+          Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
+                const Text(
                   'Privacy + research consent',
                   style: TextStyle(
                     color: AppColors.primaryText,
                     fontWeight: FontWeight.w900,
                   ),
                 ),
-                SizedBox(height: 4),
-                Text(
+                const SizedBox(height: 4),
+                const Text(
                   'I agree that my submitted tags may be converted into aggregated H3 zone signals for thesis research. Exact GPS is not shown publicly; StrollWise displays zone-level behavior patterns.',
                   style: TextStyle(
                     color: AppColors.secondaryText,
@@ -484,6 +490,20 @@ class _ResearchConsentCard extends StatelessWidget {
                     fontSize: 12,
                     fontWeight: FontWeight.w600,
                   ),
+                ),
+                const SizedBox(height: 6),
+                Wrap(
+                  spacing: 12,
+                  children: [
+                    TextButton(
+                      onPressed: () => context.push('/privacy'),
+                      child: const Text('Privacy policy'),
+                    ),
+                    TextButton(
+                      onPressed: () => context.push('/terms'),
+                      child: const Text('Terms of use'),
+                    ),
+                  ],
                 ),
               ],
             ),

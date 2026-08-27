@@ -26,6 +26,7 @@ from faker import Faker
 from sqlalchemy import delete
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.core.database import SessionLocal
 from app.core.security import hash_password
 from app.models import (
@@ -218,6 +219,11 @@ def recompute_aggregates_and_zones(db: Session, reports: list[Report]) -> None:
 
 
 def main() -> None:
+    if settings.is_production:
+        raise SystemExit(
+            "Refusing to seed a production database. Run Alembic migrations and "
+            "promote a real admin instead (scripts/promote_admin.py)."
+        )
     with SessionLocal() as db:
         print("Clearing existing seed data (keeping registered accounts)…")
         clear_tables(db)
@@ -232,7 +238,10 @@ def main() -> None:
         recompute_aggregates_and_zones(db, reports)
 
         ensure_admin_user(db)
-        print(f"Admin account ready: {ADMIN_EMAIL} / admin123456")
+        print(
+            f"Admin account ready: {ADMIN_EMAIL} "
+            "(default password only if this account was just created)"
+        )
 
         zone_count = db.query(MergedZone).count()
         cell_count = db.query(H3CellAggregate).count()

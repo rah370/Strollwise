@@ -6,6 +6,7 @@ import '../features/auth/presentation/auth_screen.dart';
 import '../features/explore/presentation/explore_screen.dart';
 import '../features/feed/presentation/feed_screen.dart';
 import '../features/layers/presentation/layers_screen.dart';
+import '../features/legal/presentation/legal_screens.dart';
 import '../features/profile/presentation/profile_screen.dart';
 import '../features/reports/presentation/tag_submission_screen.dart';
 import '../features/trends/presentation/trends_screen.dart';
@@ -29,17 +30,29 @@ final GoRouter appRouter = GoRouter(
     final loc = state.matchedLocation;
     final loggedIn = token != null && token.isNotEmpty;
     final onAuth = loc == '/auth';
+    final onLegal = loc == '/privacy' || loc == '/terms';
     if (!loggedIn && _isShellLocation(loc)) {
       return '/auth';
     }
     if (loggedIn && onAuth) {
       return '/explore';
     }
+    if (onLegal) {
+      return null;
+    }
     return null;
   },
   routes: [
     GoRoute(path: '/', redirect: (context, state) => '/auth'),
     GoRoute(path: '/auth', builder: (context, state) => const AuthScreen()),
+    GoRoute(
+      path: '/privacy',
+      builder: (context, state) => const PrivacyPolicyScreen(),
+    ),
+    GoRoute(
+      path: '/terms',
+      builder: (context, state) => const TermsOfUseScreen(),
+    ),
     ShellRoute(
       builder: (context, state, child) => MainShell(child: child),
       routes: [

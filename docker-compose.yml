@@ -1,0 +1,44 @@
+services:
+  db:
+    image: postgis/postgis:16-3.5
+    environment:
+      POSTGRES_USER: strollwise
+      POSTGRES_PASSWORD: strollwise
+      POSTGRES_DB: strollwise
+    ports:
+      - "5432:5432"
+    volumes:
+      - strollwise_pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U strollwise"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  api:
+    build: ./backend
+    ports:
+      - "8000:8000"
+    environment:
+      ENV: development
+      DEBUG: "false"
+      DATABASE_URL: postgresql+psycopg2://strollwise:strollwise@db:5432/strollwise
+      REDIS_URL: redis://redis:6379/0
+      JWT_SECRET_KEY: local-compose-only-change-me
+      CORS_ORIGINS: http://localhost:5173,http://127.0.0.1:5173,http://localhost:8080
+      TRUSTED_HOSTS: localhost,127.0.0.1,api,testserver
+      RATE_LIMIT_ENABLED: "true"
+      PUBLIC_BASE_URL: http://localhost:8000
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+volumes:
+  strollwise_pg:

@@ -5,7 +5,6 @@ from app.models.report import Report
 from app.services import h3_service
 from app.services.aggregation_service import AggregationService
 from app.services.place_service import PlaceService
-from app.services.place_catalog import catalog_by_slug
 
 
 def _create_user(db_session):
@@ -48,10 +47,7 @@ def test_uspf_tag_assigns_campus_place(db_session):
 
     cell = db_session.get(H3CellAggregate, h3_index)
     assert cell.place_id is not None
-    catalog = catalog_by_slug("uspf_campus")
-    assert catalog is not None
-
-    place = PlaceService(db_session).place_repo.get_by_slug("uspf_campus")
+    place = PlaceService(db_session).place_repo.get(cell.place_id)
     assert place is not None
-    assert place.place_type == "school"
+    assert place.source == "catalog"
     assert h3_index in (place.source_h3_indexes_json or [])

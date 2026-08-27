@@ -11,6 +11,7 @@ def _register(client, email: str = "report@example.com"):
             "country_of_origin": "Philippines",
             "city_of_origin": "Cebu City",
             "user_type": "local_resident",
+            "accepted_research_consent": True,
         },
     )
     assert resp.status_code == 201
@@ -31,6 +32,28 @@ def _post_food_report(client, token: str, note: str) -> dict:
     )
     assert resp.status_code == 201, resp.text
     return resp.json()
+
+
+def test_create_report_records_private_visit_pin(client):
+    token = _register(client, "pin-owner@example.com")
+    first = _post_food_report(client, token, "Great spot")
+    pins = client.get(
+        "/api/v1/reports/my-visit-pins",
+        headers={"Authorization": f"Bearer {token}"},
+        params={
+            "min_lat": 10.2,
+            "min_lng": 123.8,
+            "max_lat": 10.4,
+            "max_lng": 124.0,
+        },
+    )
+    assert pins.status_code == 200, pins.text
+    body = pins.json()
+    assert len(body) >= 1
+    assert abs(body[0]["latitude"] - 10.3157) < 0.05
+    assert abs(body[0]["longitude"] - 123.8854) < 0.05
+    assert body[0]["source"] in {"tag", "manual"}
+    assert first["h3_index"]
 
 
 def test_create_report_converts_latlng_into_h3(client):
@@ -379,6 +402,7 @@ def test_me_contributions_reflects_submitted_reports(client):
             "country_of_origin": "Philippines",
             "city_of_origin": "Cebu City",
             "user_type": "local_resident",
+            "accepted_research_consent": True,
         },
     )
     assert reg.status_code == 201, reg.text

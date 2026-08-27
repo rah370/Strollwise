@@ -11,6 +11,7 @@ def test_users_me_patch_manual_map_round_trip(client):
             "country_of_origin": "Philippines",
             "city_of_origin": "Cebu City",
             "user_type": "local_resident",
+            "accepted_research_consent": True,
         },
     )
     assert reg.status_code == 201, reg.text

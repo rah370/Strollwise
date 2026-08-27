@@ -1,9 +1,15 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
+from starlette.middleware.httpsredirect import HTTPSRedirectMiddleware
+from starlette.middleware.trustedhost import TrustedHostMiddleware
+from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from app.api.routers import (
     analytics,
@@ -18,18 +24,42 @@ from app.api.routers import (
 )
 from app.api.routers.admin import router as admin_router
 from app.core.config import settings
+from app.core.health import health_payload
 from app.core.logging import configure_logging
+from app.core.rate_limit import RateLimitMiddleware
 
 configure_logging()
 log = logging.getLogger(__name__)
 
+_LEGAL_DIR = Path(__file__).resolve().parent / "static" / "legal"
+
+
+def _init_sentry() -> None:
+    dsn = (settings.sentry_dsn or "").strip()
+    if not dsn:
+        return
+    import sentry_sdk
+
+    sentry_sdk.init(
+        dsn=dsn,
+        environment=settings.env,
+        traces_sample_rate=0.1,
+        send_default_pii=False,
+    )
+
 
 def create_app() -> FastAPI:
+    settings.validate_for_launch()
+    _init_sentry()
+
+    docs_url = None if settings.is_production else "/docs"
+    redoc_url = None if settings.is_production else "/redoc"
     app = FastAPI(
         title=settings.app_name,
         version="0.1.0",
-        docs_url="/docs",
-        redoc_url="/redoc",
+        docs_url=docs_url,
+        redoc_url=redoc_url,
+        openapi_url=None if settings.is_production else "/openapi.json",
     )
     app.add_middleware(
         CORSMiddleware,
@@ -38,6 +68,14 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    app.add_middleware(RateLimitMiddleware)
+    if settings.is_production:
+        app.add_middleware(
+            TrustedHostMiddleware,
+            allowed_hosts=settings.trusted_host_list,
+        )
+        app.add_middleware(HTTPSRedirectMiddleware)
+    app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
 
     prefix = settings.api_v1_prefix
     app.include_router(auth.router, prefix=prefix)
@@ -51,9 +89,22 @@ def create_app() -> FastAPI:
     app.include_router(geocode.router, prefix=prefix)
     app.include_router(admin_router, prefix=prefix)
 
+    local_media = Path(settings.upload_local_dir)
+    local_media.mkdir(parents=True, exist_ok=True)
+    app.mount("/media", StaticFiles(directory=str(local_media)), name="media")
+
     @app.get("/health", tags=["health"])
-    def health_check() -> dict[str, str]:
-        return {"status": "ok", "app": settings.app_name, "env": settings.env}
+    def health_check() -> JSONResponse:
+        body, code = health_payload(settings.app_name, settings.env)
+        return JSONResponse(content=body, status_code=code)
+
+    @app.get("/privacy", include_in_schema=False)
+    def privacy_policy() -> FileResponse:
+        return FileResponse(_LEGAL_DIR / "privacy.html", media_type="text/html")
+
+    @app.get("/terms", include_in_schema=False)
+    def terms_of_use() -> FileResponse:
+        return FileResponse(_LEGAL_DIR / "terms.html", media_type="text/html")
 
     log.info("%s ready (env=%s)", settings.app_name, settings.env)
     return app

@@ -101,6 +101,26 @@ npm run dev
 
 Login with the seeded admin (`admin@strollwise.dev` / `admin123456` after `python seed.py`). See [`admin/README.md`](admin/README.md).
 
+## Production hosting
+
+Public deploy (Singapore API + PostGIS + admin/web) is documented in [`docs/HOSTING.md`](docs/HOSTING.md). Do not run `python seed.py` against production. Privacy and terms are served at `/privacy` and `/terms` on the API.
+
+Production Flutter web:
+
+```bash
+cd frontend
+flutter build web --release \
+  --dart-define=API_URL=https://api.strollwise.app \
+  --dart-define=ENABLE_DEMO_LOGIN=false
+```
+
+Production admin:
+
+```bash
+cd admin
+VITE_API_URL=https://api.strollwise.app npm run build
+```
+
 ## Repository layout
 
 | Path | Role |

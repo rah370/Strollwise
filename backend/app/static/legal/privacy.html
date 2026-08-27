@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>StrollWise Privacy Policy</title>
+    <style>
+      body { font-family: system-ui, sans-serif; max-width: 44rem; margin: 2rem auto; padding: 0 1.25rem; line-height: 1.55; color: #0f172a; }
+      h1, h2 { letter-spacing: -0.02em; }
+      a { color: #0d9488; }
+    </style>
+  </head>
+  <body>
+    <h1>StrollWise Privacy Policy</h1>
+    <p>Last updated: 27 August 2026</p>
+    <p>
+      StrollWise is a crowd-sourced travel intelligence app for Metro Cebu. This policy describes
+      what we collect, how we use it, and who can see it. It is written for a research / thesis
+      demonstration as well as a public hosted demo.
+    </p>
+    <h2>What we collect</h2>
+    <ul>
+      <li>Account details: email, display name, password hash, traveler type, and origin city/country.</li>
+      <li>Location when you submit a tag: approximate GPS used to assign an H3 cell. We request location only while the app is in use.</li>
+      <li>Tag content: category, tags, optional notes, and optional photos.</li>
+      <li>Technical logs: coarse IP for rate limiting and error reports (if Sentry is enabled).</li>
+    </ul>
+    <h2>How location is shown</h2>
+    <p>
+      Public APIs expose <strong>aggregated zones</strong> (traveler mix and place type over H3 cells).
+      Individual trajectories and exact GPS points are not published on Explore. Raw reports, including
+      coordinates and user ids, are visible to <strong>operators with admin accounts</strong> for
+      moderation and research validation only.
+    </p>
+    <h2>Research use</h2>
+    <p>
+      If you accept research consent at registration, your tags may be converted into aggregated zone
+      signals used in academic research about crowd-sourced place intelligence. You can refuse consent
+      by not creating an account.
+    </p>
+    <h2>Retention</h2>
+    <p>
+      Account and report data is kept while the hosted demo or research project is active. Operators
+      may delete abusive accounts. Backups (for example Supabase point-in-time recovery) may retain
+      copies for a limited window after deletion.
+    </p>
+    <h2>Sharing</h2>
+    <p>
+      We do not sell personal data. Processors may include the database host (Postgres/PostGIS),
+      object storage for photos, error monitoring, and map geocoding (Mapbox) when those services are
+      configured.
+    </p>
+    <h2>Your choices</h2>
+    <p>
+      You can stop using the app at any time. To request access or deletion of your account, contact
+      the operator listed on the hosted site. Public zone maps cannot be fully un-aggregated once
+      reports have been merged into cells.
+    </p>
+    <p><a href="/terms">Terms of use</a></p>
+  </body>
+</html>

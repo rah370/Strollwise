@@ -5,9 +5,12 @@ import 'dart:math' as math;
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:h3_flutter/h3_flutter.dart';
 import 'package:maplibre_gl/maplibre_gl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+import '../../core/constants/feature_flags.dart';
 
 import '../../shared/models/cell.dart';
 import '../../shared/models/current_zone_overview.dart';
@@ -36,13 +39,18 @@ const authPrefsTokenKey = 'strollwise.auth.access_token';
 const authPrefsEmailKey = 'strollwise.auth.user_email';
 const authPrefsUserJsonKey = 'strollwise.auth.user_json';
 
+const _secureStorage = FlutterSecureStorage(
+  aOptions: AndroidOptions(encryptedSharedPreferences: true),
+);
+
 Future<void> persistAuthCredentials({
   required String token,
   required String email,
   UserMeModel? user,
 }) async {
+  await _secureStorage.write(key: authPrefsTokenKey, value: token);
   final prefs = await SharedPreferences.getInstance();
-  await prefs.setString(authPrefsTokenKey, token);
+  await prefs.remove(authPrefsTokenKey);
   await prefs.setString(authPrefsEmailKey, email);
   if (user != null) {
     await prefs.setString(authPrefsUserJsonKey, jsonEncode(user.toJson()));
@@ -52,10 +60,26 @@ Future<void> persistAuthCredentials({
 }
 
 Future<void> clearPersistedAuth() async {
+  await _secureStorage.delete(key: authPrefsTokenKey);
   final prefs = await SharedPreferences.getInstance();
   await prefs.remove(authPrefsTokenKey);
   await prefs.remove(authPrefsEmailKey);
   await prefs.remove(authPrefsUserJsonKey);
+}
+
+Future<String?> _readPersistedToken() async {
+  final secure = await _secureStorage.read(key: authPrefsTokenKey);
+  if (secure != null && secure.isNotEmpty) {
+    return secure;
+  }
+  final prefs = await SharedPreferences.getInstance();
+  final legacy = prefs.getString(authPrefsTokenKey);
+  if (legacy != null && legacy.isNotEmpty) {
+    await _secureStorage.write(key: authPrefsTokenKey, value: legacy);
+    await prefs.remove(authPrefsTokenKey);
+    return legacy;
+  }
+  return null;
 }
 
 /// True after [bootstrapAuthSession] finishes (avoids auth redirect flash).
@@ -64,7 +88,7 @@ final authBootstrapCompleteProvider = StateProvider<bool>((ref) => false);
 /// Restores token + profile from disk. Safe to call more than once.
 Future<void> bootstrapAuthSession(dynamic ref) async {
   final prefs = await SharedPreferences.getInstance();
-  final token = prefs.getString(authPrefsTokenKey);
+  final token = await _readPersistedToken();
   final email = prefs.getString(authPrefsEmailKey);
   final raw = prefs.getString(authPrefsUserJsonKey);
 
@@ -988,10 +1012,13 @@ const int _kFallbackH3MaxDisplayCells = 600;
 
 Future<List<ZoneModel>> _fallbackVisibleZones(String? filter) async {
   await ZoneCatalog.ensureLoaded();
-  final zones = ZoneCatalog.entries
+  var zones = ZoneCatalog.entries
       .map(zoneModelFromCatalogEntry)
       .map(enrichZoneForAreaCard)
       .toList(growable: false);
+  if (zones.isEmpty) {
+    zones = _h3FallbackZoneList(const H3Factory().load());
+  }
   return _filterFallbackZones(zones, filter);
 }
 
@@ -1248,6 +1275,7 @@ List<ZoneModel> _h3FallbackZoneList(H3 h3) {
   ];
 }
 
+// ignore: unused_element
 List<ZoneModel> _legacyBlobFallbackZoneList() {
   return [
     _legacyBlobFallbackZone(
@@ -2070,6 +2098,9 @@ class AuthActionController extends StateNotifier<AsyncValue<void>> {
   }
 
   void loginDemoUser() {
+    if (!FeatureFlags.enableDemoLogin) {
+      return;
+    }
     unawaited(clearPersistedAuth());
     ref.read(explorePendingGpsCenterProvider.notifier).state = true;
     ref.read(authTokenProvider.notifier).state = 'demo-token-local';

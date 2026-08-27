@@ -11,6 +11,7 @@ def _register(client):
             "country_of_origin": "Philippines",
             "city_of_origin": "Cebu City",
             "user_type": "local_resident",
+            "accepted_research_consent": True,
         },
     )
     assert resp.status_code == 201, resp.text

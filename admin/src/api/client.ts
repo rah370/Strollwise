@@ -98,9 +98,15 @@ export function exportUrl(path: string, fmt: 'json' | 'csv') {
   return `${API_URL}/api/v1${path}${sep}fmt=${fmt}&token=${token ?? ''}`
 }
 
-export function apiDocsUrl(): string {
+export function apiDocsUrl(): string | null {
+  if (import.meta.env.PROD) return null
   const base = API_URL || 'http://127.0.0.1:8000'
   return `${base.replace(/\/$/, '')}/docs`
+}
+
+export function legalUrl(path: '/privacy' | '/terms'): string {
+  const base = API_URL || (import.meta.env.DEV ? 'http://127.0.0.1:8000' : '')
+  return `${base.replace(/\/$/, '')}${path}`
 }
 
 export async function downloadExport(path: string, filename: string): Promise<void> {

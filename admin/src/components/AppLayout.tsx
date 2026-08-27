@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { Link, NavLink, Navigate, Outlet } from 'react-router-dom'
-import { apiDocsUrl, fetchMe, getToken, setToken } from '../api/client'
+import { apiDocsUrl, fetchMe, getToken, legalUrl, setToken } from '../api/client'
 import { useAdminLiveUpdates } from '../hooks/useAdminLiveUpdates'
 import { BrandLogo } from './BrandLogo'
 
@@ -72,13 +72,31 @@ export function AppLayout() {
               {connected ? 'Live — mobile sync' : 'Polling fallback'}
             </span>
           </div>
+          {apiDocsUrl() ? (
+            <a
+              href={apiDocsUrl()!}
+              target="_blank"
+              rel="noreferrer"
+              className="block px-3 py-2 text-xs font-semibold text-sw-secondary hover:text-white"
+            >
+              API docs ↗
+            </a>
+          ) : null}
           <a
-            href={apiDocsUrl()}
+            href={legalUrl('/privacy')}
             target="_blank"
             rel="noreferrer"
             className="block px-3 py-2 text-xs font-semibold text-sw-secondary hover:text-white"
           >
-            API docs ↗
+            Privacy
+          </a>
+          <a
+            href={legalUrl('/terms')}
+            target="_blank"
+            rel="noreferrer"
+            className="block px-3 py-2 text-xs font-semibold text-sw-secondary hover:text-white"
+          >
+            Terms
           </a>
           <p className="px-3 text-[10px] text-white/40 leading-relaxed">
             Paired with the StrollWise mobile app for crowd-sourced zone intelligence in Metro Cebu.

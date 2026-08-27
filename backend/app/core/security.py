@@ -4,10 +4,18 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import UUID
 
+import bcrypt
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 
 from app.core.config import settings
+
+# passlib 1.7.4 reads bcrypt.__about__.__version__, which bcrypt 4.1+ removed.
+if not hasattr(bcrypt, "__about__"):
+    class _BcryptAbout:
+        __version__ = getattr(bcrypt, "__version__", "4.0.0")
+
+    bcrypt.__about__ = _BcryptAbout()  # type: ignore[attr-defined]
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 

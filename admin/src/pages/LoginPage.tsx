@@ -9,8 +9,8 @@ export function LoginPage() {
   const navigate = useNavigate()
   const location = useLocation()
   const adminRequired = (location.state as { reason?: string } | null)?.reason === 'admin_required'
-  const [email, setEmail] = useState('admin@strollwise.dev')
-  const [password, setPassword] = useState('admin123456')
+  const [email, setEmail] = useState(import.meta.env.DEV ? 'admin@strollwise.dev' : '')
+  const [password, setPassword] = useState(import.meta.env.DEV ? 'admin123456' : '')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const [apiOk, setApiOk] = useState<boolean | null>(null)
@@ -88,10 +88,16 @@ export function LoginPage() {
           <div className="mb-4 text-sm text-red-700 bg-red-50 border border-red-100 p-3 rounded-xl space-y-2">
             <p>This account exists but does not have admin privileges.</p>
             <p className="text-xs text-red-600">
-              Repair the default admin:{' '}
-              <code className="bg-white px-1 py-0.5 rounded">
-                cd backend && ./scripts/reset_admin.sh
-              </code>
+              {import.meta.env.DEV ? (
+                <>
+                  Repair the default admin:{' '}
+                  <code className="bg-white px-1 py-0.5 rounded">
+                    cd backend && ./scripts/reset_admin.sh
+                  </code>
+                </>
+              ) : (
+                'Ask an operator to promote your account with scripts/promote_admin.py'
+              )}
             </p>
           </div>
         ) : error ? (

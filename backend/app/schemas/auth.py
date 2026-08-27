@@ -22,6 +22,15 @@ class RegisterRequest(BaseModel):
     def strip_text(cls, v: str) -> str:
         return v.strip()
 
+    @field_validator("accepted_research_consent")
+    @classmethod
+    def require_research_consent(cls, v: bool) -> bool:
+        if not v:
+            raise ValueError(
+                "Privacy and research consent is required to create an account"
+            )
+        return v
+
     @field_validator("user_type")
     @classmethod
     def normalize_user_type(cls, v: str) -> str:

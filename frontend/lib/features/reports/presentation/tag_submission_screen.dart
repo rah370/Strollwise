@@ -300,7 +300,7 @@ class _TagSubmissionScreenState extends ConsumerState<TagSubmissionScreen> {
       }
       if (error.type == DioExceptionType.connectionError ||
           error.type == DioExceptionType.connectionTimeout) {
-        return 'Backend is unreachable. Use Demo Login or start the backend.';
+        return 'Backend is unreachable. Start the API or check API_URL.';
       }
       final detail = error.response?.data;
       if (detail is Map && detail['detail'] != null) {
