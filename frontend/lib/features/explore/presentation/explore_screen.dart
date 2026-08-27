@@ -470,25 +470,7 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
         final belowLayerId =
             _zoneBelowLayerId ?? await _resolveRoadLayerId(controller);
         _zoneBelowLayerId = belowLayerId;
-        await controller.addFillLayer(
-          _zonesSourceId,
-          _zonesFillLayerId,
-          FillLayerProperties(
-            fillColor: ['get', 'fill'],
-            fillOpacity: ['get', 'fill_opacity'],
-          ),
-          belowLayerId: belowLayerId,
-        );
-        await controller.addLineLayer(
-          _zonesSourceId,
-          _zonesLineLayerId,
-          LineLayerProperties(
-            lineColor: ['get', 'line'],
-            lineWidth: ['get', 'line_width'],
-            lineOpacity: ['get', 'line_opacity'],
-          ),
-          belowLayerId: belowLayerId,
-        );
+        await _addZoneFillAndLine(controller, belowLayerId);
         _zoneLayersAdded = true;
       } else {
         await controller.setGeoJsonSource(_zonesSourceId, geoJson);
@@ -606,31 +588,96 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
     }
   }
 
+  /// Put traveler-mix fills *under* roads, buildings, and labels.
+  /// OpenFreeMap Liberty uses ids like `road_area_pattern`, not `road-label`.
   Future<String?> _resolveRoadLayerId(MapLibreMapController controller) async {
+    const preferred = <String>[
+      'road_area_pattern',
+      'tunnel_motorway_link_casing',
+      'road_motorway_link_casing',
+      'road_minor_casing',
+      'building',
+      'highway-name-path',
+    ];
     try {
       final layers = await controller.getLayerIds();
-      const preferredRoadLayers = <String>[
-        'road-label',
-        'road',
-        'roads',
-        'transportation',
+      final ids = <String>[
+        for (final raw in layers) raw.toString(),
       ];
-      for (final preferred in preferredRoadLayers) {
-        for (final raw in layers) {
-          final id = raw.toString().toLowerCase();
-          if (id == preferred || id.contains(preferred)) return raw.toString();
+      for (final want in preferred) {
+        if (ids.contains(want)) return want;
+      }
+      for (final id in ids) {
+        final lower = id.toLowerCase();
+        if (lower.contains('one_way') ||
+            lower.contains('shield') ||
+            lower.contains('label') ||
+            lower.contains('name') ||
+            lower.contains('poi')) {
+          continue;
+        }
+        if (lower.startsWith('tunnel_') ||
+            lower.startsWith('road_') ||
+            lower.startsWith('bridge_')) {
+          return id;
         }
       }
-      for (final raw in layers) {
-        final id = raw.toString().toLowerCase();
-        if (id.contains('road') || id.contains('street')) return raw.toString();
-      }
-      for (final raw in layers) {
-        final id = raw.toString().toLowerCase();
-        if (id.contains('label')) return raw.toString();
-      }
     } catch (_) {}
-    return null;
+    // Style ids are stable on OpenFreeMap even if getLayerIds fails on web.
+    return preferred.first;
+  }
+
+  Future<void> _addZoneFillAndLine(
+    MapLibreMapController controller,
+    String? belowLayerId,
+  ) async {
+    final fill = FillLayerProperties(
+      fillColor: ['get', 'fill'],
+      fillOpacity: ['get', 'fill_opacity'],
+    );
+    final line = LineLayerProperties(
+      lineColor: ['get', 'line'],
+      lineWidth: ['get', 'line_width'],
+      lineOpacity: ['get', 'line_opacity'],
+    );
+    final belowCandidates = <String?>[
+      belowLayerId,
+      'road_area_pattern',
+      'tunnel_motorway_link_casing',
+      'building',
+      'highway-name-path',
+      null,
+    ];
+    String? usedBelow;
+    var fillAdded = false;
+    for (final below in belowCandidates) {
+      try {
+        await controller.addFillLayer(
+          _zonesSourceId,
+          _zonesFillLayerId,
+          fill,
+          belowLayerId: below,
+        );
+        usedBelow = below;
+        fillAdded = true;
+        break;
+      } catch (_) {}
+    }
+    if (!fillAdded) return;
+    try {
+      await controller.addLineLayer(
+        _zonesSourceId,
+        _zonesLineLayerId,
+        line,
+        belowLayerId: usedBelow,
+      );
+    } catch (_) {
+      await controller.addLineLayer(
+        _zonesSourceId,
+        _zonesLineLayerId,
+        line,
+      );
+    }
   }
 
   Future<void> _applyBaseMapVisualTuning(
@@ -641,8 +688,7 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
       for (final raw in layers) {
         final layerId = raw.toString();
         final id = layerId.toLowerCase();
-        if (id.contains('poi') ||
-            id.contains('medical') ||
+        if (id.contains('medical') ||
             id.contains('hospital') ||
             id.contains('clinic') ||
             id.contains('pharmacy')) {
@@ -652,22 +698,6 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
               SymbolLayerProperties(iconOpacity: 0, textOpacity: 0),
             );
           } catch (_) {}
-        } else if (id.contains('transit') ||
-            id.contains('rail') ||
-            id.contains('station')) {
-          try {
-            await controller.setLayerProperties(
-              layerId,
-              LineLayerProperties(lineOpacity: 0.2),
-            );
-          } catch (_) {
-            try {
-              await controller.setLayerProperties(
-                layerId,
-                SymbolLayerProperties(iconOpacity: 0.3, textOpacity: 0.3),
-              );
-            } catch (_) {}
-          }
         }
       }
     } catch (_) {}
