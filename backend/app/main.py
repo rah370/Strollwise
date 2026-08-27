@@ -7,7 +7,6 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from starlette.middleware.httpsredirect import HTTPSRedirectMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
@@ -70,11 +69,12 @@ def create_app() -> FastAPI:
     )
     app.add_middleware(RateLimitMiddleware)
     if settings.is_production:
+        # TLS is terminated at Fly/Render. Do not HTTPS-redirect inside the
+        # container or platform health checks on http://localhost fail.
         app.add_middleware(
             TrustedHostMiddleware,
             allowed_hosts=settings.trusted_host_list,
         )
-        app.add_middleware(HTTPSRedirectMiddleware)
     app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
 
     prefix = settings.api_v1_prefix

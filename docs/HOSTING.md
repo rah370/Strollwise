@@ -73,7 +73,35 @@ REDIS_URL=rediss://default:<password>@<host>.upstash.io:6379
 
 The API still serves if Redis is down; `/health` reports `"redis": "unavailable"`.
 
-## 4. API (Fly.io)
+The container entrypoint runs `alembic upgrade head`, then uvicorn on `$PORT` (default `8000`) with **one worker**. Do not enable in-app HTTPS redirect — Fly and Render terminate TLS and health-check over HTTP.
+
+## 4. API
+
+### Render (free)
+
+Free web services sleep after ~15 minutes of idle traffic; the first request after that can take 30–60 seconds.
+
+1. Connect the GitHub repo in the Render dashboard.
+2. Create a **Web Service**, Docker runtime, root directory `backend`, Dockerfile `./Dockerfile`.
+3. Use the **free** instance type. Region `singapore` is closest to Cebu; the current Supabase project is Tokyo, so either region is fine.
+4. Deploy from this hosting branch until it is merged to `main`.
+5. Set:
+
+```text
+ENV=production
+DEBUG=false
+JWT_SECRET_KEY=<unique secret>
+DATABASE_URL=postgresql+psycopg2://postgres.<ref>:<url-encoded-password>@aws-0-<region>.pooler.supabase.com:5432/postgres?sslmode=require
+CORS_ORIGINS=https://<service>.onrender.com,https://<admin-host>
+TRUSTED_HOSTS=localhost,127.0.0.1,.onrender.com
+PUBLIC_BASE_URL=https://<service>.onrender.com
+```
+
+Use the **session** pooler (`:5432`), not transaction mode (`:6543`). Direct `db.<ref>.supabase.co` is IPv6-only and fails from some hosts.
+
+Health: `GET https://<service>.onrender.com/health` should return `"database": "ok"`.
+
+### Fly.io (paid / always-on)
 
 From `backend/`:
 
