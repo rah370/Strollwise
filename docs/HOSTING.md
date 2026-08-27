@@ -93,7 +93,7 @@ DEBUG=false
 JWT_SECRET_KEY=<unique secret>
 DATABASE_URL=postgresql+psycopg2://postgres.<ref>:<url-encoded-password>@aws-0-<region>.pooler.supabase.com:5432/postgres?sslmode=require
 CORS_ORIGINS=https://<service>.onrender.com,https://<admin-host>
-TRUSTED_HOSTS=localhost,127.0.0.1,.onrender.com
+TRUSTED_HOSTS=localhost,127.0.0.1,.onrender.com,*
 PUBLIC_BASE_URL=https://<service>.onrender.com
 ```
 
