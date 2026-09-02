@@ -35,7 +35,7 @@ postgresql+psycopg2://postgres:<password>@db.<ref>.supabase.co:5432/postgres?ssl
 
 Never run `backend/seed.py` here. It refuses `ENV=production` and the old bootstrap used to reset the demo admin password.
 
-**Security Advisor `spatial_ref_sys` / RLS Disabled in Public:** this is the PostGIS EPSG catalog, not StrollWise data. Migration `0009` revokes `anon` / `authenticated` / `PUBLIC` on that table (and other PostGIS catalogs) so the Supabase Data API cannot read it. Enabling RLS is attempted too, but often fails with `must be owner of table spatial_ref_sys` because PostGIS owns it as `supabase_admin`. That remaining advisor row is a known false positive; do not drop PostGIS to silence it. The API does not use PostgREST — FastAPI connects as `postgres`.
+**Security Advisor `spatial_ref_sys` / RLS Disabled in Public:** this is the PostGIS EPSG catalog, not StrollWise data. It is owned by `supabase_admin`, so we cannot enable RLS or revoke its API grants. Ignore that ERROR; do not drop PostGIS. Migration `0010` clears the findings we *can* fix: explicit deny policies for `anon`/`authenticated` on StrollWise tables, covering indexes on two foreign keys, and duplicate email/slug indexes. PostGIS remaining in `public` is a WARN and is expected.
 
 Create an operator:
 
