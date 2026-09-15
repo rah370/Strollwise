@@ -87,6 +87,7 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
   Timer? _viewportIdleDebounce;
   Timer? _zoneLookupDebounce;
   DateTime? _lastFollowCameraAt;
+  DateTime? _ignoreMapClicksUntil;
   LatLng? _lastFollowCameraTarget;
   LatLng? _lastZoneLookupLocation;
   LatLng? _pendingCameraTarget;
@@ -748,12 +749,16 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
     return LatLng(lat, lng);
   }
 
-  ZoneModel? _findNearestZone(LatLng tap, List<ZoneModel> zones) {
+  ZoneModel? _findZoneContaining(LatLng tap, List<ZoneModel> zones) {
     for (final zone in zones.reversed) {
-      if (_tapInsideZone(tap, zone)) {
-        return zone;
-      }
+      if (_tapInsideZone(tap, zone)) return zone;
     }
+    return null;
+  }
+
+  ZoneModel? _findNearestZone(LatLng tap, List<ZoneModel> zones) {
+    final inside = _findZoneContaining(tap, zones);
+    if (inside != null) return inside;
 
     ZoneModel? selected;
     var bestDistance = double.infinity;
@@ -895,6 +900,10 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
     ref.read(zoneValidationLiveProvider.notifier).state = null;
     ref.read(selectedZoneProvider.notifier).state = null;
     ref.read(selectedCellProvider.notifier).state = null;
+    // MapLibre also delivers the same pointer event as a map click. Ignore
+    // that echo so closing the card does not immediately re-select the zone.
+    _ignoreMapClicksUntil =
+        DateTime.now().add(const Duration(milliseconds: 500));
     setState(() {
       _mapMode = ExploreMapMode.discovery;
       _lastTappedZoneId = null;
@@ -1417,14 +1426,23 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
                     },
                     onCameraIdle: _scheduleViewportRefresh,
                     onMapClick: (point, latLng) {
+                      final ignoreUntil = _ignoreMapClicksUntil;
+                      if (ignoreUntil != null &&
+                          DateTime.now().isBefore(ignoreUntil)) {
+                        return;
+                      }
                       final tap = LatLng(latLng.latitude, latLng.longitude);
                       final zones = _latestZones;
                       if (zones.isNotEmpty) {
-                        final selected = _findNearestZone(tap, zones);
+                        final selected = _findZoneContaining(tap, zones);
                         if (selected != null) {
                           _handleZoneTap(selected);
                           return;
                         }
+                      }
+                      if (ref.read(selectedZoneProvider) != null) {
+                        _clearSelectedZone();
+                        return;
                       }
                       final cells = _latestCells;
                       if (cells.isNotEmpty) {
@@ -2226,9 +2244,7 @@ class _SelectedZoneCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = _zonePalette(zone);
-    return GestureDetector(
-      onTap: onDetails,
-      child: AnimatedContainer(
+    return AnimatedContainer(
         duration: const Duration(milliseconds: 220),
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 14),
         decoration: BoxDecoration(
@@ -2376,8 +2392,7 @@ class _SelectedZoneCard extends StatelessWidget {
             ),
           ],
         ),
-      ),
-    );
+      );
   }
 }
 
@@ -2394,8 +2409,8 @@ class _CloseButton extends StatelessWidget {
       behavior: HitTestBehavior.opaque,
       onTap: onPressed,
       child: Container(
-        width: 32,
-        height: 32,
+        width: 44,
+        height: 44,
         alignment: Alignment.center,
         decoration: BoxDecoration(
           color: AppColors.border.withValues(alpha: 0.4),
