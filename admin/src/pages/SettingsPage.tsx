@@ -83,7 +83,16 @@ export function SettingsPage() {
         <div className="flex items-center gap-3 pt-2">
           <Button
             disabled={save.isPending || Object.keys(form).length === 0}
-            onClick={() => save.mutate()}
+            onClick={() => {
+              if (
+                !window.confirm(
+                  'Save these validation settings for every traveler? Tag cooldowns and cell thresholds will change immediately.',
+                )
+              ) {
+                return
+              }
+              save.mutate()
+            }}
           >
             Save changes
           </Button>

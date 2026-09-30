@@ -7,7 +7,7 @@ import { Button } from '../components/Button'
 import { Card } from '../components/Card'
 import { PageHeader } from '../components/PageHeader'
 import { colors } from '../theme/colors'
-import { LIVE_POLL_MS } from '../hooks/useAdminLiveUpdates'
+import { LIVE_POLL_MS, useAdminPollInterval } from '../hooks/useAdminLiveUpdates'
 
 const queues = [
   { id: 'pending', label: 'Pending' },
@@ -25,11 +25,12 @@ export function ModerationPage() {
 
   const [actionError, setActionError] = useState('')
 
+  const poll = useAdminPollInterval(LIVE_POLL_MS.moderation)
   const { data, isLoading } = useQuery({
     queryKey: ['moderation', queue],
     queryFn: () =>
       api<AdminReportList>(`/admin/moderation/reports?queue=${queue}&page_size=100`),
-    refetchInterval: LIVE_POLL_MS.moderation,
+    refetchInterval: poll,
   })
 
   const { data: detail } = useQuery({

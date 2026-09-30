@@ -2,6 +2,11 @@ from __future__ import annotations
 
 import math
 
+# Same envelope the Flutter client uses (`cebuPlaceWithinServiceArea`).
+CEBU_SERVICE_CENTER_LAT = 10.3157
+CEBU_SERVICE_CENTER_LNG = 123.8854
+CEBU_SERVICE_RADIUS_KM = 120.0
+
 
 def haversine_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
     """Great-circle distance between two lat/lng points in kilometers."""
@@ -15,6 +20,19 @@ def haversine_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
         + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2) ** 2
     )
     return 2 * r * math.asin(math.sqrt(a))
+
+
+def within_cebu_service_area(lat: float, lng: float) -> bool:
+    """True when the point is inside the Metro Cebu tagging radius."""
+    return (
+        haversine_km(
+            lat,
+            lng,
+            CEBU_SERVICE_CENTER_LAT,
+            CEBU_SERVICE_CENTER_LNG,
+        )
+        <= CEBU_SERVICE_RADIUS_KM
+    )
 
 
 def bbox_contains(

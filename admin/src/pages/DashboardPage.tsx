@@ -8,20 +8,21 @@ import { Card } from '../components/Card'
 import { PageHeader } from '../components/PageHeader'
 import { QueryState } from '../components/QueryState'
 import { StatCard } from '../components/StatCard'
-import { LIVE_POLL_MS } from '../hooks/useAdminLiveUpdates'
+import { LIVE_POLL_MS, useAdminPollInterval } from '../hooks/useAdminLiveUpdates'
 import { colors } from '../theme/colors'
 
 export function DashboardPage() {
+  const dashboardPoll = useAdminPollInterval(LIVE_POLL_MS.dashboard)
   const { data, isPending, isError, error } = useQuery({
     queryKey: ['dashboard'],
     queryFn: () => api<AdminDashboardStats>('/admin/dashboard/stats'),
-    refetchInterval: LIVE_POLL_MS.dashboard,
+    refetchInterval: dashboardPoll,
   })
 
   const { data: analytics, isError: analyticsError } = useQuery({
     queryKey: ['analytics-overview'],
     queryFn: () => api<AdminAnalyticsOverview>('/admin/analytics/overview'),
-    refetchInterval: LIVE_POLL_MS.dashboard,
+    refetchInterval: dashboardPoll,
   })
 
   const pulse = analytics?.city_pulse as { city_activity?: string; crowd_level_percent?: number } | undefined
@@ -76,26 +77,26 @@ export function DashboardPage() {
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
         <Card className="xl:col-span-2 h-80">
           <h2 className="font-black text-sw-ink mb-4">Reports (last 30 days)</h2>
-          <ResponsiveContainer width="100%" height="85%">
-            {chartData.length > 0 ? (
-            <LineChart data={chartData}>
-              <XAxis dataKey="date" tick={{ fontSize: 11 }} stroke={colors.mutedText} />
-              <YAxis allowDecimals={false} stroke={colors.mutedText} />
-              <Tooltip />
-              <Line
-                type="monotone"
-                dataKey="count"
-                stroke={colors.primary}
-                strokeWidth={3}
-                dot={{ fill: colors.primary, r: 3 }}
-              />
-            </LineChart>
-            ) : (
-              <div className="flex items-center justify-center h-full text-sw-muted text-sm">
-                No reports in the last 30 days yet.
-              </div>
-            )}
-          </ResponsiveContainer>
+          {chartData.length > 0 ? (
+            <ResponsiveContainer width="100%" height="85%">
+              <LineChart data={chartData}>
+                <XAxis dataKey="date" tick={{ fontSize: 11 }} stroke={colors.mutedText} />
+                <YAxis allowDecimals={false} stroke={colors.mutedText} />
+                <Tooltip />
+                <Line
+                  type="monotone"
+                  dataKey="count"
+                  stroke={colors.primary}
+                  strokeWidth={3}
+                  dot={{ fill: colors.primary, r: 3 }}
+                />
+              </LineChart>
+            </ResponsiveContainer>
+          ) : (
+            <p className="flex items-center justify-center h-[85%] text-sw-muted text-sm m-0">
+              No reports in the last 30 days yet.
+            </p>
+          )}
         </Card>
 
         <Card>

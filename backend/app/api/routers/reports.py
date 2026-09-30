@@ -7,12 +7,18 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
 from app.core.database import get_db
+from app.models.enums import VisibilityStatus
 from app.models.user import User
 from app.repositories.zone_repository import ZoneRepository
-from app.models.enums import VisibilityStatus
-from app.schemas.report import AggregationFeedback, PlaceTagMarker, ReportCreate, ReportPublic
-from app.schemas.report import ReportSubmissionResponse
+from app.schemas.report import (
+    AggregationFeedback,
+    PlaceTagMarker,
+    ReportCreate,
+    ReportPublic,
+    ReportSubmissionResponse,
+)
 from app.schemas.visit_pin import VisitPinCreate, VisitPinPublic
+from app.services import h3_service
 from app.services.report_service import ReportService, ReportValidationError
 from app.services.visit_pin_service import VisitPinService
 
@@ -128,20 +134,31 @@ def place_tag_markers(
     limit: int = Query(120, ge=1, le=300),
     db: Session = Depends(get_db),
 ) -> list[PlaceTagMarker]:
-    """Map pins for reports that include a tag token (default USPF campus)."""
+    """Public map pins for *validated* reports that include a tag token.
+
+    Coordinates are H3 cell centroids, never raw GPS. Pending tags are omitted.
+    """
     tag_key = tag.strip().lower()
     reports = ReportService(db).list_place_markers(
         min_lat, max_lat, min_lng, max_lng, tag_key, limit=limit
     )
-    return [
-        PlaceTagMarker(
-            id=r.id,
-            latitude=r.latitude_raw,
-            longitude=r.longitude_raw,
-            validated=r.visibility_status == VisibilityStatus.VISIBLE.value,
+    markers: list[PlaceTagMarker] = []
+    for report in reports:
+        if report.visibility_status != VisibilityStatus.VISIBLE.value:
+            continue
+        try:
+            lat, lng = h3_service.cell_centroid(report.h3_index)
+        except Exception:
+            continue
+        markers.append(
+            PlaceTagMarker(
+                id=report.id,
+                latitude=lat,
+                longitude=lng,
+                validated=True,
+            )
         )
-        for r in reports
-    ]
+    return markers
 
 
 @router.get("/feed", response_model=list[ReportPublic])

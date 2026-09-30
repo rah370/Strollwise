@@ -122,9 +122,14 @@ class ExploreMapFilterBar extends ConsumerWidget {
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (ctx) => _ExploreFiltersSheet(
-        enabledLayerKeys: enabledLayerKeys,
-        onToggleLayer: onToggleLayer,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setModal) => _ExploreFiltersSheet(
+          enabledLayerKeys: enabledLayerKeys,
+          onToggleLayer: (key) {
+            onToggleLayer(key);
+            setModal(() {});
+          },
+        ),
       ),
     );
   }

@@ -495,7 +495,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
       ),
     );
     if (shouldLogout != true || !context.mounted) return;
-    ref.read(authActionProvider.notifier).logout();
+    await ref.read(authActionProvider.notifier).logout();
     if (!context.mounted) return;
     context.go('/auth');
   }
@@ -1526,7 +1526,7 @@ class _ContributionRow extends StatelessWidget {
               ),
               const SizedBox(height: 2),
               Text(
-                '${report.category}  ·  ${report.h3Index.substring(0, 7)}',
+                '${report.category}  ·  ${_shortH3(report.h3Index)}',
                 style: const TextStyle(
                   color: AppColors.mutedText,
                   fontSize: 12,
@@ -1554,6 +1554,11 @@ class _ContributionRow extends StatelessWidget {
         const Icon(Icons.chevron_right_rounded, color: AppColors.mutedText),
       ],
     );
+  }
+
+  String _shortH3(String h3Index) {
+    if (h3Index.length <= 7) return h3Index;
+    return h3Index.substring(0, 7);
   }
 
   IconData _iconForCategory(String category) {

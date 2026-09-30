@@ -4,6 +4,8 @@ This is the UAT plan for the hosted Cebu crowd-map: traveler app, admin console,
 
 Use this document to run sessions, log results, and decide go / no-go. It is not a developer test suite. Backend `pytest` and widget tests stay separate.
 
+Fixes that make these cases pass are tracked in [`UAT-hardening.md`](UAT-hardening.md).
+
 ---
 
 ## 1. Purpose

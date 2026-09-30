@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { API_URL, getToken } from '../api/client'
 
@@ -34,6 +34,8 @@ function invalidateForEvent(qc: ReturnType<typeof useQueryClient>, type: string)
   }
 }
 
+const AdminLiveContext = createContext(false)
+
 /** Subscribe to backend SSE so admin refreshes when the mobile app submits tags. */
 export function useAdminLiveUpdates() {
   const qc = useQueryClient()
@@ -66,6 +68,21 @@ export function useAdminLiveUpdates() {
   }, [qc])
 
   return { connected }
+}
+
+export function AdminLiveProvider({ children }: { children: ReactNode }) {
+  const { connected } = useAdminLiveUpdates()
+  return <AdminLiveContext.Provider value={connected}>{children}</AdminLiveContext.Provider>
+}
+
+export function useAdminLiveConnected() {
+  return useContext(AdminLiveContext)
+}
+
+/** Poll only when SSE is down so live mode does not double-fetch. */
+export function useAdminPollInterval(ms: number): number | false {
+  const connected = useAdminLiveConnected()
+  return connected ? false : ms
 }
 
 /** Fallback polling when SSE is unavailable (same data the mobile app writes). */

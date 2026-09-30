@@ -9,7 +9,7 @@ import { Card } from '../components/Card'
 import { PageHeader } from '../components/PageHeader'
 import { QueryState } from '../components/QueryState'
 import { StatCard } from '../components/StatCard'
-import { LIVE_POLL_MS } from '../hooks/useAdminLiveUpdates'
+import { LIVE_POLL_MS, useAdminPollInterval } from '../hooks/useAdminLiveUpdates'
 import { colors } from '../theme/colors'
 
 const barColors = [colors.travelerLocal, colors.travelerInternational, colors.secondary]
@@ -17,10 +17,11 @@ const barColors = [colors.travelerLocal, colors.travelerInternational, colors.se
 export function AnalyticsPage() {
   const [exportError, setExportError] = useState('')
 
+  const poll = useAdminPollInterval(LIVE_POLL_MS.analytics)
   const { data, isPending, isError, error } = useQuery({
     queryKey: ['analytics'],
     queryFn: () => api<AdminAnalyticsOverview>('/admin/analytics/overview'),
-    refetchInterval: LIVE_POLL_MS.analytics,
+    refetchInterval: poll,
   })
 
   async function download(path: string, fmt: 'json' | 'csv', filename: string) {

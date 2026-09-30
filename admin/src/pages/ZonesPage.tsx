@@ -5,7 +5,7 @@ import type { AdminZone, AdminZoneValidation } from '../api/types'
 import { Badge } from '../components/Badge'
 import { Card } from '../components/Card'
 import { PageHeader } from '../components/PageHeader'
-import { LIVE_POLL_MS } from '../hooks/useAdminLiveUpdates'
+import { LIVE_POLL_MS, useAdminPollInterval } from '../hooks/useAdminLiveUpdates'
 import { colors } from '../theme/colors'
 
 export function ZonesPage() {
@@ -13,10 +13,11 @@ export function ZonesPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [search, setSearch] = useState('')
 
+  const poll = useAdminPollInterval(LIVE_POLL_MS.zones)
   const { data, isLoading } = useQuery({
     queryKey: ['zones'],
     queryFn: () => api<AdminZone[]>('/admin/zones'),
-    refetchInterval: LIVE_POLL_MS.zones,
+    refetchInterval: poll,
   })
 
   const { data: validation } = useQuery({

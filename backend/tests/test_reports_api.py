@@ -323,21 +323,23 @@ def test_uspf_tag_triggers_single_report_approval(client):
 
 
 def test_place_markers_returns_uspf_pins(client):
+    from app.services import h3_service
+
     token = _register(client)
     lat, lng = 10.3380, 123.9010
-    assert (
-        client.post(
-            "/api/v1/reports",
-            headers={"Authorization": f"Bearer {token}"},
-            json={
-                "latitude": lat,
-                "longitude": lng,
-                "category": "school",
-                "tags": ["uspf campus", "school", "public", "exact_road_spot"],
-            },
-        ).status_code
-        == 201
+    created = client.post(
+        "/api/v1/reports",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "latitude": lat,
+            "longitude": lng,
+            "category": "school",
+            "tags": ["uspf campus", "school", "public", "exact_road_spot"],
+        },
     )
+    assert created.status_code == 201, created.text
+    h3_index = created.json()["h3_index"]
+    cell_lat, cell_lng = h3_service.cell_centroid(h3_index)
     mr = client.get(
         "/api/v1/reports/place-markers",
         params={
@@ -352,8 +354,53 @@ def test_place_markers_returns_uspf_pins(client):
     markers = mr.json()
     assert len(markers) >= 1
     assert markers[0]["validated"] is True
-    assert abs(markers[0]["latitude"] - lat) < 0.01
-    assert abs(markers[0]["longitude"] - lng) < 0.01
+    assert abs(markers[0]["latitude"] - cell_lat) < 1e-8
+    assert abs(markers[0]["longitude"] - cell_lng) < 1e-8
+
+
+def test_place_markers_omit_pending_and_raw_gps(client):
+    token = _register(client, "pending-marker@example.com")
+    lat, lng = 10.3215, 123.9012
+    created = client.post(
+        "/api/v1/reports",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "latitude": lat,
+            "longitude": lng,
+            "category": "food",
+            "tags": ["street food"],
+        },
+    )
+    assert created.status_code == 201, created.text
+    assert created.json()["visibility_status"] == "pending"
+    mr = client.get(
+        "/api/v1/reports/place-markers",
+        params={
+            "min_lat": 10.31,
+            "max_lat": 10.33,
+            "min_lng": 123.89,
+            "max_lng": 123.91,
+            "tag": "street",
+        },
+    )
+    assert mr.status_code == 200
+    assert mr.json() == []
+
+
+def test_create_report_rejects_outside_cebu(client):
+    token = _register(client, "manila-tag@example.com")
+    resp = client.post(
+        "/api/v1/reports",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "latitude": 14.5995,
+            "longitude": 120.9842,
+            "category": "food",
+            "tags": ["food"],
+        },
+    )
+    assert resp.status_code == 422
+    assert "Cebu" in resp.json()["detail"]
 
 
 def test_my_pending_pins_lists_only_own_pending(client):

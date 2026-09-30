@@ -26,6 +26,7 @@ from app.services.place_service import PlaceService
 from app.services.system_settings_service import effective_settings
 from app.services.visit_pin_service import VisitPinService
 from app.services.zone_merge_service import ZoneMergeService
+from app.utils.geo_utils import within_cebu_service_area
 from app.utils.user_type_utils import traveler_type_from_user_type
 
 log = logging.getLogger(__name__)
@@ -124,6 +125,11 @@ class ReportService:
     def create_report(self, payload: ReportCreate, user: User) -> ReportSubmissionResult:
         self._validate(payload)
         self._validate_not_restricted(payload.latitude, payload.longitude)
+        if not within_cebu_service_area(payload.latitude, payload.longitude):
+            raise ReportValidationError(
+                "This location is outside the Cebu tagging area. "
+                "Move the pin or search a Cebu place."
+            )
         h3_resolution = self._cfg.h3_resolution
         h3_index = h3_service.latlng_to_cell(
             payload.latitude, payload.longitude, h3_resolution
@@ -295,7 +301,7 @@ class ReportService:
         *,
         limit: int = 120,
     ) -> list[Report]:
-        return self.reports.list_in_viewport_with_tag(
+        reports = self.reports.list_in_viewport_with_tag(
             min_lat,
             max_lat,
             min_lng,
@@ -303,6 +309,11 @@ class ReportService:
             tag,
             limit=limit,
         )
+        return [
+            report
+            for report in reports
+            if report.visibility_status == VisibilityStatus.VISIBLE.value
+        ]
 
     def list_own_pending_pins(
         self,

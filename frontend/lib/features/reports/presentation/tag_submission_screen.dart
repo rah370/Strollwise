@@ -33,8 +33,7 @@ Future<LatLng?> _tagPickerTryCurrentGps() async {
         timeLimit: Duration(seconds: 8),
       ),
     );
-    final here = LatLng(position.latitude, position.longitude);
-    return cebuPlaceWithinServiceArea(here) ? here : null;
+    return LatLng(position.latitude, position.longitude);
   } catch (_) {
     return null;
   }
@@ -170,8 +169,7 @@ class _TagSubmissionScreenState extends ConsumerState<TagSubmissionScreen> {
       _tagTypes.firstWhere((type) => type.label == _selectedTypeLabel);
 
   bool get _canSubmit =>
-      _pickedLocation != null &&
-      (_selectedDetail.isNotEmpty || noteController.text.trim().isNotEmpty);
+      _selectedDetail.isNotEmpty || noteController.text.trim().isNotEmpty;
 
   void _applyLocation(LatLng location) {
     ref.read(tagSubmissionPinLocationProvider.notifier).state = location;
@@ -356,8 +354,19 @@ class _TagSubmissionScreenState extends ConsumerState<TagSubmissionScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text(
-            'Could not get GPS inside Cebu. Enable location, allow the app, '
+            'Could not get GPS. Enable location, allow the app, '
             'or search for a place instead.',
+          ),
+        ),
+      );
+      return;
+    }
+    if (!cebuPlaceWithinServiceArea(live)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'GPS is outside the Cebu tagging area. '
+            'Search for a Cebu place or move the Explore map instead.',
           ),
         ),
       );

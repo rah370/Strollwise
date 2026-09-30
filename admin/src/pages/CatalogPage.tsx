@@ -1,26 +1,41 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { api, downloadExport } from '../api/client'
+import { api } from '../api/client'
 import type { AdminCatalogEntry } from '../api/types'
 import { Button } from '../components/Button'
 import { Card } from '../components/Card'
 import { PageHeader } from '../components/PageHeader'
-import { LIVE_POLL_MS } from '../hooks/useAdminLiveUpdates'
+import { LIVE_POLL_MS, useAdminPollInterval } from '../hooks/useAdminLiveUpdates'
 import { travelerMixStyles } from '../theme/colors'
 
 export function CatalogPage() {
   const [exportError, setExportError] = useState('')
+  const poll = useAdminPollInterval(LIVE_POLL_MS.catalog)
 
   const { data, isLoading } = useQuery({
     queryKey: ['catalog'],
     queryFn: () => api<AdminCatalogEntry[]>('/admin/catalog/zones'),
-    refetchInterval: LIVE_POLL_MS.catalog,
+    refetchInterval: poll,
   })
 
-  async function download(fmt: 'json' | 'csv') {
+  function download(fmt: 'json' | 'csv') {
     setExportError('')
+    const rows = data ?? []
+    if (rows.length === 0) {
+      setExportError('Catalog is empty.')
+      return
+    }
     try {
-      await downloadExport(`/admin/analytics/export/zones?fmt=${fmt}`, `zones.${fmt}`)
+      const blob =
+        fmt === 'json'
+          ? new Blob([JSON.stringify(rows, null, 2)], { type: 'application/json' })
+          : new Blob([catalogToCsv(rows)], { type: 'text/csv' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `catalog-zones.${fmt}`
+      a.click()
+      URL.revokeObjectURL(url)
     } catch (err) {
       setExportError(err instanceof Error ? err.message : 'Export failed')
     }
@@ -107,4 +122,27 @@ export function CatalogPage() {
       </Card>
     </div>
   )
+}
+
+function catalogToCsv(rows: AdminCatalogEntry[]): string {
+  const headers = [
+    'zone_id',
+    'zone_name',
+    'city',
+    'zone_type',
+    'radius_km',
+    'center_lat',
+    'center_lng',
+    'default_local_ratio',
+    'is_active',
+  ] as const
+  const lines = [headers.join(',')]
+  for (const row of rows) {
+    lines.push(
+      headers
+        .map((key) => JSON.stringify(row[key] ?? ''))
+        .join(','),
+    )
+  }
+  return `${lines.join('\n')}\n`
 }

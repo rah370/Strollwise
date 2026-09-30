@@ -6,7 +6,7 @@ import { Badge } from '../components/Badge'
 import { Button } from '../components/Button'
 import { Card } from '../components/Card'
 import { PageHeader } from '../components/PageHeader'
-import { LIVE_POLL_MS } from '../hooks/useAdminLiveUpdates'
+import { LIVE_POLL_MS, useAdminPollInterval } from '../hooks/useAdminLiveUpdates'
 
 export function UsersPage() {
   const qc = useQueryClient()
@@ -14,13 +14,14 @@ export function UsersPage() {
 
   const [toggleError, setToggleError] = useState('')
 
+  const poll = useAdminPollInterval(LIVE_POLL_MS.users)
   const { data, isLoading } = useQuery({
     queryKey: ['users', search],
     queryFn: () =>
       api<AdminUserList>(
         `/admin/users?page_size=100${search ? `&search=${encodeURIComponent(search)}` : ''}`,
       ),
-    refetchInterval: LIVE_POLL_MS.users,
+    refetchInterval: poll,
   })
 
   const toggle = useMutation({

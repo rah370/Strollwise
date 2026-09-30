@@ -51,6 +51,8 @@ def _limit_for_request(method: str, path: str) -> int | None:
         return settings.rate_limit_reports_per_minute
     if method == "GET" and path.startswith("/api/v1/geocode/forward"):
         return settings.rate_limit_geocode_per_minute
+    if method == "POST" and path.startswith("/api/v1/admin/pipeline"):
+        return 6
     return None
 
 

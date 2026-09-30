@@ -194,6 +194,15 @@ final activeTravelerMixFilterProvider = StateProvider<String?>((ref) => null);
 /// What the area is: school | food | transport | … → `place_type=`.
 final activePlaceTypeFilterProvider = StateProvider<String?>((ref) => null);
 final currentUserLocationProvider = StateProvider<LatLng?>((ref) => null);
+
+/// 4-decimal grid (~11 m) so GPS jitter does not refetch Feed / Trends.
+final quantizedUserLocationProvider = Provider<(double?, double?)>((ref) {
+  final location = ref.watch(currentUserLocationProvider);
+  return (
+    _quantizeGeo(location?.latitude, decimals: 4),
+    _quantizeGeo(location?.longitude, decimals: 4),
+  );
+});
 final exploreFocusLocationProvider = StateProvider<LatLng?>((ref) => null);
 
 /// After a successful tag submit, Explore consumes this to fly the camera,
@@ -563,13 +572,25 @@ class UserContributionsNotifier
           response.data as Map<String, dynamic>,
         ),
       );
-    } on DioException {
-      state = const AsyncData(null);
-    } on FormatException {
-      state = const AsyncData(null);
-    } on TypeError {
-      state = const AsyncData(null);
+    } on DioException catch (e, st) {
+      if (!initial && state.hasValue) {
+        return;
+      }
+      state = AsyncError(e, st);
+    } on FormatException catch (e, st) {
+      if (!initial && state.hasValue) {
+        return;
+      }
+      state = AsyncError(e, st);
+    } on TypeError catch (e, st) {
+      if (!initial && state.hasValue) {
+        return;
+      }
+      state = AsyncError(e, st);
     } catch (e, st) {
+      if (!initial && state.hasValue) {
+        return;
+      }
       state = AsyncError(e, st);
     }
   }
@@ -639,10 +660,10 @@ final zoneFeedChipProvider = StateProvider<String>((ref) => 'Nearby');
 final zoneFeedProvider = FutureProvider<List<ZoneModel>>((ref) async {
   final dio = ref.watch(dioProvider);
   final chip = ref.watch(zoneFeedChipProvider);
-  final location = ref.watch(currentUserLocationProvider);
+  final quantized = ref.watch(quantizedUserLocationProvider);
   final apiFilter = _zoneFeedApiFilter(chip);
-  final userLat = _quantizeGeo(location?.latitude, decimals: 4);
-  final userLng = _quantizeGeo(location?.longitude, decimals: 4);
+  final userLat = quantized.$1;
+  final userLng = quantized.$2;
 
   const cacheKey = 'last_good_zone_feed';
 
@@ -2126,8 +2147,8 @@ class AuthActionController extends StateNotifier<AsyncValue<void>> {
     state = const AsyncData(null);
   }
 
-  void logout() {
-    unawaited(clearPersistedAuth());
+  Future<void> logout() async {
+    await clearPersistedAuth();
     ref.read(authTokenProvider.notifier).state = null;
     ref.read(authUserEmailProvider.notifier).state = null;
     ref.read(cachedUserMeProvider.notifier).state = null;

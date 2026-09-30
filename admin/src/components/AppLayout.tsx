@@ -1,7 +1,8 @@
+import { useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Link, NavLink, Navigate, Outlet } from 'react-router-dom'
-import { apiDocsUrl, fetchMe, getToken, legalUrl, setToken } from '../api/client'
-import { useAdminLiveUpdates } from '../hooks/useAdminLiveUpdates'
+import { ApiError, API_URL, apiDocsUrl, fetchMe, getToken, legalUrl, setToken } from '../api/client'
+import { AdminLiveProvider, useAdminLiveConnected } from '../hooks/useAdminLiveUpdates'
 import { BrandLogo } from './BrandLogo'
 
 const nav = [
@@ -27,12 +28,30 @@ function navClass({ isActive }: { isActive: boolean }) {
 
 export function AppLayout() {
   const token = getToken()
-  const { data: me, isLoading, isError } = useQuery({
+  if (!token) return <Navigate to="/login" replace />
+  return (
+    <AdminLiveProvider>
+      <AppLayoutInner />
+    </AdminLiveProvider>
+  )
+}
+
+function AppLayoutInner() {
+  const token = getToken()
+  const { data: me, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['auth', 'me'],
     queryFn: fetchMe,
     enabled: Boolean(token),
+    retry: false,
   })
-  const { connected } = useAdminLiveUpdates()
+  const connected = useAdminLiveConnected()
+  const authDenied =
+    (isError && error instanceof ApiError && (error.status === 401 || error.status === 403)) ||
+    Boolean(me && !me.is_admin)
+
+  useEffect(() => {
+    if (authDenied) setToken(null)
+  }, [authDenied])
 
   if (!token) return <Navigate to="/login" replace />
   if (isLoading) {
@@ -42,9 +61,31 @@ export function AppLayout() {
       </div>
     )
   }
-  if (isError || !me?.is_admin) {
-    setToken(null)
+  if (authDenied) {
     return <Navigate to="/login" replace state={{ reason: 'admin_required' }} />
+  }
+  if (isError) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-sw-bg text-sw-muted p-6">
+        <div className="max-w-md text-center space-y-3">
+          <p className="font-semibold text-sw-ink">Cannot reach the StrollWise API.</p>
+          <p className="text-sm">
+            Wake{' '}
+            <a className="underline" href={`${API_URL || 'https://strollwise-api.onrender.com'}/health`}>
+              /health
+            </a>{' '}
+            and retry. Your session was kept.
+          </p>
+          <button
+            type="button"
+            className="px-4 py-2 rounded-xl bg-sw-primary text-white text-sm font-semibold"
+            onClick={() => refetch()}
+          >
+            Retry
+          </button>
+        </div>
+      </div>
+    )
   }
 
   return (

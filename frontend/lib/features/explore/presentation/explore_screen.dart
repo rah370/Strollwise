@@ -450,7 +450,7 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
         for (final zone in zones) {
           final layerKey = _zoneLayerKey(zone);
           final isSelected = selectedZone?.h3Index == zone.h3Index;
-          if (!_enabledLayerKeys.contains(layerKey) && !isSelected) continue;
+          if (!_zoneLayerVisible(zone) && !isSelected) continue;
           final color = _streetZoneColor(zone);
           final lifecycle = _zoneLifecycleState(zone);
           if (!showTravelerFill && !isSelected) {
@@ -524,8 +524,7 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
           continue;
         }
         final isSelected = selectedZone?.h3Index == zone.h3Index;
-        final layerKey = _zoneLayerKey(zone);
-        final layerVisible = _enabledLayerKeys.contains(layerKey);
+        final layerVisible = _zoneLayerVisible(zone);
         if (!layerVisible && !isSelected) {
           continue;
         }
@@ -903,7 +902,7 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
     // MapLibre also delivers the same pointer event as a map click. Ignore
     // that echo so closing the card does not immediately re-select the zone.
     _ignoreMapClicksUntil =
-        DateTime.now().add(const Duration(milliseconds: 500));
+        DateTime.now().add(const Duration(milliseconds: 800));
     setState(() {
       _mapMode = ExploreMapMode.discovery;
       _lastTappedZoneId = null;
@@ -927,21 +926,7 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
         if (cell.h3Index == idxStr) return cell;
       }
     } catch (_) {}
-    CellModel? nearest;
-    var bestDistance = double.infinity;
-    for (final cell in cells) {
-      final distance = Geolocator.distanceBetween(
-        tap.latitude,
-        tap.longitude,
-        cell.centroidLat,
-        cell.centroidLng,
-      );
-      if (distance < bestDistance) {
-        bestDistance = distance;
-        nearest = cell;
-      }
-    }
-    return bestDistance <= 120 ? nearest : null;
+    return null;
   }
 
   void _handleCellTap(CellModel cell) {
@@ -1245,6 +1230,13 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
         _enabledLayerKeys.add(key);
       }
     });
+    unawaited(
+      _drawZones(ref.read(visibleZonesProvider).valueOrNull ?? _latestZones),
+    );
+  }
+
+  bool _zoneLayerVisible(ZoneModel zone) {
+    return _zoneLayerKeys(zone).any(_enabledLayerKeys.contains);
   }
 
   @override
@@ -1442,6 +1434,11 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
                       }
                       if (ref.read(selectedZoneProvider) != null) {
                         _clearSelectedZone();
+                        return;
+                      }
+                      // Zone hexes are the public layer. Do not snap empty-map
+                      // taps onto a nearby H3 cell (that reopened the card).
+                      if (zones.isNotEmpty) {
                         return;
                       }
                       final cells = _latestCells;
@@ -1722,6 +1719,15 @@ String _zoneLayerKey(ZoneModel zone) {
     'international' => 'international',
     _ => 'mixed',
   };
+}
+
+Set<String> _zoneLayerKeys(ZoneModel zone) {
+  final keys = <String>{_zoneLayerKey(zone)};
+  final place = zone.zoneType.toLowerCase();
+  if (place.isNotEmpty && place != 'mixed') {
+    keys.add(place);
+  }
+  return keys;
 }
 
 Color _streetZoneColor(ZoneModel zone) => TravelerGradient.colorForZone(zone);

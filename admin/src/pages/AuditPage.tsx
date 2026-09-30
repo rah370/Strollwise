@@ -5,7 +5,7 @@ import { Badge } from '../components/Badge'
 import { Button } from '../components/Button'
 import { Card } from '../components/Card'
 import { PageHeader } from '../components/PageHeader'
-import { LIVE_POLL_MS } from '../hooks/useAdminLiveUpdates'
+import { LIVE_POLL_MS, useAdminPollInterval } from '../hooks/useAdminLiveUpdates'
 import { useState } from 'react'
 
 type AuditList = {
@@ -22,10 +22,11 @@ type AuditList = {
 export function AuditPage() {
   const [exportError, setExportError] = useState('')
 
+  const poll = useAdminPollInterval(LIVE_POLL_MS.audit)
   const { data, isLoading } = useQuery({
     queryKey: ['audit'],
     queryFn: () => api<AuditList>('/admin/audit?page_size=100'),
-    refetchInterval: LIVE_POLL_MS.audit,
+    refetchInterval: poll,
   })
 
   async function exportAudit() {

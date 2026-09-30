@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
-import { ApiError, checkApiHealth, getToken, login } from '../api/client'
+import { ApiError, checkApiHealth, fetchMe, getToken, login, setToken } from '../api/client'
 import { BrandLogo } from '../components/BrandLogo'
 import { Button } from '../components/Button'
 import { colors } from '../theme/colors'
@@ -20,7 +20,24 @@ export function LoginPage() {
   }, [])
 
   useEffect(() => {
-    if (getToken()) navigate('/', { replace: true })
+    const token = getToken()
+    if (!token) return
+    let cancelled = false
+    fetchMe()
+      .then((me) => {
+        if (cancelled) return
+        if (me.is_admin) navigate('/', { replace: true })
+        else setToken(null)
+      })
+      .catch((err) => {
+        if (cancelled) return
+        if (err instanceof ApiError && (err.status === 401 || err.status === 403)) {
+          setToken(null)
+        }
+      })
+    return () => {
+      cancelled = true
+    }
   }, [navigate])
 
   async function onSubmit(e: React.FormEvent) {

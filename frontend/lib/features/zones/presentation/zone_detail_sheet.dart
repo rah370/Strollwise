@@ -658,7 +658,21 @@ class _ZoneBody extends ConsumerWidget {
   ) {
     ref.read(zoneValidationLiveProvider.notifier).state = null;
     final enriched = enrichZoneForAreaCard(candidate);
-    final focus = LatLng(enriched.centroidLat, enriched.centroidLng);
+    LatLng focus;
+    if (enriched.centroidLat != 0.0 || enriched.centroidLng != 0.0) {
+      focus = LatLng(enriched.centroidLat, enriched.centroidLng);
+    } else {
+      final ring = enriched.boundary;
+      if (ring.length >= 3) {
+        final lng =
+            ring.map((point) => point[0]).reduce((a, b) => a + b) / ring.length;
+        final lat =
+            ring.map((point) => point[1]).reduce((a, b) => a + b) / ring.length;
+        focus = LatLng(lat, lng);
+      } else {
+        focus = LatLng(enriched.centroidLat, enriched.centroidLng);
+      }
+    }
     ref.read(selectedZoneProvider.notifier).state = enriched;
     ref.read(zoneLookupLocationProvider.notifier).state = focus;
     ref.read(exploreFocusLocationProvider.notifier).state = focus;

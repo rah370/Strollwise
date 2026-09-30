@@ -76,7 +76,18 @@ export function PipelinePage() {
             <Button
               variant="secondary"
               disabled={run.isPending}
-              onClick={() => run.mutate(job.id)}
+              onClick={() => {
+                const needsConfirm = job.id !== 'invalidate-cache'
+                if (
+                  needsConfirm &&
+                  !window.confirm(
+                    `Run ${job.label}? This can change public zones on the traveler map.`,
+                  )
+                ) {
+                  return
+                }
+                run.mutate(job.id)
+              }}
             >
               {run.isPending ? 'Running…' : 'Run job'}
             </Button>

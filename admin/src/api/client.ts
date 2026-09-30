@@ -70,7 +70,11 @@ export async function api<T>(
 export async function checkApiHealth(): Promise<boolean> {
   try {
     const res = await fetch(`${API_URL}/health`)
-    return res.ok
+    if (!res.ok) return false
+    const contentType = res.headers.get('content-type') ?? ''
+    if (!contentType.includes('application/json')) return false
+    const body = (await res.json()) as { status?: string; database?: string }
+    return body.status === 'ok' && body.database === 'ok'
   } catch {
     return false
   }
