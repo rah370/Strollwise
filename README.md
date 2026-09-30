@@ -140,6 +140,8 @@ cd backend && pytest -q
 
 Tests use in-memory SQLite — no Postgres required for pytest.
 
+Stakeholder **user acceptance testing** (traveler app + admin + tag/moderation loop, hosted URLs, pass/fail, known limitations): [`docs/UAT.md`](docs/UAT.md).
+
 ## Environment
 
 Copy [`backend/.env.example`](backend/.env.example) to `backend/.env`. Key values:
