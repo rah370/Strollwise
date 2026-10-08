@@ -24,10 +24,16 @@ class Base(DeclarativeBase):
     metadata = metadata_obj
 
 
+_connect_args: dict[str, object] = {}
+if settings.database_url.startswith("postgresql"):
+    # Fail fast when Supabase is paused instead of hanging Render boot.
+    _connect_args["connect_timeout"] = 10
+
 engine = create_engine(
     settings.database_url,
     pool_pre_ping=True,
     future=True,
+    connect_args=_connect_args,
 )
 
 SessionLocal = sessionmaker(

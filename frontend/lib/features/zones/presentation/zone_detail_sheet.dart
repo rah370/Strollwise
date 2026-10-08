@@ -1,5 +1,7 @@
+import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -7,6 +9,9 @@ import 'package:maplibre_gl/maplibre_gl.dart';
 
 import '../../../app/theme/colors.dart';
 import '../../../shared/models/zone.dart';
+import '../../../shared/network/api_client.dart';
+import '../../../shared/notifications/app_notification_sheet.dart';
+import '../../../shared/notifications/app_notifications.dart';
 import '../../../shared/providers/app_providers.dart';
 import '../../../shared/traveler_gradient.dart';
 import '../../../shared/zone_validation_metrics.dart';
@@ -71,13 +76,16 @@ class ZoneDetailSheet extends ConsumerWidget {
   }
 }
 
-class _ZoneHero extends StatelessWidget {
+class _ZoneHero extends ConsumerWidget {
   const _ZoneHero({required this.zone});
 
   final ZoneModel zone;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final saved = ref.watch(savedZonesProfileProvider).valueOrNull ??
+        const <ZoneModel>[];
+    final isSaved = saved.any((item) => item.zoneId == zone.zoneId);
     return SafeArea(
       bottom: false,
       child: Padding(
@@ -100,7 +108,16 @@ class _ZoneHero extends StatelessWidget {
                     letterSpacing: 0.2,
                   ),
                 ),
-                const _HeroIconButton(icon: Icons.bookmark_border_rounded),
+                Tooltip(
+                  message: isSaved ? 'Remove saved zone' : 'Save zone',
+                  child: _HeroIconButton(
+                    icon: isSaved
+                        ? Icons.bookmark_rounded
+                        : Icons.bookmark_border_rounded,
+                    onTap: () =>
+                        unawaited(_toggleSavedZone(ref, zone, isSaved: isSaved)),
+                  ),
+                ),
               ],
             ),
             const SizedBox(height: 10),
@@ -114,6 +131,61 @@ class _ZoneHero extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+Future<void> _toggleSavedZone(
+  WidgetRef ref,
+  ZoneModel zone, {
+  required bool isSaved,
+}) async {
+  final token = ref.read(authTokenProvider);
+  if (token == null || token == 'demo-token-local') {
+    pushAppNotification(
+      ref,
+      title: 'Sign in required',
+      message: 'Log in to save zones to your profile.',
+      kind: AppNotificationKind.warning,
+    );
+    return;
+  }
+  try {
+    final dio = ref.read(dioProvider);
+    if (isSaved) {
+      await dio.delete(
+        '/users/me/saved-zones/${zone.zoneId}',
+        options: Options(headers: {'Authorization': 'Bearer $token'}),
+      );
+      pushAppNotification(
+        ref,
+        title: 'Removed',
+        message: '${zone.displayName} was removed from saved zones.',
+        kind: AppNotificationKind.info,
+      );
+    } else {
+      await dio.post(
+        '/users/me/saved-zones/${zone.zoneId}',
+        options: Options(headers: {'Authorization': 'Bearer $token'}),
+      );
+      pushAppNotification(
+        ref,
+        title: 'Saved',
+        message: '${zone.displayName} is on your profile saved list.',
+        kind: AppNotificationKind.success,
+      );
+    }
+    ref.invalidate(savedZonesProfileProvider);
+  } on DioException catch (error) {
+    final detail = error.response?.data;
+    final message = detail is Map && detail['detail'] != null
+        ? detail['detail'].toString()
+        : 'Could not update saved zones.';
+    pushAppNotification(
+      ref,
+      title: 'Save failed',
+      message: message,
+      kind: AppNotificationKind.error,
     );
   }
 }
@@ -500,6 +572,28 @@ class _ZoneBody extends ConsumerWidget {
                 ),
               ),
               const SizedBox(width: 10),
+              Builder(
+                builder: (context) {
+                  final saved =
+                      ref.watch(savedZonesProfileProvider).valueOrNull ??
+                          const <ZoneModel>[];
+                  final isSaved =
+                      saved.any((item) => item.zoneId == zone.zoneId);
+                  return OutlinedButton(
+                    onPressed: () => unawaited(
+                      _toggleSavedZone(ref, zone, isSaved: isSaved),
+                    ),
+                    style: OutlinedButton.styleFrom(
+                      minimumSize: const Size(96, 56),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(28),
+                      ),
+                    ),
+                    child: Text(isSaved ? 'Saved' : 'Save'),
+                  );
+                },
+              ),
+              const SizedBox(width: 10),
               Container(
                 width: 56,
                 height: 56,
@@ -508,11 +602,12 @@ class _ZoneBody extends ConsumerWidget {
                   shape: BoxShape.circle,
                 ),
                 child: IconButton(
+                  tooltip: 'Notifications',
                   icon: const Icon(
                     Icons.notifications_active_outlined,
                     color: Color(0xFF0F172A),
                   ),
-                  onPressed: () {},
+                  onPressed: () => showAppNotificationSheet(context, ref),
                 ),
               ),
             ],

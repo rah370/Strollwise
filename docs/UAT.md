@@ -136,7 +136,7 @@ Log these as **N/A** or **expected** if a tester hits them:
 | Rate limit | Very fast repeat submits may 429 | `report_max_per_user_per_hour` (default 30). |
 | Outside Cebu | GPS / Explore-center tagging refused | Service area is Metro Cebu. |
 | Visit pins | Hiking-button pins are **private** to the user | By design; they must not appear as public zone GPS. |
-| Bookmark on zone details | Tapping the bookmark glyph does nothing | Not wired; saved-zones list may stay empty. |
+| Bookmark on zone details | Tapping Save / the bookmark glyph adds the zone to Profile → Saved zones | Requires a signed-in account (not demo). |
 | Layers route | Not in the tab bar | Skip. |
 | PostGIS advisor | Supabase Security Advisor ERROR on `spatial_ref_sys` | Catalog table owned by `supabase_admin`; do not drop PostGIS. |
 | Admin live-sync | “Live — mobile sync” may fall back to polling | Single worker + optional SSE. Polling still refreshes queues. |
