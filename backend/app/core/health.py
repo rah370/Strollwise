@@ -34,7 +34,8 @@ def health_payload(app_name: str, env: str) -> tuple[dict[str, str], int]:
     db_ok = ping_database()
     redis = redis_status()
     status = "ok" if db_ok else "degraded"
-    code = 200 if db_ok else 503
+    # Always 200 so Render/Fly liveness does not restart-loop when
+    # Postgres is paused. Testers still require JSON "database": "ok".
     return (
         {
             "status": status,
@@ -43,5 +44,5 @@ def health_payload(app_name: str, env: str) -> tuple[dict[str, str], int]:
             "database": "ok" if db_ok else "error",
             "redis": redis,
         },
-        code,
+        200,
     )

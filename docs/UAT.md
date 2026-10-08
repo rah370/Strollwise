@@ -110,7 +110,7 @@ Suggested size: **one 90-minute traveler session** and **one 60-minute operator 
 
 Facilitator checklist, in order:
 
-1. `GET https://strollwise-api.onrender.com/health` returns HTTP 200 with `"database": "ok"`. `"redis": "unavailable"` is acceptable.
+1. `GET https://strollwise-api.onrender.com/health` returns HTTP 200 with `"database": "ok"`. `"status": "degraded"` / `"database": "error"` means Postgres is paused — resume Supabase, then retry. `"redis": "unavailable"` is acceptable.
 2. Traveler URL loads the auth screen (not a blank page or Render 502 after a 90s wait).
 3. Admin URL loads the researcher sign-in form.
 4. Operator can sign in and see Dashboard stats (pending / flagged / active zones / users).

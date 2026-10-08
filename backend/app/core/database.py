@@ -26,8 +26,8 @@ class Base(DeclarativeBase):
 
 _connect_args: dict[str, object] = {}
 if settings.database_url.startswith("postgresql"):
-    # Fail fast when Supabase is paused instead of hanging Render boot.
-    _connect_args["connect_timeout"] = 10
+    # Keep this short: Render health checks time out around 5s.
+    _connect_args["connect_timeout"] = 3
 
 engine = create_engine(
     settings.database_url,

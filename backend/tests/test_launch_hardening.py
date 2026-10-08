@@ -59,6 +59,19 @@ def test_health_includes_database(client):
     assert "redis" in body
 
 
+def test_health_stays_up_when_database_is_down(client, monkeypatch):
+    from app.core import health as health_mod
+
+    monkeypatch.setattr(health_mod, "ping_database", lambda: False)
+    monkeypatch.setattr(health_mod, "redis_status", lambda: "unavailable")
+    resp = client.get("/health")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "degraded"
+    assert body["database"] == "error"
+    assert body["redis"] == "unavailable"
+
+
 def test_legal_pages_are_public(client):
     privacy = client.get("/privacy")
     terms = client.get("/terms")

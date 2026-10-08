@@ -13,7 +13,7 @@ echo "Running database migrations..."
 # Do not block forever if Postgres is paused — otherwise Render never
 # binds $PORT and testers only see "Application loading".
 if command -v timeout >/dev/null 2>&1; then
-  if ! timeout 45 alembic upgrade head; then
+  if ! timeout 20 alembic upgrade head; then
     echo "WARNING: alembic timed out or failed. Starting API so /health can report database status." >&2
   fi
 else

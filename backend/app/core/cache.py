@@ -25,7 +25,12 @@ def get_client() -> redis.Redis | None:
         return None
     if _client is None:
         try:
-            _client = redis.Redis.from_url(settings.redis_url, decode_responses=True)
+            _client = redis.Redis.from_url(
+                settings.redis_url,
+                decode_responses=True,
+                socket_connect_timeout=2,
+                socket_timeout=2,
+            )
             _client.ping()
         except Exception as exc:  # pragma: no cover - environmental
             log.warning("Redis unavailable, disabling cache: %s", exc)
