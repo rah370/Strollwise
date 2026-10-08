@@ -163,6 +163,24 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
     ref.read(explorePostSubmitCueProvider.notifier).state = null;
     ref.read(exploreFocusLocationProvider.notifier).state = cue.focus;
     ref.read(exploreFlashPinProvider.notifier).state = cue.focus;
+    _didBootstrapLocation = true;
+    _didApplyCurrentZone = true;
+    if (cue.placeTitle != null && cue.placeTitle!.trim().isNotEmpty) {
+      ref.read(mapSearchPlaceTitleProvider.notifier).state = cue.placeTitle;
+      ref.read(mapSearchFocusProvider.notifier).state = cue.focus;
+    }
+    setState(() {
+      _followUser = false;
+      _usingManualLocation = true;
+      _locationState = _LocationBootstrapState.ready;
+      _mapMode = cue.zone != null
+          ? ExploreMapMode.zoneSelected
+          : _mapMode;
+    });
+    if (cue.zone != null) {
+      ref.read(selectedZoneProvider.notifier).state =
+          enrichZoneForAreaCard(cue.zone!);
+    }
     _exploreFlashClearTimer?.cancel();
     _exploreFlashClearTimer = Timer(const Duration(seconds: 14), () {
       if (!mounted) return;
@@ -174,6 +192,7 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
       if (!mounted) return;
       _consumeExploreFocus();
       await _moveCameraToLocation(cue.focus, zoom: 16.4);
+      await _selectZoneForMapPoint(cue.focus, preferred: cue.zone);
       final zones = ref.read(visibleZonesProvider).valueOrNull ?? _latestZones;
       await _drawZones(zones);
     });
@@ -1271,6 +1290,16 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
         await _drawZones(zones);
       });
     });
+    ref.listen<ExplorePostSubmitCue?>(explorePostSubmitCueProvider, (
+      previous,
+      next,
+    ) {
+      if (next == null) return;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        _applyPostSubmitCue(next);
+      });
+    });
     ref.listen<bool>(explorePendingGpsCenterProvider, (prev, next) {
       if (next != true) return;
       ref.read(explorePendingGpsCenterProvider.notifier).state = false;
@@ -1591,42 +1620,46 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
                   left: 16,
                   right: 16,
                   bottom: 18,
-                  child: zonesValue.when(
-                    data: (zones) {
-                      if (zones.isEmpty) {
-                        final hasFilters =
-                            ref.read(activeTravelerMixFilterProvider) != null ||
-                            ref.read(activePlaceTypeFilterProvider) != null ||
-                            ref.read(activeZoneFilterProvider) != null;
-                        return _LoadingZoneCard(
-                          message: hasFilters
-                              ? 'No zones match these filters here. Clear filters or pan to IT Park, Colon, or Ayala.'
-                              : 'No zones in this view. Pan to a tagged area or run backend seed (see README).',
-                        );
-                      }
-                      final previewZone = selectedZone;
-                      return _SelectedZoneCard(
-                        zone: previewZone,
-                        onClose: _clearSelectedZone,
-                        onDirections: () =>
-                            unawaited(_openGoogleMapsNavigation(previewZone)),
-                        onDetails: () {
-                          _selectZone(previewZone);
-                          showModalBottomSheet<void>(
-                            context: context,
-                            isScrollControlled: true,
-                            backgroundColor: Colors.transparent,
-                            barrierColor: Colors.black.withValues(alpha: 0.35),
-                            builder: (_) => const ZoneDetailSheet(),
-                          );
-                        },
+                  child: _SelectedZoneCard(
+                    zone: selectedZone,
+                    onClose: _clearSelectedZone,
+                    onDirections: () => unawaited(
+                      _openGoogleMapsNavigation(selectedZone),
+                    ),
+                    onDetails: () {
+                      _selectZone(selectedZone);
+                      showModalBottomSheet<void>(
+                        context: context,
+                        isScrollControlled: true,
+                        backgroundColor: Colors.transparent,
+                        barrierColor: Colors.black.withValues(alpha: 0.35),
+                        builder: (_) => const ZoneDetailSheet(),
                       );
                     },
-                    loading: () =>
-                        const _LoadingZoneCard(message: 'Loading zones...'),
-                    error: (error, _) => _LoadingZoneCard(
-                      message: 'Unable to load zones: ${_shortError(error)}',
-                    ),
+                  ),
+                )
+              else if (zonesValue.hasError)
+                Positioned(
+                  left: 16,
+                  right: 16,
+                  bottom: 18,
+                  child: _LoadingZoneCard(
+                    message:
+                        'Unable to load zones: ${_shortError(zonesValue.error!)}',
+                  ),
+                )
+              else if (zones.isEmpty && !zonesValue.isLoading)
+                Positioned(
+                  left: 16,
+                  right: 16,
+                  bottom: 18,
+                  child: _LoadingZoneCard(
+                    message: (ref.read(activeTravelerMixFilterProvider) !=
+                                null ||
+                            ref.read(activePlaceTypeFilterProvider) != null ||
+                            ref.read(activeZoneFilterProvider) != null)
+                        ? 'No zones match these filters here. Clear filters or pan to IT Park, Colon, or Ayala.'
+                        : 'No zones in this view. Pan to a tagged area such as IT Park, Colon, or Ayala.',
                   ),
                 ),
             ],

@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_current_user
 from app.api.routers import zones as zones_router
 from app.core.database import get_db
+from app.models.report import Report
 from app.models.user import User
 from app.repositories.report_repository import ReportRepository
 from app.repositories.user_repository import UserRepository
@@ -22,6 +23,7 @@ from app.schemas.user import (
     UserUpdate,
 )
 from app.schemas.zone import ZoneListItem
+from app.services import h3_service
 from app.services.audit_service import AuditService
 from app.utils.user_type_utils import apply_user_type_to_user
 
@@ -74,10 +76,19 @@ def my_contributions(
             approved=approved,
             pending=pending,
         ),
-        recent_reports=[ReportPublic.model_validate(r) for r in recent],
+        recent_reports=[_report_public_for_owner(r) for r in recent],
         badges=badges,
         contributor_label=_contributor_label(approved),
     )
+
+
+def _report_public_for_owner(report: Report) -> ReportPublic:
+    item = ReportPublic.model_validate(report)
+    try:
+        lat, lng = h3_service.cell_centroid(report.h3_index)
+        return item.model_copy(update={"cell_lat": lat, "cell_lng": lng})
+    except Exception:
+        return item
 
 
 @router.get("/me", response_model=UserPublic)

@@ -211,10 +211,14 @@ class ExplorePostSubmitCue {
   const ExplorePostSubmitCue({
     required this.focus,
     required this.summary,
+    this.zone,
+    this.placeTitle,
   });
 
   final LatLng focus;
   final String summary;
+  final ZoneModel? zone;
+  final String? placeTitle;
 }
 
 final explorePostSubmitCueProvider =
@@ -597,6 +601,28 @@ class UserContributionsNotifier
 
   /// Refetch stats + recent tags (e.g. after submitting a report).
   Future<void> refresh() => _load(initial: false);
+
+  /// Show the new tag on Profile immediately, then [refresh] replaces it.
+  void ingestSubmitted(ReportModel report) {
+    final current = state.valueOrNull;
+    final previous = current?.recentReports ?? const <ReportModel>[];
+    final stats = current?.stats;
+    state = AsyncData(
+      UserContributionsModel(
+        stats: UserContributionStatsModel(
+          submitted: (stats?.submitted ?? 0) + 1,
+          approved: stats?.approved ?? 0,
+          pending: (stats?.pending ?? 0) + 1,
+        ),
+        recentReports: [
+          report,
+          ...previous.where((item) => item.id != report.id),
+        ],
+        badges: current?.badges ?? const <ProfileBadgeModel>[],
+        contributorLabel: current?.contributorLabel ?? 'New to sharing',
+      ),
+    );
+  }
 }
 
 final userContributionsProvider = StateNotifierProvider<
@@ -1972,9 +1998,19 @@ class TagSubmissionController
         ref.invalidate(cityPulseProvider);
         final feedback = _demoFeedback(payload);
         await _applyZoneValidationAfterTag(ref, payload, feedback);
-        try {
-          await ref.read(userContributionsProvider.notifier).refresh();
-        } catch (_) {}
+        ref.read(userContributionsProvider.notifier).ingestSubmitted(
+          ReportModel(
+            id: 'local-${DateTime.now().millisecondsSinceEpoch}',
+            h3Index: feedback.h3Index,
+            category: payload.category,
+            tags: payload.tags,
+            note: payload.note,
+            createdAt: DateTime.now(),
+            visibilityStatus: 'pending',
+            cellLat: payload.latitude,
+            cellLng: payload.longitude,
+          ),
+        );
         ref.invalidate(userMeProvider);
         try {
           await ref.read(userMeProvider.future);
@@ -1992,6 +2028,23 @@ class TagSubmissionController
       final feedback = TagSubmissionFeedback.fromJson(
         data['aggregation'] as Map<String, dynamic>,
       );
+      try {
+        final submitted = ReportModel.fromJson(data);
+        ref.read(userContributionsProvider.notifier).ingestSubmitted(
+          ReportModel(
+            id: submitted.id,
+            h3Index: submitted.h3Index,
+            category: submitted.category,
+            tags: submitted.tags,
+            note: submitted.note,
+            createdAt: submitted.createdAt,
+            imageUrl: submitted.imageUrl,
+            visibilityStatus: submitted.visibilityStatus ?? 'pending',
+            cellLat: payload.latitude,
+            cellLng: payload.longitude,
+          ),
+        );
+      } catch (_) {}
       ref.invalidate(visibleZonesProvider);
       ref.invalidate(visibleCellsProvider);
       ref.invalidate(selectedZoneDetailProvider);

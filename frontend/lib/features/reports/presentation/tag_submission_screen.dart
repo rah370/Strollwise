@@ -12,6 +12,7 @@ import '../../../shared/location/cebu_place_geocode.dart';
 import '../../../shared/models/zone.dart';
 import '../../../shared/network/api_client.dart';
 import '../../../shared/notifications/app_notifications.dart';
+import '../../../shared/open_area_on_explore.dart';
 import '../../../shared/providers/app_providers.dart';
 import '../../../shared/zone_place_ui.dart';
 
@@ -157,7 +158,10 @@ class _TagSubmissionScreenState extends ConsumerState<TagSubmissionScreen> {
   List<CebuPlaceSearchHit> _placeHits = const [];
   String? _searchFeedback;
   Timer? _searchDebounce;
+  Timer? _confirmAdvanceTimer;
   int _searchRequestGen = 0;
+  _TagSubmitConfirmation? _confirmation;
+  bool _openingSubmittedArea = false;
 
   @override
   void initState() {
@@ -169,7 +173,8 @@ class _TagSubmissionScreenState extends ConsumerState<TagSubmissionScreen> {
       _tagTypes.firstWhere((type) => type.label == _selectedTypeLabel);
 
   bool get _canSubmit =>
-      _selectedDetail.isNotEmpty || noteController.text.trim().isNotEmpty;
+      _pickedLocation != null &&
+      (_selectedDetail.isNotEmpty || noteController.text.trim().isNotEmpty);
 
   void _applyLocation(LatLng location) {
     ref.read(tagSubmissionPinLocationProvider.notifier).state = location;
@@ -179,6 +184,7 @@ class _TagSubmissionScreenState extends ConsumerState<TagSubmissionScreen> {
   @override
   void dispose() {
     _searchDebounce?.cancel();
+    _confirmAdvanceTimer?.cancel();
     noteController.dispose();
     placeSearchController.dispose();
     super.dispose();
@@ -257,27 +263,31 @@ class _TagSubmissionScreenState extends ConsumerState<TagSubmissionScreen> {
       if (!mounted) return;
 
       final focus = LatLng(payload.latitude, payload.longitude);
-      final summary = _submissionExploreSummary(feedback);
+      final zone = ref.read(selectedZoneProvider) ??
+          ref.read(tagFlowZoneOverviewNotifierProvider).overview?.currentZone;
+      final summary = _friendlySubmitSummary(feedback, zone);
       pushAppNotification(
         ref,
         title: 'Tag submitted',
         message: summary,
         kind: AppNotificationKind.success,
       );
-      ref.read(explorePostSubmitCueProvider.notifier).state =
-          ExplorePostSubmitCue(focus: focus, summary: summary);
       ref.read(tagSubmissionPinLocationProvider.notifier).state = null;
-
-      if (!mounted) return;
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted) return;
-        final token = ref.read(authTokenProvider);
-        if (token != null && token != 'demo-token-local') {
-          ref.invalidate(userMeProvider);
-          unawaited(ref.read(userContributionsProvider.notifier).refresh());
-        }
-        if (!mounted) return;
-        context.go('/explore');
+      setState(() {
+        _confirmation = _TagSubmitConfirmation(
+          focus: focus,
+          zone: zone,
+          typeLabel: _selectedType.label,
+          placeTitle: placeSearchController.text.trim().isEmpty
+              ? null
+              : placeSearchController.text.trim(),
+          summary: summary,
+        );
+      });
+      _confirmAdvanceTimer?.cancel();
+      _confirmAdvanceTimer = Timer(const Duration(milliseconds: 2200), () {
+        if (!mounted || _confirmation == null) return;
+        _openSubmittedArea();
       });
     } catch (error) {
       if (!mounted) return;
@@ -391,22 +401,53 @@ class _TagSubmissionScreenState extends ConsumerState<TagSubmissionScreen> {
     _applyLocation(center);
   }
 
-  String _submissionExploreSummary(TagSubmissionFeedback feedback) {
-    final thresholdLine = feedback.thresholdMet
-        ? '${feedback.matchingCount}/${feedback.threshold} people — cell can form.'
-        : '${feedback.matchingCount}/${feedback.threshold} people in this cell.';
+  String _friendlySubmitSummary(
+    TagSubmissionFeedback feedback,
+    ZoneModel? zone,
+  ) {
+    final where = zone != null
+        ? zoneDisplayTitle(zone)
+        : (placeSearchController.text.trim().isEmpty
+              ? 'this Cebu area'
+              : placeSearchController.text.trim());
     final pending = feedback.thresholdMet
-        ? 'This H3 cell will publish after aggregation runs.'
-        : '${feedback.remainingToThreshold} more '
-              '${feedback.remainingToThreshold == 1 ? 'person' : 'people'} needed before this cell can form.';
-    return 'Tag saved. H3 ${feedback.h3Index}\n'
-        '$thresholdLine\n'
-        '$pending\n'
-        '${feedback.publicZoneUpdate}';
+        ? 'Enough people tagged here for a public cell to form.'
+        : 'Pending validation — '
+              '${feedback.remainingToThreshold} more '
+              '${feedback.remainingToThreshold == 1 ? 'person' : 'people'} '
+              'needed before this cell can go public.';
+    return 'Your ${_selectedType.label} tag at $where was saved. $pending';
+  }
+
+  void _openSubmittedArea() {
+    final confirmation = _confirmation;
+    if (confirmation == null || _openingSubmittedArea) return;
+    _openingSubmittedArea = true;
+    _confirmAdvanceTimer?.cancel();
+    _confirmation = null;
+    openAreaOnExplore(
+      ref,
+      context,
+      focus: confirmation.focus,
+      zone: confirmation.zone,
+      title: confirmation.placeTitle ??
+          (confirmation.zone == null
+              ? null
+              : zoneDisplayTitle(confirmation.zone!)),
+      submitSummary: confirmation.summary,
+    );
   }
 
   @override
   Widget build(BuildContext context) {
+    final confirmation = _confirmation;
+    if (confirmation != null) {
+      return _TagSubmittedView(
+        confirmation: confirmation,
+        onSeeMap: _openSubmittedArea,
+      );
+    }
+
     final submissionState = ref.watch(tagSubmissionProvider);
     final selectedZone = ref.watch(selectedZoneProvider);
     final zoneFlow = ref.watch(tagFlowZoneOverviewNotifierProvider);
@@ -608,7 +649,11 @@ class _TagSubmissionScreenState extends ConsumerState<TagSubmissionScreen> {
                         )
                       : const Icon(Icons.send_rounded),
                   label: Text(
-                    submissionState.isLoading ? 'Submitting…' : 'Submit tag',
+                    submissionState.isLoading
+                        ? 'Submitting…'
+                        : hasLocation
+                            ? 'Submit tag'
+                            : 'Set a location first',
                   ),
                   style: FilledButton.styleFrom(
                     minimumSize: const Size.fromHeight(52),
@@ -617,6 +662,108 @@ class _TagSubmissionScreenState extends ConsumerState<TagSubmissionScreen> {
               },
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class _TagSubmitConfirmation {
+  const _TagSubmitConfirmation({
+    required this.focus,
+    required this.summary,
+    required this.typeLabel,
+    this.zone,
+    this.placeTitle,
+  });
+
+  final LatLng focus;
+  final ZoneModel? zone;
+  final String typeLabel;
+  final String? placeTitle;
+  final String summary;
+}
+
+class _TagSubmittedView extends StatelessWidget {
+  const _TagSubmittedView({
+    required this.confirmation,
+    required this.onSeeMap,
+  });
+
+  final _TagSubmitConfirmation confirmation;
+  final VoidCallback onSeeMap;
+
+  @override
+  Widget build(BuildContext context) {
+    final where = confirmation.placeTitle ??
+        (confirmation.zone == null
+            ? 'your tagged spot'
+            : zoneDisplayTitle(confirmation.zone!));
+    return Scaffold(
+      backgroundColor: const Color(0xFFF8FAFB),
+      body: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(24, 32, 24, 24),
+          child: Column(
+            children: [
+              const Spacer(),
+              Container(
+                width: 88,
+                height: 88,
+                decoration: const BoxDecoration(
+                  color: Color(0xFFE8F8EE),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.check_rounded,
+                  size: 48,
+                  color: Color(0xFF2F855A),
+                ),
+              ),
+              const SizedBox(height: 20),
+              const Text(
+                'Tag submitted',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 26,
+                  fontWeight: FontWeight.w900,
+                  color: AppColors.primaryText,
+                ),
+              ),
+              const SizedBox(height: 10),
+              Text(
+                'Your ${confirmation.typeLabel} tag at $where is saved. '
+                'Opening that area on the map…',
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  fontSize: 15,
+                  height: 1.4,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.secondaryText,
+                ),
+              ),
+              const SizedBox(height: 16),
+              Text(
+                confirmation.summary,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  fontSize: 13,
+                  height: 1.4,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.mutedText,
+                ),
+              ),
+              const Spacer(),
+              FilledButton.icon(
+                onPressed: onSeeMap,
+                icon: const Icon(Icons.map_outlined),
+                label: const Text('See this area on the map'),
+                style: FilledButton.styleFrom(
+                  minimumSize: const Size.fromHeight(52),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );

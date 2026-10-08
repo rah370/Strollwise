@@ -8,6 +8,8 @@ class ReportModel {
     required this.createdAt,
     this.imageUrl,
     this.visibilityStatus,
+    this.cellLat,
+    this.cellLng,
   });
 
   final String id;
@@ -20,6 +22,10 @@ class ReportModel {
 
   /// Backend `visibility_status` when present (e.g. own profile); otherwise null.
   final String? visibilityStatus;
+
+  /// H3 cell centroid for the owner's own tags (not raw GPS).
+  final double? cellLat;
+  final double? cellLng;
 
   bool get isApprovedVisible =>
       (visibilityStatus ?? 'visible').toLowerCase() == 'visible';
@@ -38,6 +44,8 @@ class ReportModel {
           DateTime.fromMillisecondsSinceEpoch(0),
       imageUrl: json['image_url'] as String?,
       visibilityStatus: json['visibility_status'] as String?,
+      cellLat: (json['cell_lat'] as num?)?.toDouble(),
+      cellLng: (json['cell_lng'] as num?)?.toDouble(),
     );
   }
 }

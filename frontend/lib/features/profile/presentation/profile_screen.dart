@@ -8,16 +8,21 @@ import 'package:maplibre_gl/maplibre_gl.dart';
 
 import '../../../app/theme/colors.dart';
 import '../../../shared/data/origin_locations.dart';
+import '../../../shared/h3_location.dart';
 import '../../../shared/location/cebu_place_geocode.dart';
-import '../../../shared/widgets/origin_location_picker.dart';
 import '../../../shared/models/report.dart';
 import '../../../shared/models/user_contributions.dart';
-import '../../../shared/models/visit_pin.dart';
 import '../../../shared/models/user_me.dart';
+import '../../../shared/models/visit_pin.dart';
 import '../../../shared/models/zone.dart';
 import '../../../shared/network/api_client.dart';
+import '../../../shared/notifications/app_notifications.dart';
+import '../../../shared/open_area_on_explore.dart';
 import '../../../shared/providers/app_providers.dart';
+import '../../../shared/traveler_gradient.dart';
 import '../../../shared/user_manual_map_location.dart';
+import '../../../shared/widgets/origin_location_picker.dart';
+import '../../../shared/zone_place_ui.dart';
 
 class ProfileScreen extends ConsumerStatefulWidget {
   const ProfileScreen({super.key});
@@ -48,6 +53,54 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     ref.read(exploreFocusLocationProvider.notifier).state = location;
     ref.invalidate(currentZoneOverviewProvider);
     context.go('/explore');
+  }
+
+  Future<void> _openRecentTag(ReportModel report) async {
+    final focus = latLngForReport(report);
+    if (focus == null) {
+      pushAppNotification(
+        ref,
+        title: 'Could not open tag',
+        message: 'This tag has no map location yet. Try again after refresh.',
+        kind: AppNotificationKind.warning,
+      );
+      return;
+    }
+    await ZoneCatalog.ensureLoaded();
+    final entry = ZoneCatalog.nearestEntry(focus.latitude, focus.longitude);
+    final zone = entry == null ? null : zoneModelFromCatalogEntry(entry);
+    final title = report.tags.isNotEmpty
+        ? report.tags.take(2).join(' • ')
+        : report.category;
+    openAreaOnExplore(
+      ref,
+      context,
+      focus: focus,
+      zone: zone,
+      title: zone == null ? title : zoneDisplayTitle(zone),
+    );
+  }
+
+  void _openSavedZone(ZoneModel zone) {
+    final focus = (zone.centroidLat == 0.0 && zone.centroidLng == 0.0)
+        ? null
+        : LatLng(zone.centroidLat, zone.centroidLng);
+    if (focus == null) {
+      pushAppNotification(
+        ref,
+        title: 'Could not open zone',
+        message: 'This saved zone has no map point yet.',
+        kind: AppNotificationKind.warning,
+      );
+      return;
+    }
+    openAreaOnExplore(
+      ref,
+      context,
+      focus: focus,
+      zone: zone,
+      title: zoneDisplayTitle(zone),
+    );
   }
 
   Future<void> _refreshProfileData() async {
@@ -200,7 +253,10 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                         icon: Icons.history_rounded,
                         title: 'Recent tags',
                         subtitle: 'Your latest submissions',
-                        child: _RecentContributionsList(contributions: recent),
+                        child: _RecentContributionsList(
+                          contributions: recent,
+                          onOpenTag: _openRecentTag,
+                        ),
                       ),
                       const SizedBox(height: 14),
                       _ProfileSectionCard(
@@ -227,7 +283,10 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                         subtitle: savedList.isEmpty
                             ? null
                             : '${savedList.length} on your list',
-                        child: _SavedZonesFromApi(zones: savedList),
+                        child: _SavedZonesFromApi(
+                          zones: savedList,
+                          onOpenZone: _openSavedZone,
+                        ),
                       ),
                     ],
                   ),
@@ -1460,9 +1519,13 @@ class _VisitHistoryRow extends StatelessWidget {
 }
 
 class _RecentContributionsList extends StatelessWidget {
-  const _RecentContributionsList({required this.contributions});
+  const _RecentContributionsList({
+    required this.contributions,
+    required this.onOpenTag,
+  });
 
   final List<ReportModel> contributions;
+  final Future<void> Function(ReportModel report) onOpenTag;
 
   @override
   Widget build(BuildContext context) {
@@ -1478,7 +1541,10 @@ class _RecentContributionsList extends StatelessWidget {
     return Column(
       children: [
         for (int i = 0; i < contributions.length; i++) ...[
-          _ContributionRow(report: contributions[i]),
+          _ContributionRow(
+            report: contributions[i],
+            onTap: () => onOpenTag(contributions[i]),
+          ),
           if (i < contributions.length - 1)
             const Divider(height: 16, color: AppColors.border),
         ],
@@ -1488,9 +1554,13 @@ class _RecentContributionsList extends StatelessWidget {
 }
 
 class _ContributionRow extends StatelessWidget {
-  const _ContributionRow({required this.report});
+  const _ContributionRow({
+    required this.report,
+    required this.onTap,
+  });
 
   final ReportModel report;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
@@ -1501,64 +1571,74 @@ class _ContributionRow extends StatelessWidget {
     final title = report.tags.isNotEmpty
         ? report.tags.take(2).join(' • ')
         : report.category.toUpperCase();
-    return Row(
-      children: [
-        CircleAvatar(
-          radius: 16,
-          backgroundColor: statusColor.withValues(alpha: 0.14),
-          child: Icon(
-            _iconForCategory(report.category),
-            size: 17,
-            color: statusColor,
-          ),
-        ),
-        const SizedBox(width: 10),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(12),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 4),
+          child: Row(
             children: [
-              Text(
-                title,
-                style: const TextStyle(
-                  color: AppColors.primaryText,
-                  fontWeight: FontWeight.w800,
+              CircleAvatar(
+                radius: 16,
+                backgroundColor: statusColor.withValues(alpha: 0.14),
+                child: Icon(
+                  _iconForCategory(report.category),
+                  size: 17,
+                  color: statusColor,
                 ),
               ),
-              const SizedBox(height: 2),
-              Text(
-                '${report.category}  ·  ${_shortH3(report.h3Index)}',
-                style: const TextStyle(
-                  color: AppColors.mutedText,
-                  fontSize: 12,
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: const TextStyle(
+                        color: AppColors.primaryText,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      '${report.category}  ·  View on map',
+                      style: const TextStyle(
+                        color: AppColors.secondaryAction,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
                 ),
+              ),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                decoration: BoxDecoration(
+                  color: statusColor.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: Text(
+                  approved ? 'Approved' : 'Pending validation',
+                  style: TextStyle(
+                    color: statusColor,
+                    fontWeight: FontWeight.w800,
+                    fontSize: 12,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 4),
+              const Icon(
+                Icons.chevron_right_rounded,
+                color: AppColors.mutedText,
               ),
             ],
           ),
         ),
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-          decoration: BoxDecoration(
-            color: statusColor.withValues(alpha: 0.12),
-            borderRadius: BorderRadius.circular(999),
-          ),
-          child: Text(
-            approved ? 'Approved' : 'Pending validation',
-            style: TextStyle(
-              color: statusColor,
-              fontWeight: FontWeight.w800,
-              fontSize: 12,
-            ),
-          ),
-        ),
-        const SizedBox(width: 4),
-        const Icon(Icons.chevron_right_rounded, color: AppColors.mutedText),
-      ],
+      ),
     );
-  }
-
-  String _shortH3(String h3Index) {
-    if (h3Index.length <= 7) return h3Index;
-    return h3Index.substring(0, 7);
   }
 
   IconData _iconForCategory(String category) {
@@ -1589,9 +1669,13 @@ class _TagVisibilityFootnote extends StatelessWidget {
 }
 
 class _SavedZonesFromApi extends StatelessWidget {
-  const _SavedZonesFromApi({required this.zones});
+  const _SavedZonesFromApi({
+    required this.zones,
+    required this.onOpenZone,
+  });
 
   final List<ZoneModel> zones;
+  final void Function(ZoneModel zone) onOpenZone;
 
   @override
   Widget build(BuildContext context) {
@@ -1609,7 +1693,8 @@ class _SavedZonesFromApi extends StatelessWidget {
       runSpacing: 8,
       children: zones
           .map(
-            (z) => Chip(
+            (z) => ActionChip(
+              onPressed: () => onOpenZone(z),
               avatar: Icon(
                 Icons.hexagon_outlined,
                 size: 16,

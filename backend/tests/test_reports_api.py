@@ -484,3 +484,8 @@ def test_me_contributions_reflects_submitted_reports(client):
     assert body["recent_reports"]
     assert body["contributor_label"]
     assert body["recent_reports"][0]["category"] == "food"
+    first = body["recent_reports"][0]
+    assert first.get("cell_lat") is not None
+    assert first.get("cell_lng") is not None
+    assert abs(float(first["cell_lat"]) - 10.3157) < 0.05
+    assert abs(float(first["cell_lng"]) - 123.8854) < 0.05
