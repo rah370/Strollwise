@@ -50,6 +50,8 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
   MapLibreMapController? _controller;
   StreamSubscription<Position>? _positionSubscription;
   Timer? _exploreFlashClearTimer;
+  Timer? _tagSubmittedBannerTimer;
+  String? _tagSubmittedBanner;
   bool _showMap = false;
   bool _isUpdatingViewport = false;
   bool _didBootstrapLocation = false;
@@ -169,6 +171,7 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
       ref.read(mapSearchPlaceTitleProvider.notifier).state = cue.placeTitle;
       ref.read(mapSearchFocusProvider.notifier).state = cue.focus;
     }
+    _tagSubmittedBannerTimer?.cancel();
     setState(() {
       _followUser = false;
       _usingManualLocation = true;
@@ -176,11 +179,16 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
       _mapMode = cue.zone != null
           ? ExploreMapMode.zoneSelected
           : _mapMode;
+      _tagSubmittedBanner = 'Tag submitted';
     });
     if (cue.zone != null) {
       ref.read(selectedZoneProvider.notifier).state =
           enrichZoneForAreaCard(cue.zone!);
     }
+    _tagSubmittedBannerTimer = Timer(const Duration(seconds: 8), () {
+      if (!mounted) return;
+      setState(() => _tagSubmittedBanner = null);
+    });
     _exploreFlashClearTimer?.cancel();
     _exploreFlashClearTimer = Timer(const Duration(seconds: 14), () {
       if (!mounted) return;
@@ -1092,6 +1100,7 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
   @override
   void dispose() {
     _exploreFlashClearTimer?.cancel();
+    _tagSubmittedBannerTimer?.cancel();
     _viewportIdleDebounce?.cancel();
     _zoneLookupDebounce?.cancel();
     _positionSubscription?.cancel();
@@ -1501,6 +1510,41 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
+                    if (_tagSubmittedBanner != null)
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+                        child: Material(
+                          color: const Color(0xFF166534),
+                          elevation: 3,
+                          borderRadius: BorderRadius.circular(12),
+                          child: const Padding(
+                            padding: EdgeInsets.symmetric(
+                              horizontal: 14,
+                              vertical: 12,
+                            ),
+                            child: Row(
+                              children: [
+                                Icon(
+                                  Icons.check_circle_rounded,
+                                  color: Colors.white,
+                                  size: 22,
+                                ),
+                                SizedBox(width: 10),
+                                Expanded(
+                                  child: Text(
+                                    'Tag submitted',
+                                    style: TextStyle(
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.w800,
+                                      fontSize: 15,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
                     _MapTopBar(
                       zoneCount: zonesValue.maybeWhen(
                         data: (zones) => zones.length,
@@ -1622,6 +1666,7 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
                   bottom: 18,
                   child: _SelectedZoneCard(
                     zone: selectedZone,
+                    submittedLabel: _tagSubmittedBanner,
                     onClose: _clearSelectedZone,
                     onDirections: () => unawaited(
                       _openGoogleMapsNavigation(selectedZone),
@@ -2273,12 +2318,14 @@ class _SelectedZoneCard extends StatelessWidget {
     required this.onDetails,
     required this.onDirections,
     required this.onClose,
+    this.submittedLabel,
   });
 
   final ZoneModel zone;
   final VoidCallback onDetails;
   final VoidCallback onDirections;
   final VoidCallback onClose;
+  final String? submittedLabel;
 
   @override
   Widget build(BuildContext context) {
@@ -2318,6 +2365,38 @@ class _SelectedZoneCard extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 10),
+            if (submittedLabel != null) ...[
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 8,
+                ),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFE8F8EE),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: const Row(
+                  children: [
+                    Icon(
+                      Icons.check_circle_rounded,
+                      color: Color(0xFF2F855A),
+                      size: 18,
+                    ),
+                    SizedBox(width: 8),
+                    Text(
+                      'Tag submitted',
+                      style: TextStyle(
+                        color: Color(0xFF2F855A),
+                        fontWeight: FontWeight.w800,
+                        fontSize: 13,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 10),
+            ],
             Row(
               children: [
                 _ZoneIconBadge(palette: palette, zone: zone),

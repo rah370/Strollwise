@@ -158,7 +158,6 @@ class _TagSubmissionScreenState extends ConsumerState<TagSubmissionScreen> {
   List<CebuPlaceSearchHit> _placeHits = const [];
   String? _searchFeedback;
   Timer? _searchDebounce;
-  Timer? _confirmAdvanceTimer;
   int _searchRequestGen = 0;
   _TagSubmitConfirmation? _confirmation;
   bool _openingSubmittedArea = false;
@@ -184,7 +183,6 @@ class _TagSubmissionScreenState extends ConsumerState<TagSubmissionScreen> {
   @override
   void dispose() {
     _searchDebounce?.cancel();
-    _confirmAdvanceTimer?.cancel();
     noteController.dispose();
     placeSearchController.dispose();
     super.dispose();
@@ -271,24 +269,44 @@ class _TagSubmissionScreenState extends ConsumerState<TagSubmissionScreen> {
         title: 'Tag submitted',
         message: summary,
         kind: AppNotificationKind.success,
+        showToast: false,
       );
       ref.read(tagSubmissionPinLocationProvider.notifier).state = null;
-      setState(() {
-        _confirmation = _TagSubmitConfirmation(
-          focus: focus,
-          zone: zone,
-          typeLabel: _selectedType.label,
-          placeTitle: placeSearchController.text.trim().isEmpty
-              ? null
-              : placeSearchController.text.trim(),
-          summary: summary,
-        );
-      });
-      _confirmAdvanceTimer?.cancel();
-      _confirmAdvanceTimer = Timer(const Duration(milliseconds: 2200), () {
-        if (!mounted || _confirmation == null) return;
-        _openSubmittedArea();
-      });
+      _confirmation = _TagSubmitConfirmation(
+        focus: focus,
+        zone: zone,
+        placeTitle: placeSearchController.text.trim().isEmpty
+            ? null
+            : placeSearchController.text.trim(),
+        summary: summary,
+      );
+      await showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (dialogContext) {
+          return AlertDialog(
+            icon: const Icon(
+              Icons.check_circle_rounded,
+              color: Color(0xFF2F855A),
+              size: 44,
+            ),
+            title: const Text('Tag submitted'),
+            content: Text(
+              'Your ${_selectedType.label} tag was saved.',
+              textAlign: TextAlign.center,
+            ),
+            actionsAlignment: MainAxisAlignment.center,
+            actions: [
+              FilledButton(
+                onPressed: () => Navigator.of(dialogContext).pop(),
+                child: const Text('See on map'),
+              ),
+            ],
+          );
+        },
+      );
+      if (!mounted) return;
+      _openSubmittedArea();
     } catch (error) {
       if (!mounted) return;
       pushAppNotification(
@@ -423,7 +441,6 @@ class _TagSubmissionScreenState extends ConsumerState<TagSubmissionScreen> {
     final confirmation = _confirmation;
     if (confirmation == null || _openingSubmittedArea) return;
     _openingSubmittedArea = true;
-    _confirmAdvanceTimer?.cancel();
     _confirmation = null;
     openAreaOnExplore(
       ref,
@@ -440,14 +457,6 @@ class _TagSubmissionScreenState extends ConsumerState<TagSubmissionScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final confirmation = _confirmation;
-    if (confirmation != null) {
-      return _TagSubmittedView(
-        confirmation: confirmation,
-        onSeeMap: _openSubmittedArea,
-      );
-    }
-
     final submissionState = ref.watch(tagSubmissionProvider);
     final selectedZone = ref.watch(selectedZoneProvider);
     final zoneFlow = ref.watch(tagFlowZoneOverviewNotifierProvider);
@@ -672,102 +681,14 @@ class _TagSubmitConfirmation {
   const _TagSubmitConfirmation({
     required this.focus,
     required this.summary,
-    required this.typeLabel,
     this.zone,
     this.placeTitle,
   });
 
   final LatLng focus;
   final ZoneModel? zone;
-  final String typeLabel;
   final String? placeTitle;
   final String summary;
-}
-
-class _TagSubmittedView extends StatelessWidget {
-  const _TagSubmittedView({
-    required this.confirmation,
-    required this.onSeeMap,
-  });
-
-  final _TagSubmitConfirmation confirmation;
-  final VoidCallback onSeeMap;
-
-  @override
-  Widget build(BuildContext context) {
-    final where = confirmation.placeTitle ??
-        (confirmation.zone == null
-            ? 'your tagged spot'
-            : zoneDisplayTitle(confirmation.zone!));
-    return Scaffold(
-      backgroundColor: const Color(0xFFF8FAFB),
-      body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(24, 32, 24, 24),
-          child: Column(
-            children: [
-              const Spacer(),
-              Container(
-                width: 88,
-                height: 88,
-                decoration: const BoxDecoration(
-                  color: Color(0xFFE8F8EE),
-                  shape: BoxShape.circle,
-                ),
-                child: const Icon(
-                  Icons.check_rounded,
-                  size: 48,
-                  color: Color(0xFF2F855A),
-                ),
-              ),
-              const SizedBox(height: 20),
-              const Text(
-                'Tag submitted',
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  fontSize: 26,
-                  fontWeight: FontWeight.w900,
-                  color: AppColors.primaryText,
-                ),
-              ),
-              const SizedBox(height: 10),
-              Text(
-                'Your ${confirmation.typeLabel} tag at $where is saved. '
-                'Opening that area on the map…',
-                textAlign: TextAlign.center,
-                style: const TextStyle(
-                  fontSize: 15,
-                  height: 1.4,
-                  fontWeight: FontWeight.w600,
-                  color: AppColors.secondaryText,
-                ),
-              ),
-              const SizedBox(height: 16),
-              Text(
-                confirmation.summary,
-                textAlign: TextAlign.center,
-                style: const TextStyle(
-                  fontSize: 13,
-                  height: 1.4,
-                  fontWeight: FontWeight.w600,
-                  color: AppColors.mutedText,
-                ),
-              ),
-              const Spacer(),
-              FilledButton.icon(
-                onPressed: onSeeMap,
-                icon: const Icon(Icons.map_outlined),
-                label: const Text('See this area on the map'),
-                style: FilledButton.styleFrom(
-                  minimumSize: const Size.fromHeight(52),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
 }
 
 class _ZoneCard extends StatelessWidget {
