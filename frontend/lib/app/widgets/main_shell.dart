@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-class MainShell extends StatelessWidget {
+import '../../shared/providers/app_providers.dart';
+
+class MainShell extends ConsumerWidget {
   const MainShell({required this.child, super.key});
 
   final Widget child;
@@ -20,11 +23,55 @@ class MainShell extends StatelessWidget {
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final location = GoRouterState.of(context).uri.toString();
     final hideNavigation = location.startsWith('/add-tag');
+    final submittedBanner = ref.watch(tagSubmittedBannerProvider);
     return Scaffold(
-      body: child,
+      body: Column(
+        children: [
+          if (submittedBanner != null)
+            Material(
+              color: const Color(0xFF166534),
+              elevation: 2,
+              child: SafeArea(
+                bottom: false,
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 10, 8, 10),
+                  child: Row(
+                    children: [
+                      const Icon(
+                        Icons.check_circle_rounded,
+                        color: Colors.white,
+                        size: 22,
+                      ),
+                      const SizedBox(width: 10),
+                      const Expanded(
+                        child: Text(
+                          'Tag submitted',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w800,
+                            fontSize: 15,
+                          ),
+                        ),
+                      ),
+                      IconButton(
+                        tooltip: 'Dismiss',
+                        onPressed: () {
+                          ref.read(tagSubmittedBannerProvider.notifier).state =
+                              null;
+                        },
+                        icon: const Icon(Icons.close, color: Colors.white),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          Expanded(child: child),
+        ],
+      ),
       bottomNavigationBar: hideNavigation
           ? null
           : NavigationBar(
