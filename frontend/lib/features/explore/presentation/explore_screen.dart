@@ -32,6 +32,19 @@ import '../../zones/presentation/zone_detail_sheet.dart';
 
 enum ExploreMapMode { discovery, zoneSelected }
 
+@visibleForTesting
+bool isSameZoneDoubleTap({
+  required String? previousZoneId,
+  required String zoneId,
+  required DateTime? previousTapAt,
+  required DateTime now,
+  Duration window = const Duration(milliseconds: 650),
+}) {
+  if (previousZoneId != zoneId || previousTapAt == null) return false;
+  final elapsed = now.difference(previousTapAt);
+  return !elapsed.isNegative && elapsed <= window;
+}
+
 enum _LocationBootstrapState {
   locating,
   permissionDenied,
@@ -63,7 +76,8 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
   bool _usingManualLocation = false;
   bool _followUser = true;
   String? _lastTappedZoneId;
-  int _sameZoneTapCount = 0;
+  DateTime? _lastZoneTapAt;
+  bool _zoneSheetOpen = false;
   final Set<String> _enabledLayerKeys = {
     'local',
     'international',
@@ -891,20 +905,25 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
   }
 
   void _handleZoneTap(ZoneModel zone) {
-    if (_lastTappedZoneId == zone.zoneId) {
-      _sameZoneTapCount += 1;
-    } else {
-      _lastTappedZoneId = zone.zoneId;
-      _sameZoneTapCount = 1;
-    }
+    final now = DateTime.now();
+    final openDetails = isSameZoneDoubleTap(
+      previousZoneId: _lastTappedZoneId,
+      zoneId: zone.zoneId,
+      previousTapAt: _lastZoneTapAt,
+      now: now,
+    );
+    _lastTappedZoneId = zone.zoneId;
+    _lastZoneTapAt = now;
     _selectZone(zone);
-    if (_sameZoneTapCount >= 3) {
-      _sameZoneTapCount = 0;
+    if (openDetails) {
+      _lastZoneTapAt = null;
       _showZoneInformation();
     }
   }
 
   void _showZoneInformation() {
+    if (_zoneSheetOpen) return;
+    _zoneSheetOpen = true;
     ScaffoldMessenger.of(context).hideCurrentSnackBar();
     showModalBottomSheet<void>(
       context: context,
@@ -912,7 +931,9 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
       backgroundColor: Colors.transparent,
       barrierColor: Colors.black.withValues(alpha: 0.35),
       builder: (_) => const ZoneDetailSheet(),
-    );
+    ).whenComplete(() {
+      if (mounted) _zoneSheetOpen = false;
+    });
   }
 
   Future<void> _adjustZoom(double delta) async {
@@ -935,7 +956,7 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
     setState(() {
       _mapMode = ExploreMapMode.discovery;
       _lastTappedZoneId = null;
-      _sameZoneTapCount = 0;
+      _lastZoneTapAt = null;
     });
   }
 
@@ -1453,6 +1474,7 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
                     ),
                     minMaxZoomPreference: const MinMaxZoomPreference(7.8, 18),
                     rotateGesturesEnabled: false,
+                    doubleClickZoomEnabled: false,
                     onMapCreated: (controller) {
                       _controller = controller;
                       unawaited(_flushPendingCamera());
