@@ -224,6 +224,20 @@ class ExplorePostSubmitCue {
 final explorePostSubmitCueProvider =
     StateProvider<ExplorePostSubmitCue?>((ref) => null);
 
+/// Survives Explore remounts so testers still see "Tag submitted".
+class TagSubmittedBanner {
+  const TagSubmittedBanner({
+    required this.message,
+    required this.shownAt,
+  });
+
+  final String message;
+  final DateTime shownAt;
+}
+
+final tagSubmittedBannerProvider =
+    StateProvider<TagSubmittedBanner?>((ref) => null);
+
 /// Temporary black pin on Explore; cleared automatically after a few seconds.
 final exploreFlashPinProvider = StateProvider<LatLng?>((ref) => null);
 final zoneDataNoticeProvider = StateProvider<String?>((ref) => null);
@@ -2212,6 +2226,7 @@ class AuthActionController extends StateNotifier<AsyncValue<void>> {
     ref.read(currentUserLocationProvider.notifier).state = null;
     ref.read(exploreFocusLocationProvider.notifier).state = null;
     ref.read(explorePostSubmitCueProvider.notifier).state = null;
+    ref.read(tagSubmittedBannerProvider.notifier).state = null;
     ref.read(exploreFlashPinProvider.notifier).state = null;
     ref.read(zoneDataNoticeProvider.notifier).state = null;
     routerRefreshListenable.value++;

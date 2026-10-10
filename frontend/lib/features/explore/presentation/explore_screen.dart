@@ -51,7 +51,6 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
   StreamSubscription<Position>? _positionSubscription;
   Timer? _exploreFlashClearTimer;
   Timer? _tagSubmittedBannerTimer;
-  String? _tagSubmittedBanner;
   bool _showMap = false;
   bool _isUpdatingViewport = false;
   bool _didBootstrapLocation = false;
@@ -114,6 +113,7 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
       });
     });
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      _scheduleTagSubmittedBannerClear();
       final postCue = ref.read(explorePostSubmitCueProvider);
       if (postCue != null) {
         _applyPostSubmitCue(postCue);
@@ -171,7 +171,6 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
       ref.read(mapSearchPlaceTitleProvider.notifier).state = cue.placeTitle;
       ref.read(mapSearchFocusProvider.notifier).state = cue.focus;
     }
-    _tagSubmittedBannerTimer?.cancel();
     setState(() {
       _followUser = false;
       _usingManualLocation = true;
@@ -179,16 +178,19 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
       _mapMode = cue.zone != null
           ? ExploreMapMode.zoneSelected
           : _mapMode;
-      _tagSubmittedBanner = 'Tag submitted';
     });
     if (cue.zone != null) {
       ref.read(selectedZoneProvider.notifier).state =
           enrichZoneForAreaCard(cue.zone!);
     }
-    _tagSubmittedBannerTimer = Timer(const Duration(seconds: 8), () {
-      if (!mounted) return;
-      setState(() => _tagSubmittedBanner = null);
-    });
+    if (ref.read(tagSubmittedBannerProvider) == null &&
+        cue.summary.trim().isNotEmpty) {
+      ref.read(tagSubmittedBannerProvider.notifier).state = TagSubmittedBanner(
+        message: cue.summary.trim(),
+        shownAt: DateTime.now(),
+      );
+    }
+    _scheduleTagSubmittedBannerClear();
     _exploreFlashClearTimer?.cancel();
     _exploreFlashClearTimer = Timer(const Duration(seconds: 14), () {
       if (!mounted) return;
@@ -1110,6 +1112,19 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
     super.dispose();
   }
 
+  void _scheduleTagSubmittedBannerClear() {
+    final banner = ref.read(tagSubmittedBannerProvider);
+    if (banner == null) return;
+    _tagSubmittedBannerTimer?.cancel();
+    _tagSubmittedBannerTimer = Timer(const Duration(seconds: 12), () {
+      if (!mounted) return;
+      final current = ref.read(tagSubmittedBannerProvider);
+      if (current == banner) {
+        ref.read(tagSubmittedBannerProvider.notifier).state = null;
+      }
+    });
+  }
+
   void _toggleSearch() {
     final opening = !_showSearch;
     setState(() {
@@ -1309,6 +1324,13 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
         _applyPostSubmitCue(next);
       });
     });
+    ref.listen<TagSubmittedBanner?>(tagSubmittedBannerProvider, (
+      previous,
+      next,
+    ) {
+      if (next == null) return;
+      _scheduleTagSubmittedBannerClear();
+    });
     ref.listen<bool>(explorePendingGpsCenterProvider, (prev, next) {
       if (next != true) return;
       ref.read(explorePendingGpsCenterProvider.notifier).state = false;
@@ -1397,6 +1419,7 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
     ref.watch(currentZoneOverviewProvider);
     final zoneDataNotice = ref.watch(zoneDataNoticeProvider);
     final unreadNotifications = ref.watch(unreadNotificationCountProvider);
+    final submittedBanner = ref.watch(tagSubmittedBannerProvider);
     final zones = zonesValue.valueOrNull ?? _latestZones;
 
     ref.listen<String?>(zoneDataNoticeProvider, (previous, next) {
@@ -1510,7 +1533,7 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    if (_tagSubmittedBanner != null)
+                    if (submittedBanner != null)
                       Padding(
                         padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
                         child: Material(
@@ -1666,7 +1689,8 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
                   bottom: 18,
                   child: _SelectedZoneCard(
                     zone: selectedZone,
-                    submittedLabel: _tagSubmittedBanner,
+                    submittedLabel:
+                        submittedBanner == null ? null : 'Tag submitted',
                     onClose: _clearSelectedZone,
                     onDirections: () => unawaited(
                       _openGoogleMapsNavigation(selectedZone),

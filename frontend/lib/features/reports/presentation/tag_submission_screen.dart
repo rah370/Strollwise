@@ -160,6 +160,7 @@ class _TagSubmissionScreenState extends ConsumerState<TagSubmissionScreen> {
   Timer? _searchDebounce;
   int _searchRequestGen = 0;
   _TagSubmitConfirmation? _confirmation;
+  String? _submitError;
   bool _openingSubmittedArea = false;
 
   @override
@@ -254,24 +255,48 @@ class _TagSubmissionScreenState extends ConsumerState<TagSubmissionScreen> {
           : noteController.text.trim(),
     );
 
-    try {
-      final feedback = await ref
-          .read(tagSubmissionProvider.notifier)
-          .submit(payload);
-      if (!mounted) return;
+    setState(() => _submitError = null);
 
-      final focus = LatLng(payload.latitude, payload.longitude);
-      final zone = ref.read(selectedZoneProvider) ??
-          ref.read(tagFlowZoneOverviewNotifierProvider).overview?.currentZone;
-      final summary = _friendlySubmitSummary(feedback, zone);
+    late final TagSubmissionFeedback feedback;
+    try {
+      feedback = await ref.read(tagSubmissionProvider.notifier).submit(payload);
+    } catch (error) {
+      if (!mounted) return;
+      final message = _submissionErrorMessage(error);
+      setState(() => _submitError = message);
       pushAppNotification(
         ref,
-        title: 'Tag submitted',
-        message: summary,
-        kind: AppNotificationKind.success,
-        showToast: false,
+        title: 'Tag not submitted',
+        message: message,
+        kind: AppNotificationKind.error,
+        showBanner: true,
       );
-      ref.read(tagSubmissionPinLocationProvider.notifier).state = null;
+      return;
+    }
+    if (!mounted) return;
+
+    final focus = LatLng(payload.latitude, payload.longitude);
+    final zone = ref.read(selectedZoneProvider) ??
+        ref.read(tagFlowZoneOverviewNotifierProvider).overview?.currentZone;
+    final summary = _friendlySubmitSummary(feedback, zone);
+
+    // Persist before any rebuild/navigation so Explore still shows the message
+    // if this widget is disposed by the go_router shell.
+    ref.read(tagSubmittedBannerProvider.notifier).state = TagSubmittedBanner(
+      message: summary,
+      shownAt: DateTime.now(),
+    );
+    pushAppNotification(
+      ref,
+      title: 'Tag submitted',
+      message: summary,
+      kind: AppNotificationKind.success,
+      showToast: true,
+      showBanner: true,
+    );
+    ref.read(tagSubmissionPinLocationProvider.notifier).state = null;
+    setState(() {
+      _submitError = null;
       _confirmation = _TagSubmitConfirmation(
         focus: focus,
         zone: zone,
@@ -280,42 +305,7 @@ class _TagSubmissionScreenState extends ConsumerState<TagSubmissionScreen> {
             : placeSearchController.text.trim(),
         summary: summary,
       );
-      await showDialog<void>(
-        context: context,
-        barrierDismissible: false,
-        builder: (dialogContext) {
-          return AlertDialog(
-            icon: const Icon(
-              Icons.check_circle_rounded,
-              color: Color(0xFF2F855A),
-              size: 44,
-            ),
-            title: const Text('Tag submitted'),
-            content: Text(
-              'Your ${_selectedType.label} tag was saved.',
-              textAlign: TextAlign.center,
-            ),
-            actionsAlignment: MainAxisAlignment.center,
-            actions: [
-              FilledButton(
-                onPressed: () => Navigator.of(dialogContext).pop(),
-                child: const Text('See on map'),
-              ),
-            ],
-          );
-        },
-      );
-      if (!mounted) return;
-      _openSubmittedArea();
-    } catch (error) {
-      if (!mounted) return;
-      pushAppNotification(
-        ref,
-        title: 'Tag not submitted',
-        message: _submissionErrorMessage(error),
-        kind: AppNotificationKind.error,
-      );
-    }
+    });
   }
 
   String _submissionErrorMessage(Object error) {
@@ -323,6 +313,16 @@ class _TagSubmissionScreenState extends ConsumerState<TagSubmissionScreen> {
       if (error.response?.statusCode == 401 ||
           error.response?.statusCode == 403) {
         return 'Please log in again before submitting a tag.';
+      }
+      if (error.response?.statusCode == 422 ||
+          error.response?.statusCode == 429) {
+        final limited = error.response?.data;
+        if (limited is Map && limited['detail'] != null) {
+          return limited['detail'].toString();
+        }
+        return error.response?.statusCode == 429
+            ? 'Too many tags right now. Wait a minute and try again.'
+            : 'This tag could not be accepted (duplicate or cooldown).';
       }
       if (error.type == DioExceptionType.connectionError ||
           error.type == DioExceptionType.connectionTimeout) {
@@ -457,6 +457,15 @@ class _TagSubmissionScreenState extends ConsumerState<TagSubmissionScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final confirmation = _confirmation;
+    if (confirmation != null) {
+      return TagSubmittedConfirmationView(
+        summary: confirmation.summary,
+        categoryLabel: _selectedType.label,
+        onSeeOnMap: _openSubmittedArea,
+      );
+    }
+
     final submissionState = ref.watch(tagSubmissionProvider);
     final selectedZone = ref.watch(selectedZoneProvider);
     final zoneFlow = ref.watch(tagFlowZoneOverviewNotifierProvider);
@@ -640,6 +649,51 @@ class _TagSubmissionScreenState extends ConsumerState<TagSubmissionScreen> {
               ),
             ),
             const SizedBox(height: 20),
+            if (_submitError != null) ...[
+              Material(
+                color: const Color(0xFFFEF2F2),
+                borderRadius: BorderRadius.circular(12),
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Icon(
+                        Icons.error_outline_rounded,
+                        color: Color(0xFFB91C1C),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'Tag not submitted',
+                              style: TextStyle(
+                                fontWeight: FontWeight.w800,
+                                color: Color(0xFF991B1B),
+                                fontSize: 15,
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              _submitError!,
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w600,
+                                color: Color(0xFF7F1D1D),
+                                fontSize: 13,
+                                height: 1.3,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+            ],
             ListenableBuilder(
               listenable: noteController,
               builder: (context, _) {
@@ -689,6 +743,103 @@ class _TagSubmitConfirmation {
   final ZoneModel? zone;
   final String? placeTitle;
   final String summary;
+}
+
+/// In-page success state. Overlays ([showDialog]) are dismissed when the
+/// go_router [ShellRoute] rebuilds after [tagSubmissionProvider] settles.
+class TagSubmittedConfirmationView extends StatelessWidget {
+  const TagSubmittedConfirmationView({
+    super.key,
+    required this.summary,
+    required this.onSeeOnMap,
+    this.categoryLabel,
+  });
+
+  final String summary;
+  final String? categoryLabel;
+  final VoidCallback onSeeOnMap;
+
+  @override
+  Widget build(BuildContext context) {
+    final savedLine = categoryLabel == null || categoryLabel!.trim().isEmpty
+        ? 'Your tag was saved.'
+        : 'Your $categoryLabel tag was saved.';
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) onSeeOnMap();
+      },
+      child: Scaffold(
+        backgroundColor: const Color(0xFFF8FAFB),
+        appBar: AppBar(
+          elevation: 0,
+          backgroundColor: const Color(0xFFF8FAFB),
+          foregroundColor: AppColors.primaryText,
+          automaticallyImplyLeading: false,
+          title: const Text(
+            'Add Tag',
+            style: TextStyle(fontWeight: FontWeight.w900, fontSize: 20),
+          ),
+        ),
+        body: SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(24, 12, 24, 24),
+            child: Column(
+              children: [
+                const Spacer(),
+                const Icon(
+                  Icons.check_circle_rounded,
+                  color: Color(0xFF2F855A),
+                  size: 88,
+                ),
+                const SizedBox(height: 16),
+                const Text(
+                  'Tag submitted',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontWeight: FontWeight.w900,
+                    fontSize: 28,
+                    color: AppColors.primaryText,
+                    letterSpacing: -0.4,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Text(
+                  savedLine,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w700,
+                    fontSize: 16,
+                    color: Color(0xFF166534),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  summary,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w600,
+                    fontSize: 14,
+                    height: 1.4,
+                    color: AppColors.secondaryText,
+                  ),
+                ),
+                const Spacer(),
+                FilledButton.icon(
+                  onPressed: onSeeOnMap,
+                  icon: const Icon(Icons.map_rounded),
+                  label: const Text('See on map'),
+                  style: FilledButton.styleFrom(
+                    minimumSize: const Size.fromHeight(52),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 class _ZoneCard extends StatelessWidget {

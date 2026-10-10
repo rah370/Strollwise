@@ -28,6 +28,10 @@ void openAreaOnExplore(
     ref.read(mapSearchFocusProvider.notifier).state = focus;
   }
   if (submitSummary != null && submitSummary.trim().isNotEmpty) {
+    ref.read(tagSubmittedBannerProvider.notifier).state = TagSubmittedBanner(
+      message: submitSummary.trim(),
+      shownAt: DateTime.now(),
+    );
     ref.read(explorePostSubmitCueProvider.notifier).state = ExplorePostSubmitCue(
       focus: focus,
       summary: submitSummary.trim(),

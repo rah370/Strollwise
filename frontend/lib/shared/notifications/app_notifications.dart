@@ -49,6 +49,7 @@ class AppNotificationsNotifier extends StateNotifier<List<AppNotification>> {
     String? title,
     AppNotificationKind kind = AppNotificationKind.info,
     bool showToast = true,
+    bool showBanner = false,
   }) {
     final item = AppNotification(
       id: '${DateTime.now().microsecondsSinceEpoch}_${_rng.nextInt(1 << 32)}',
@@ -60,6 +61,9 @@ class AppNotificationsNotifier extends StateNotifier<List<AppNotification>> {
     state = [item, ...state].take(_maxItems).toList();
     if (showToast) {
       AppNotificationToast.show(item);
+    }
+    if (showBanner) {
+      AppNotificationToast.showPersistentBanner(item);
     }
   }
 
@@ -98,12 +102,14 @@ void pushAppNotification(
   String? title,
   AppNotificationKind kind = AppNotificationKind.info,
   bool showToast = true,
+  bool showBanner = false,
 }) {
   ref.read(appNotificationsProvider.notifier).push(
         message: message,
         title: title,
         kind: kind,
         showToast: showToast,
+        showBanner: showBanner,
       );
 }
 
@@ -125,7 +131,7 @@ class AppNotificationToast {
         SnackBar(
           behavior: SnackBarBehavior.floating,
           margin: const EdgeInsets.fromLTRB(16, 0, 16, 88),
-          duration: const Duration(seconds: 4),
+          duration: const Duration(seconds: 6),
           backgroundColor: const Color(0xFF0F172A),
           content: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -165,6 +171,76 @@ class AppNotificationToast {
           ),
         ),
       );
+  }
+
+  /// Top-of-scaffold banner that survives tab switches. Used after tag submit
+  /// because [showDialog] is dismissed by the go_router shell rebuild and the
+  /// floating snackbar sits behind Explore's zone card.
+  static void showPersistentBanner(AppNotification notification) {
+    final messenger = rootScaffoldMessengerKey.currentState;
+    if (messenger == null) return;
+
+    final background = switch (notification.kind) {
+      AppNotificationKind.success => const Color(0xFF166534),
+      AppNotificationKind.warning => const Color(0xFFB45309),
+      AppNotificationKind.error => AppColors.alert,
+      AppNotificationKind.info => const Color(0xFF0F766E),
+    };
+
+    messenger
+      ..hideCurrentMaterialBanner()
+      ..showMaterialBanner(
+        MaterialBanner(
+          backgroundColor: background,
+          elevation: 3,
+          padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
+          leading: Icon(
+            _iconFor(notification.kind),
+            color: Colors.white,
+            size: 22,
+          ),
+          content: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (notification.title != null &&
+                  notification.title!.trim().isNotEmpty)
+                Text(
+                  notification.title!,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w800,
+                    fontSize: 15,
+                  ),
+                ),
+              Text(
+                notification.message,
+                style: const TextStyle(
+                  color: Color(0xFFE2E8F0),
+                  fontWeight: FontWeight.w600,
+                  fontSize: 13,
+                  height: 1.3,
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: messenger.hideCurrentMaterialBanner,
+              child: const Text(
+                'OK',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    Future<void>.delayed(const Duration(seconds: 10), () {
+      messenger.hideCurrentMaterialBanner();
+    });
   }
 
   static IconData _iconFor(AppNotificationKind kind) {
