@@ -136,7 +136,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     );
 
     final travelerLabel = isDemo
-        ? 'Demo session — stats below are placeholders until you register.'
+        ? 'Demo session'
         : userMe.maybeWhen(
             data: (u) =>
                 u == null ? 'Loading profile…' : _contributorProfileLine(u),
@@ -234,8 +234,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                       _ProfileSectionCard(
                         icon: Icons.edit_location_alt_rounded,
                         title: 'Map location',
-                        subtitle:
-                            'Set where you explore without sharing live GPS',
+                        subtitle: 'Explore without live GPS',
                         child: _LocationPreferenceTile(
                           onSetManual: () =>
                               _setManualLocationFromProfile(context, ref),
@@ -245,7 +244,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                       _ProfileSectionCard(
                         icon: Icons.workspace_premium_outlined,
                         title: 'Badges',
-                        subtitle: 'Earned when your tags are approved',
+                        subtitle: 'From approved tags',
                         child: _BadgesWrap(badges: badges),
                       ),
                       const SizedBox(height: 14),
@@ -262,8 +261,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                       _ProfileSectionCard(
                         icon: Icons.hiking_rounded,
                         title: 'Places you\'ve been',
-                        subtitle:
-                            'Private pins only you see — add tags to grow this map',
+                        subtitle: 'Private pins only you see',
                         child: _VisitHistoryList(
                           visits: ref.watch(ownVisitHistoryProvider),
                           onOpenVisit: _openVisitOnMap,
@@ -273,7 +271,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                       _ProfileSectionCard(
                         icon: Icons.visibility_outlined,
                         title: 'Privacy',
-                        subtitle: 'How your tags appear on the map',
+                        subtitle: 'How tags appear on the map',
                         child: const _TagVisibilityFootnote(),
                       ),
                       const SizedBox(height: 14),
@@ -573,8 +571,8 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     final country = u.countryOfOrigin?.trim();
     if (city != null && city.isNotEmpty) bits.add(city);
     if (country != null && country.isNotEmpty) bits.add(country);
-    if (bits.isEmpty) return '$type · not shown on the public map';
-    return '$type · ${bits.join(', ')} (private to you)';
+    if (bits.isEmpty) return type;
+    return '$type · ${bits.join(', ')}';
   }
 
   String _userTypeLabel(String? userType, String travelerType) {
@@ -846,8 +844,7 @@ class _DemoSessionCallout extends StatelessWidget {
               const SizedBox(width: 12),
               Expanded(
                 child: Text(
-                  'Demo session: sign in with a full StrollWise account to '
-                  'load your tags, badges, and saved zones.',
+                  'Sign in to load your tags, badges, and saved zones.',
                   style: TextStyle(
                     color: AppColors.secondaryText.withValues(alpha: 0.98),
                     fontWeight: FontWeight.w600,
@@ -1657,8 +1654,7 @@ class _TagVisibilityFootnote extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return const Text(
-      'Each tag uses the visibility you pick when you submit it. '
-      'Exact GPS is never shown publicly; signals roll up into map zones.',
+      'Visibility is set per tag. Exact GPS stays private.',
       style: TextStyle(
         color: AppColors.mutedText,
         fontSize: 12,
@@ -1681,7 +1677,7 @@ class _SavedZonesFromApi extends StatelessWidget {
   Widget build(BuildContext context) {
     if (zones.isEmpty) {
       return const Text(
-        'No saved zones yet. Open a zone on the map and save it to your list.',
+        'No saved zones yet.',
         style: TextStyle(
           color: AppColors.mutedText,
           fontWeight: FontWeight.w700,

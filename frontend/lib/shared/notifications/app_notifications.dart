@@ -203,25 +203,30 @@ class AppNotificationToast {
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
             children: [
-              if (notification.title != null &&
-                  notification.title!.trim().isNotEmpty)
-                Text(
-                  notification.title!,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w800,
-                    fontSize: 15,
-                  ),
-                ),
               Text(
-                notification.message,
+                (notification.title != null &&
+                        notification.title!.trim().isNotEmpty)
+                    ? notification.title!
+                    : notification.message,
                 style: const TextStyle(
-                  color: Color(0xFFE2E8F0),
-                  fontWeight: FontWeight.w600,
-                  fontSize: 13,
-                  height: 1.3,
+                  color: Colors.white,
+                  fontWeight: FontWeight.w800,
+                  fontSize: 15,
                 ),
               ),
+              if (notification.title != null &&
+                  notification.title!.trim().isNotEmpty &&
+                  notification.message.trim().isNotEmpty &&
+                  notification.message.trim() != notification.title!.trim())
+                Text(
+                  notification.message,
+                  style: const TextStyle(
+                    color: Color(0xFFE2E8F0),
+                    fontWeight: FontWeight.w600,
+                    fontSize: 13,
+                    height: 1.3,
+                  ),
+                ),
             ],
           ),
           actions: [

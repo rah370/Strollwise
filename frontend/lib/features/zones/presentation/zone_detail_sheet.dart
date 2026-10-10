@@ -462,11 +462,11 @@ class _ZoneBody extends ConsumerWidget {
         const SizedBox(height: 8),
         _TravelerMixBar(zone: zone),
         const SizedBox(height: 20),
-        _SectionHeading(title: 'Validation Dashboard'),
+        _SectionHeading(title: 'Validation'),
         const SizedBox(height: 10),
         _ZoneValidationDashboard(zone: zone),
         const SizedBox(height: 20),
-        _SectionHeading(title: 'About this Zone'),
+        _SectionHeading(title: 'About'),
         const SizedBox(height: 8),
         Text(
           intelligence,
@@ -477,7 +477,7 @@ class _ZoneBody extends ConsumerWidget {
           ),
         ),
         const SizedBox(height: 20),
-        _SectionHeading(title: 'Local vs Tourist Insight'),
+        _SectionHeading(title: 'Local vs tourist'),
         const SizedBox(height: 10),
         _LocalTouristInsightPanel(
           localsKnow: _localsKnow(zone),
@@ -624,48 +624,36 @@ class _ZoneBody extends ConsumerWidget {
   }
 
   String _zoneIntelligenceCopy(ZoneModel zone) {
-    final traveler = zone.travelerType.toLowerCase();
+    final traveler = _titleize(zone.travelerType);
+    final kind = _titleize(zone.zoneType.replaceAll('_', ' '));
     final confidence = zone.confidenceScore.toStringAsFixed(0);
-    final peak = zone.peakTimeLabel ?? 'variable peak times';
-    final summary = zone.summary?.trim();
-    if (summary != null && summary.isNotEmpty) {
-      return '$summary This area is currently read as $traveler behavior with $confidence% confidence and $peak activity.';
-    }
-    final behavior = switch (zone.zoneType) {
-      'food' || 'food_hotspot' =>
-        'food behavior, dining movement, and activity combinations',
-      'school' || 'student_area' =>
-        'student movement, study hubs, budget meals, and campus-edge activity',
-      'transport' || 'transport_zone' =>
-        'commute pressure, pickup movement, food stops, and local errands',
-      'commercial' || 'commercial_zone' =>
-        'shopping, work, dining, and visible commercial movement',
-      'tourist' || 'tourist_hotspot' =>
-        'visitor movement, sightseeing, accessible food, and photo-stop behavior',
-      _ => 'local movement, activity patterns, and zone-level behavior',
-    };
-    return 'This zone shows $traveler $behavior. Confidence is $confidence% based on recent community tags, with $peak activity.';
+    final peak = zone.peakTimeLabel?.trim();
+    return [
+      '$traveler · $kind',
+      '$confidence% confident',
+      if (peak != null && peak.isNotEmpty) peak,
+    ].join(' · ');
   }
 
   String _localsKnow(ZoneModel zone) {
     switch (zone.zoneType) {
       case 'food':
       case 'food_hotspot':
-        return 'Local tags point to budget meals, repeat vendors, and side-street food movement.';
+        return 'Budget meals and side-street vendors.';
       case 'school':
       case 'student_area':
-        return 'Students use this area for study stops, budget food, and campus-edge errands.';
+        return 'Study stops and cheap eats.';
       case 'transport':
       case 'transport_zone':
-        return 'Locals treat this as a pickup, transfer, and quick-errand zone.';
+        return 'Pickup, transfer, quick errands.';
       case 'commercial':
       case 'commercial_zone':
-        return 'Local activity clusters around work breaks, shopping shortcuts, and evening dining.';
+        return 'Work breaks and evening dining.';
       case 'safety':
       case 'safety_concern':
-        return 'Community tags suggest extra awareness around timing, lighting, and crowd conditions.';
+        return 'Watch lighting and crowd timing.';
       default:
-        return 'Local contributions describe practical movement patterns, not just named places.';
+        return 'Everyday local movement.';
     }
   }
 
@@ -673,21 +661,21 @@ class _ZoneBody extends ConsumerWidget {
     switch (zone.zoneType) {
       case 'food':
       case 'food_hotspot':
-        return 'Visitors may only see the landmark, while locals know when food activity is strongest.';
+        return 'Peak food hours, not just the landmark.';
       case 'school':
       case 'student_area':
-        return 'Tourists may miss that this is mostly student-paced and budget-oriented.';
+        return 'Student pace and budget spots.';
       case 'transport':
       case 'transport_zone':
-        return 'Visitors may underestimate transfer time, traffic pressure, and pickup behavior.';
+        return 'Transfer time and traffic.';
       case 'commercial':
       case 'commercial_zone':
-        return 'Tourists may miss quieter local routes behind malls and office clusters.';
+        return 'Quieter routes behind malls.';
       case 'safety':
       case 'safety_concern':
-        return 'Visitors may not know which times or exits need extra caution.';
+        return 'Which exits and hours to avoid.';
       default:
-        return 'Tourists may miss local routines, shortcuts, and timing patterns behind the zone.';
+        return 'Local timing and shortcuts.';
     }
   }
 
@@ -695,12 +683,12 @@ class _ZoneBody extends ConsumerWidget {
     if (zone.zoneType == 'safety' ||
         zone.functionType == 'safety_concern' ||
         zone.liveStatus == 'caution_now') {
-      return 'Recent safety-related signals are present. Stay in visible public areas and check current conditions.';
+      return 'Stay in visible public areas.';
     }
     if (zone.crowdLevel >= 0.75) {
-      return 'High activity can mean crowds, traffic, and slower movement. Keep belongings secure.';
+      return 'Busy — watch bags and traffic.';
     }
-    return 'No strong safety warning in the current signals; still use normal city awareness.';
+    return 'No extra warning.';
   }
 
   List<(IconData, String)> _activityChips(ZoneModel zone) {
@@ -1017,28 +1005,28 @@ class _LocalTouristInsightPanel extends StatelessWidget {
       children: [
         _InsightRow(
           icon: Icons.groups_rounded,
-          title: 'What locals know',
+          title: 'Locals',
           body: localsKnow,
           color: AppColors.localAccent,
         ),
         const SizedBox(height: 10),
         _InsightRow(
           icon: Icons.travel_explore_rounded,
-          title: 'What tourists usually miss',
+          title: 'Tourists miss',
           body: touristsMiss,
           color: AppColors.touristAccent,
         ),
         const SizedBox(height: 10),
         _InsightRow(
           icon: Icons.access_time_rounded,
-          title: 'Best time to visit',
+          title: 'Best time',
           body: bestTime,
           color: AppColors.accent,
         ),
         const SizedBox(height: 10),
         _InsightRow(
           icon: Icons.shield_outlined,
-          title: 'Safety/context note',
+          title: 'Safety',
           body: safetyContext,
           color: AppColors.safetyAccent,
         ),

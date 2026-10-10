@@ -98,8 +98,7 @@ class _TrendsScreenState extends ConsumerState<TrendsScreen> {
         return [
           _SectionCard(
             title: 'Browse by vibe',
-            subtitle:
-                'Pick a mood — we’ll suggest popular places to visit nearby.',
+            subtitle: 'Places nearby by mood.',
             child: _TrendCategoryGrid(
               filter: _filter,
               onTrendTap: (item) => _showPlacesToGo(context, item, zone),
@@ -110,8 +109,7 @@ class _TrendsScreenState extends ConsumerState<TrendsScreen> {
         return [
           _SectionCard(
             title: 'Curated routes',
-            subtitle:
-                'Paths locals and travelers actually take — open any stop on the map.',
+            subtitle: 'Open any stop on the map.',
             child: _RouteCardList(
               filter: _filter,
               onStartRoute: (route) =>
@@ -167,7 +165,7 @@ class _TrendsScreenState extends ConsumerState<TrendsScreen> {
           title: 'What’s active in Cebu',
           subtitle: feedLoading
               ? 'Loading live zone signals…'
-              : 'Tap a hot zone to personalize trends, or pick a vibe below.',
+              : 'Tap a hot zone or pick a vibe.',
           child: _CityPulseStrip(
             zones: hotZones,
             loading: feedLoading,
@@ -180,7 +178,7 @@ class _TrendsScreenState extends ConsumerState<TrendsScreen> {
         const SizedBox(height: 12),
         _SectionCard(
           title: 'Quick vibes',
-          subtitle: 'Top-rated places to visit by mood.',
+          subtitle: 'Places by mood.',
           child: _TrendCategoryGrid(
             filter: _TrendVibeFilter.all,
             maxItems: 6,
@@ -256,7 +254,7 @@ class _TrendsScreenState extends ConsumerState<TrendsScreen> {
               ),
               const SizedBox(height: 8),
               Text(
-                'We’ll focus the Explore map near this area so you can see matching zones and tags.',
+                'Opens this area on Explore.',
                 style: const TextStyle(
                   color: AppColors.mutedText,
                   height: 1.4,
@@ -816,7 +814,7 @@ class _ZoneSignalCard extends StatelessWidget {
     final crowdPercent = (zone.crowdLevel * 100).clamp(0, 100).round();
     return _SectionCard(
       title: 'Selected Zone Signal',
-      subtitle: 'Why StrollWise is recommending this area behavior right now.',
+      subtitle: 'Live mix for this area.',
       child: Wrap(
         spacing: 8,
         runSpacing: 8,
@@ -1136,13 +1134,12 @@ class _FoodBehaviorCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return _SectionCard(
       title: 'Food Behavior Split',
-      subtitle:
-          'Local eats vs tourist-facing spots — each ranks differently on the map.',
+      subtitle: 'Local eats vs tourist spots.',
       child: Column(
         children: [
           _BehaviorColumn(
             title: 'Local Food Zones',
-            description: 'Cheaper, practical, authentic, street-oriented.',
+            description: 'Cheap and local.',
             items: const [
               'Larsian',
               'Carbon night food',
@@ -1156,8 +1153,7 @@ class _FoodBehaviorCard extends StatelessWidget {
           const SizedBox(height: 12),
           _BehaviorColumn(
             title: 'International / Tourist Food Zones',
-            description:
-                'Visible, safe-looking, aesthetic, accessible, highly rated online.',
+            description: 'Visible and easy to find.',
             items: const [
               'Rooftop restaurants',
               'Cafes',

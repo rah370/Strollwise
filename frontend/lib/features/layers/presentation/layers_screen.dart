@@ -30,7 +30,7 @@ class LayersScreen extends ConsumerWidget {
               _LayerTile(
                 icon: Icons.people_alt_outlined,
                 title: 'Traveler layer',
-                subtitle: 'Fill color: local, international, or mixed',
+                subtitle: 'Local, international, or mixed',
                 color: AppColors.travelerInternational,
                 value: settings.showTravelerLayer,
                 onChanged: (value) => notifier.state = settings.copyWith(
@@ -40,8 +40,7 @@ class LayersScreen extends ConsumerWidget {
               _LayerTile(
                 icon: Icons.category_outlined,
                 title: 'Place type overlay',
-                subtitle:
-                    'Hex outlines from tagged cells (school, food, commercial)',
+                subtitle: 'School, food, commercial outlines',
                 color: AppColors.accent,
                 value: settings.showFunctionalOverlay,
                 onChanged: (value) => notifier.state = settings.copyWith(
@@ -69,7 +68,7 @@ class LayersScreen extends ConsumerWidget {
               _LayerTile(
                 icon: Icons.forum_outlined,
                 title: 'Feed markers',
-                subtitle: 'Community report hints inside visible hexes',
+                subtitle: 'Community tags on the map',
                 color: AppColors.travelerMixed,
                 value: settings.showFeedMarkers,
                 onChanged: (value) =>
@@ -153,10 +152,10 @@ class _Header extends StatelessWidget {
           ),
           SizedBox(height: 6),
           Text(
-            'Fill color = who (local / mixed / international). Outlines = what (school, food, transport).',
+            'Fill = who. Outline = place type.',
             style: TextStyle(
               color: Color(0xFFBAE6FD),
-              height: 1.4,
+              height: 1.3,
               fontWeight: FontWeight.w600,
             ),
           ),

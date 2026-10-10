@@ -112,18 +112,6 @@ class _FeedScreenState extends ConsumerState<FeedScreen> {
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     const _FeedHeader(),
-                    const SizedBox(height: 2),
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 16),
-                      child: Text(
-                        'Live tags and ranked zones around Cebu',
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                          color: Colors.black.withValues(alpha: 0.45),
-                        ),
-                      ),
-                    ),
                     const SizedBox(height: 8),
                     _FeedFilterRow(
                       selectedLabel: selectedChip,

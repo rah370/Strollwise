@@ -426,15 +426,9 @@ class _TagSubmissionScreenState extends ConsumerState<TagSubmissionScreen> {
     final where = zone != null
         ? zoneDisplayTitle(zone)
         : (placeSearchController.text.trim().isEmpty
-              ? 'this Cebu area'
+              ? 'Cebu'
               : placeSearchController.text.trim());
-    final pending = feedback.thresholdMet
-        ? 'Enough people tagged here for a public cell to form.'
-        : 'Pending validation — '
-              '${feedback.remainingToThreshold} more '
-              '${feedback.remainingToThreshold == 1 ? 'person' : 'people'} '
-              'needed before this cell can go public.';
-    return 'Your ${_selectedType.label} tag at $where was saved. $pending';
+    return '${_selectedType.label} · $where';
   }
 
   void _openSubmittedArea() {
@@ -461,7 +455,6 @@ class _TagSubmissionScreenState extends ConsumerState<TagSubmissionScreen> {
     if (confirmation != null) {
       return TagSubmittedConfirmationView(
         summary: confirmation.summary,
-        categoryLabel: _selectedType.label,
         onSeeOnMap: _openSubmittedArea,
       );
     }
@@ -502,18 +495,8 @@ class _TagSubmissionScreenState extends ConsumerState<TagSubmissionScreen> {
           ),
         ),
         body: ListView(
-          padding: EdgeInsets.fromLTRB(16, 0, 16, 16 + bottom),
+          padding: EdgeInsets.fromLTRB(16, 4, 16, 16 + bottom),
           children: [
-            Text(
-              'Set where this applies, pick a category, then submit. '
-              'No map is required on this screen—use GPS, Explore’s map center, or search.',
-              style: TextStyle(
-                color: AppColors.mutedText,
-                fontSize: 13,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-            const SizedBox(height: 16),
             _ZoneCard(
               title: hasLocation ? 'Zone at this point' : 'Current zone',
               zone: zone,
@@ -752,18 +735,13 @@ class TagSubmittedConfirmationView extends StatelessWidget {
     super.key,
     required this.summary,
     required this.onSeeOnMap,
-    this.categoryLabel,
   });
 
   final String summary;
-  final String? categoryLabel;
   final VoidCallback onSeeOnMap;
 
   @override
   Widget build(BuildContext context) {
-    final savedLine = categoryLabel == null || categoryLabel!.trim().isEmpty
-        ? 'Your tag was saved.'
-        : 'Your $categoryLabel tag was saved.';
     return PopScope(
       canPop: false,
       onPopInvokedWithResult: (didPop, _) {
@@ -790,40 +768,31 @@ class TagSubmittedConfirmationView extends StatelessWidget {
                 const Icon(
                   Icons.check_circle_rounded,
                   color: Color(0xFF2F855A),
-                  size: 88,
+                  size: 72,
                 ),
-                const SizedBox(height: 16),
+                const SizedBox(height: 14),
                 const Text(
                   'Tag submitted',
                   textAlign: TextAlign.center,
                   style: TextStyle(
                     fontWeight: FontWeight.w900,
-                    fontSize: 28,
+                    fontSize: 26,
                     color: AppColors.primaryText,
                     letterSpacing: -0.4,
                   ),
                 ),
-                const SizedBox(height: 10),
-                Text(
-                  savedLine,
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w700,
-                    fontSize: 16,
-                    color: Color(0xFF166534),
+                if (summary.trim().isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    summary,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w700,
+                      fontSize: 15,
+                      color: Color(0xFF166534),
+                    ),
                   ),
-                ),
-                const SizedBox(height: 12),
-                Text(
-                  summary,
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w600,
-                    fontSize: 14,
-                    height: 1.4,
-                    color: AppColors.secondaryText,
-                  ),
-                ),
+                ],
                 const Spacer(),
                 FilledButton.icon(
                   onPressed: onSeeOnMap,
@@ -891,9 +860,9 @@ class _ZoneCard extends StatelessWidget {
             Text(
               zone != null
                   ? '${zoneDisplayTitle(zone!)} · ${zoneMapSubtitle(zone!)}'
-                  : pendingLocation || refreshing
-                      ? 'Looking up zone for this point…'
-                      : 'Zone loads after you set a location.',
+                      : pendingLocation || refreshing
+                      ? 'Finding zone…'
+                      : 'Set a location to see the zone.',
               style: const TextStyle(
                 color: AppColors.secondaryText,
                 fontWeight: FontWeight.w600,
@@ -965,7 +934,7 @@ class _LocationCard extends ConsumerWidget {
             ),
             const SizedBox(height: 4),
             const Text(
-              'Search, use GPS, or copy the center from Explore’s map.',
+              'Search, GPS, or Explore map center',
               style: TextStyle(
                 color: AppColors.mutedText,
                 fontSize: 12,
@@ -1070,8 +1039,7 @@ class _LocationCard extends ConsumerWidget {
                 )
               else
                 const Text(
-                  'Outside a named catalog place — tag still counts toward '
-                  'the nearest cell.',
+                  'Counts toward the nearest cell.',
                   style: TextStyle(
                     color: AppColors.mutedText,
                     fontSize: 12,

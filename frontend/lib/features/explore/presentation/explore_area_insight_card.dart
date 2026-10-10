@@ -36,7 +36,7 @@ class ExploreAreaInsightCard extends ConsumerWidget {
             const SizedBox(width: 12),
             Expanded(
               child: Text(
-                'Reading area behavior near $placeTitle…',
+                'Loading $placeTitle…',
                 style: const TextStyle(
                   fontWeight: FontWeight.w700,
                   color: AppColors.secondaryText,

@@ -1692,7 +1692,7 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
                                 null ||
                             ref.read(activePlaceTypeFilterProvider) != null ||
                             ref.read(activeZoneFilterProvider) != null)
-                        ? 'No zones match these filters here. Clear filters or pan to IT Park, Colon, or Ayala.'
+                        ? 'No zones here. Clear filters or pan the map.'
                         : 'No zones in this view. Pan to a tagged area such as IT Park, Colon, or Ayala.',
                   ),
                 ),

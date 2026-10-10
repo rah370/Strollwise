@@ -10,17 +10,16 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: TagSubmittedConfirmationView(
-          summary: 'Your Food tag at IT Park was saved.',
-          categoryLabel: 'Food',
+          summary: 'Food · IT Park',
           onSeeOnMap: () => openedMap = true,
         ),
       ),
     );
 
     expect(find.text('Tag submitted'), findsOneWidget);
-    expect(find.text('Your Food tag was saved.'), findsOneWidget);
-    expect(find.text('Your Food tag at IT Park was saved.'), findsOneWidget);
+    expect(find.text('Food · IT Park'), findsOneWidget);
     expect(find.text('See on map'), findsOneWidget);
+    expect(find.text('Your Food tag was saved.'), findsNothing);
 
     await tester.tap(find.text('See on map'));
     await tester.pump();
@@ -41,7 +40,7 @@ void main() {
       AppNotification(
         id: 'test',
         title: 'Tag submitted',
-        message: 'Your Food tag was saved.',
+        message: 'Food · IT Park',
         createdAt: DateTime.now(),
         kind: AppNotificationKind.success,
       ),
@@ -49,7 +48,7 @@ void main() {
     await tester.pump();
 
     expect(find.text('Tag submitted'), findsOneWidget);
-    expect(find.text('Your Food tag was saved.'), findsOneWidget);
+    expect(find.text('Food · IT Park'), findsOneWidget);
     expect(find.text('OK'), findsOneWidget);
 
     await tester.pump(const Duration(seconds: 10));

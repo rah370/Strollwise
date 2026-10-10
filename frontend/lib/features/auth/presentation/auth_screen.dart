@@ -244,14 +244,6 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
                             fontWeight: FontWeight.w900,
                           ),
                         ),
-                        const SizedBox(height: 6),
-                        const Text(
-                          'Sign in or register to personalize your zone feed.',
-                          style: TextStyle(
-                            color: AppColors.secondaryText,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
                         const SizedBox(height: 14),
                         if (isRegister) ...[
                           TextField(
@@ -475,7 +467,7 @@ class _ResearchConsentCard extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 const Text(
-                  'Privacy + research consent',
+                  'Research consent',
                   style: TextStyle(
                     color: AppColors.primaryText,
                     fontWeight: FontWeight.w900,
@@ -483,10 +475,10 @@ class _ResearchConsentCard extends StatelessWidget {
                 ),
                 const SizedBox(height: 4),
                 const Text(
-                  'I agree that my submitted tags may be converted into aggregated H3 zone signals for thesis research. Exact GPS is not shown publicly; StrollWise displays zone-level behavior patterns.',
+                  'Tags become anonymous zone patterns. GPS is not shown publicly.',
                   style: TextStyle(
                     color: AppColors.secondaryText,
-                    height: 1.35,
+                    height: 1.3,
                     fontSize: 12,
                     fontWeight: FontWeight.w600,
                   ),
