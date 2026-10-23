@@ -1,11 +1,11 @@
 {
-    "name": "strollwise",
-    "short_name": "strollwise",
+    "name": "StrollWise",
+    "short_name": "StrollWise",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "background_color": "#F2F4F5",
+    "theme_color": "#39C97A",
+    "description": "StrollWise — local-aware walking and neighborhood tags for Cebu.",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

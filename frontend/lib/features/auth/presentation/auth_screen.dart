@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../../app/theme/brand.dart';
 import '../../../app/theme/colors.dart';
 import '../../../core/constants/feature_flags.dart';
 import '../../../shared/data/origin_locations.dart';
@@ -169,7 +170,7 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
               child: Opacity(
                 opacity: 0.08,
                 child: Image.asset(
-                  'lib/app/theme/strollwiselogo.jpg',
+                  kStrollWiseLogoAsset,
                   width: 320,
                   height: 320,
                   fit: BoxFit.cover,
@@ -209,7 +210,7 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
                             ClipRRect(
                               borderRadius: BorderRadius.circular(8),
                               child: Image.asset(
-                                'lib/app/theme/strollwiselogo.jpg',
+                                kStrollWiseLogoAsset,
                                 width: 36,
                                 height: 36,
                                 fit: BoxFit.cover,

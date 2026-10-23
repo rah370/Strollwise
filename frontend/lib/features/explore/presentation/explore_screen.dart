@@ -8,6 +8,7 @@ import 'package:go_router/go_router.dart';
 import 'package:h3_flutter/h3_flutter.dart';
 import 'package:maplibre_gl/maplibre_gl.dart';
 
+import '../../../app/theme/brand.dart';
 import '../../../app/theme/colors.dart';
 import '../../../core/constants/mapbox_config.dart';
 import '../../../shared/models/cell.dart';
@@ -2030,7 +2031,7 @@ class _MapTopBar extends StatelessWidget {
           ClipRRect(
             borderRadius: BorderRadius.circular(12),
             child: Image.asset(
-              'lib/app/theme/strollwiselogo.jpg',
+              kStrollWiseLogoAsset,
               width: 44,
               height: 44,
               fit: BoxFit.cover,

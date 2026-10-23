@@ -3,6 +3,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../shared/providers/app_providers.dart';
+import '../theme/brand.dart';
+import '../theme/colors.dart';
 
 class MainShell extends ConsumerWidget {
   const MainShell({required this.child, super.key});
@@ -26,10 +28,25 @@ class MainShell extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final location = GoRouterState.of(context).uri.toString();
     final hideNavigation = location.startsWith('/add-tag');
+    final showBrandBar = !hideNavigation && !location.startsWith('/explore');
     final submittedBanner = ref.watch(tagSubmittedBannerProvider);
     return Scaffold(
       body: Column(
         children: [
+          if (showBrandBar)
+            const Material(
+              color: AppColors.background,
+              child: SafeArea(
+                bottom: false,
+                child: Padding(
+                  padding: EdgeInsets.fromLTRB(20, 8, 20, 4),
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: StrollWiseBrandMark(size: 32),
+                  ),
+                ),
+              ),
+            ),
           if (submittedBanner != null)
             Material(
               color: const Color(0xFF166534),

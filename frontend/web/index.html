@@ -18,12 +18,12 @@
 
   <meta charset="UTF-8">
   <meta content="IE=Edge" http-equiv="X-UA-Compatible">
-  <meta name="description" content="A new Flutter project.">
+  <meta name="description" content="StrollWise — local-aware walking and neighborhood tags for Cebu.">
 
   <!-- iOS meta tags & icons -->
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black">
-  <meta name="apple-mobile-web-app-title" content="strollwise">
+  <meta name="apple-mobile-web-app-title" content="StrollWise">
   <link rel="apple-touch-icon" href="icons/Icon-192.png">
 
   <!-- Favicon -->
@@ -31,20 +31,51 @@
 
   <title>StrollWise</title>
   <link rel="manifest" href="manifest.json">
+  <style>
+    html, body {
+      height: 100%;
+      margin: 0;
+      background: #F2F4F5;
+    }
+    #sw-boot {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding-top: 16vh;
+      font-family: Inter, system-ui, sans-serif;
+      color: #0F172A;
+      background: #F2F4F5;
+      z-index: 9999;
+    }
+    #sw-boot img {
+      width: 96px;
+      height: 96px;
+      border-radius: 24px;
+    }
+    #sw-boot p {
+      margin: 16px 0 0;
+      font-weight: 800;
+      letter-spacing: -0.3px;
+    }
+  </style>
   <!-- maplibre_gl 0.25 web needs the JS library in the page. Without it the
        Explore map is a blank gray canvas while Flutter chrome still draws. -->
   <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
   <link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet" />
 </head>
 <body>
-  <!--
-    You can customize the "flutter_bootstrap.js" script.
-    This is useful to provide a custom configuration to the Flutter loader
-    or to give the user feedback during the initialization process.
-
-    For more details:
-    * https://docs.flutter.dev/platform-integration/web/initialization
-  -->
+  <div id="sw-boot">
+    <img src="icons/Icon-192.png" alt="StrollWise">
+    <p>StrollWise</p>
+  </div>
+  <script>
+    window.addEventListener('flutter-first-frame', function () {
+      var boot = document.getElementById('sw-boot');
+      if (boot) boot.remove();
+    });
+  </script>
   <script src="flutter_bootstrap.js" async></script>
 </body>
 </html>
