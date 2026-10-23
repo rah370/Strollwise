@@ -36,3 +36,23 @@ class ZoneHistoryPoint(BaseModel):
 class ZoneHistory(BaseModel):
     zone_id: str
     points: list[ZoneHistoryPoint]
+
+
+class CategoryTrend(BaseModel):
+    category: str
+    label: str
+    current_count: int
+    previous_count: int
+    delta: int
+    growing: bool
+
+
+class ZoneCategoryTrends(BaseModel):
+    zone_id: str
+    window_days: int
+    current_total: int
+    previous_total: int
+    enough_data: bool
+    min_sample: int
+    peak_time_label: str | None = None
+    categories: list[CategoryTrend] = Field(default_factory=list)

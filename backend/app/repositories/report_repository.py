@@ -75,6 +75,44 @@ class ReportRepository:
         )
         return list(self.db.execute(stmt).scalars())
 
+    def count_visible_by_category_in_window(
+        self,
+        h3_indexes: Iterable[str],
+        start: datetime,
+        end: datetime,
+    ) -> dict[str, int]:
+        h3_list = list(h3_indexes)
+        if not h3_list:
+            return {}
+        stmt = (
+            select(Report.category, func.count())
+            .where(
+                Report.h3_index.in_(h3_list),
+                Report.visibility_status == "visible",
+                Report.created_at >= start,
+                Report.created_at < end,
+            )
+            .group_by(Report.category)
+        )
+        return {str(cat): int(count) for cat, count in self.db.execute(stmt).all()}
+
+    def list_visible_created_at_in_window(
+        self,
+        h3_indexes: Iterable[str],
+        start: datetime,
+        end: datetime,
+    ) -> list[datetime]:
+        h3_list = list(h3_indexes)
+        if not h3_list:
+            return []
+        stmt = select(Report.created_at).where(
+            Report.h3_index.in_(h3_list),
+            Report.visibility_status == "visible",
+            Report.created_at >= start,
+            Report.created_at < end,
+        )
+        return [row[0] for row in self.db.execute(stmt).all() if row[0] is not None]
+
     def list_by_h3_indexes(self, h3_indexes: Iterable[str]) -> list[Report]:
         h3_list = list(h3_indexes)
         if not h3_list:

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -11,10 +11,12 @@ from app.schemas.analytics import (
     CityPulse,
     TrendPoint,
     TrendSeries,
+    ZoneCategoryTrends,
     ZoneHistory,
     ZoneHistoryPoint,
 )
 from app.services.city_pulse_service import CityPulseService
+from app.services.zone_trend_service import compute_zone_category_trends
 
 router = APIRouter(prefix="/analytics", tags=["analytics"])
 
@@ -51,3 +53,15 @@ def zone_history(zone_id: UUID, db: Session = Depends(get_db)) -> ZoneHistory:
         for s in snapshots
     ]
     return ZoneHistory(zone_id=str(zone_id), points=points)
+
+
+@router.get("/zone/{zone_id}/category-trends", response_model=ZoneCategoryTrends)
+def zone_category_trends(
+    zone_id: UUID,
+    db: Session = Depends(get_db),
+    window_days: int = Query(30, ge=1, le=30),
+) -> ZoneCategoryTrends:
+    result = compute_zone_category_trends(db, zone_id, window_days=window_days)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Zone not found")
+    return result
