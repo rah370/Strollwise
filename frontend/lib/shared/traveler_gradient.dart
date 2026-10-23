@@ -235,6 +235,27 @@ class ZoneCatalog {
     }
     return best;
   }
+
+  /// Nearest catalog zone within [maxKm], or null if nothing is close enough.
+  static ZoneCatalogEntry? nearestEntryWithin(
+    double lat,
+    double lng, {
+    double maxKm = 2.0,
+  }) {
+    final list = entries;
+    if (list.isEmpty) return null;
+    ZoneCatalogEntry? best;
+    var bestKm = double.infinity;
+    for (final entry in list) {
+      final km = _haversineKm(lat, lng, entry.centerLat, entry.centerLng);
+      if (km < bestKm) {
+        bestKm = km;
+        best = entry;
+      }
+    }
+    if (best == null || bestKm > maxKm) return null;
+    return best;
+  }
 }
 
 const int _catalogH3Resolution = 8;

@@ -61,12 +61,15 @@ def _earned_badges(
 def my_contributions(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
-    limit: int = Query(15, ge=1, le=50),
+    limit: int = Query(50, ge=1, le=50),
 ) -> UserContributionsResponse:
     repo = ReportRepository(db)
     counts = repo.count_grouped_by_visibility(current_user.id)
     approved = int(counts.get("visible", 0))
     pending = int(counts.get("pending", 0))
+    rejected = int(counts.get("removed", 0))
+    flagged = int(counts.get("flagged", 0))
+    hidden = int(counts.get("hidden", 0))
     submitted = sum(int(v) for v in counts.values())
     recent = repo.list_for_user(current_user.id, limit=limit)
     badges = _earned_badges(repo, current_user.id, submitted, approved)
@@ -75,6 +78,9 @@ def my_contributions(
             submitted=submitted,
             approved=approved,
             pending=pending,
+            rejected=rejected,
+            flagged=flagged,
+            hidden=hidden,
         ),
         recent_reports=[_report_public_for_owner(r) for r in recent],
         badges=badges,

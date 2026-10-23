@@ -5,17 +5,30 @@ class UserContributionStatsModel {
     required this.submitted,
     required this.approved,
     required this.pending,
+    this.rejected = 0,
+    this.flagged = 0,
+    this.hidden = 0,
   });
 
   final int submitted;
   final int approved;
   final int pending;
+  final int rejected;
+  final int flagged;
+  final int hidden;
+
+  int get closedCount => rejected + flagged + hidden;
+
+  int get accountedCount => approved + pending + closedCount;
 
   factory UserContributionStatsModel.fromJson(Map<String, dynamic> json) {
     return UserContributionStatsModel(
       submitted: (json['submitted'] as num?)?.toInt() ?? 0,
       approved: (json['approved'] as num?)?.toInt() ?? 0,
       pending: (json['pending'] as num?)?.toInt() ?? 0,
+      rejected: (json['rejected'] as num?)?.toInt() ?? 0,
+      flagged: (json['flagged'] as num?)?.toInt() ?? 0,
+      hidden: (json['hidden'] as num?)?.toInt() ?? 0,
     );
   }
 }

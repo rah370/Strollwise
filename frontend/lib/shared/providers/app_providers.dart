@@ -578,6 +578,7 @@ class UserContributionsNotifier
       final dio = ref.read(dioProvider);
       final response = await dio.get(
         '/users/me/contributions',
+        queryParameters: {'limit': 50},
         options: Options(
           headers: {
             ..._contributionsNoCacheHeaders,
@@ -627,6 +628,9 @@ class UserContributionsNotifier
           submitted: (stats?.submitted ?? 0) + 1,
           approved: stats?.approved ?? 0,
           pending: (stats?.pending ?? 0) + 1,
+          rejected: stats?.rejected ?? 0,
+          flagged: stats?.flagged ?? 0,
+          hidden: stats?.hidden ?? 0,
         ),
         recentReports: [
           report,

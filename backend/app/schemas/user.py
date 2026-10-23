@@ -74,6 +74,9 @@ class UserContributionStats(ORMModel):
     submitted: int
     approved: int
     pending: int
+    rejected: int = 0
+    flagged: int = 0
+    hidden: int = 0
 
 
 class UserContributionsResponse(ORMModel):

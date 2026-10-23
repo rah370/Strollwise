@@ -7,15 +7,22 @@ import '../features/explore/presentation/explore_screen.dart';
 import '../features/feed/presentation/feed_screen.dart';
 import '../features/layers/presentation/layers_screen.dart';
 import '../features/legal/presentation/legal_screens.dart';
+import '../features/profile/presentation/achievements_screen.dart';
+import '../features/profile/presentation/my_tags_screen.dart';
 import '../features/profile/presentation/profile_screen.dart';
+import '../features/profile/presentation/settings_screen.dart';
+import '../features/profile/presentation/visit_history_screen.dart';
+import '../features/profile/profile_copy.dart';
 import '../features/reports/presentation/tag_submission_screen.dart';
 import '../features/trends/presentation/trends_screen.dart';
 import '../shared/providers/app_providers.dart';
 import 'widgets/main_shell.dart';
 
 bool _isShellLocation(String loc) {
-  const shell = {'/explore', '/feed', '/add-tag', '/layers', '/profile'};
-  return shell.contains(loc) || loc.startsWith('/trends');
+  const shell = {'/explore', '/feed', '/add-tag', '/layers'};
+  return shell.contains(loc) ||
+      loc.startsWith('/profile') ||
+      loc.startsWith('/trends');
 }
 
 final GoRouter appRouter = GoRouter(
@@ -78,6 +85,28 @@ final GoRouter appRouter = GoRouter(
         GoRoute(
           path: '/profile',
           builder: (context, state) => const ProfileScreen(),
+          routes: [
+            GoRoute(
+              path: 'tags',
+              builder: (context, state) => MyTagsScreen(
+                initialFilter: tagFilterFromQuery(
+                  state.uri.queryParameters['status'],
+                ),
+              ),
+            ),
+            GoRoute(
+              path: 'achievements',
+              builder: (context, state) => const AchievementsScreen(),
+            ),
+            GoRoute(
+              path: 'visits',
+              builder: (context, state) => const VisitHistoryScreen(),
+            ),
+            GoRoute(
+              path: 'settings',
+              builder: (context, state) => const SettingsScreen(),
+            ),
+          ],
         ),
       ],
     ),

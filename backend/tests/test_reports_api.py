@@ -489,3 +489,73 @@ def test_me_contributions_reflects_submitted_reports(client):
     assert first.get("cell_lng") is not None
     assert abs(float(first["cell_lat"]) - 10.3157) < 0.05
     assert abs(float(first["cell_lng"]) - 123.8854) < 0.05
+    stats = body["stats"]
+    assert stats["rejected"] == 0
+    assert stats["flagged"] == 0
+    assert stats["hidden"] == 0
+    assert stats["submitted"] == (
+        stats["approved"] + stats["pending"] + stats["rejected"] + stats["flagged"] + stats["hidden"]
+    )
+
+
+def test_me_contributions_accounts_for_every_visibility_status(client, db_session):
+    import uuid
+
+    from sqlalchemy import select
+
+    from app.models.report import Report
+
+    email = f"contrib_status_{uuid.uuid4().hex[:10]}@example.com"
+    token = _register(client, email)
+    points = [
+        (10.3157, 123.8854),
+        (10.3304, 123.9072),
+        (10.3382, 123.9014),
+        (10.3173, 123.9058),
+        (10.2966, 123.8986),
+        (10.2816, 123.8810),
+    ]
+    created_ids: list[uuid.UUID] = []
+    for lat, lng in points:
+        resp = client.post(
+            "/api/v1/reports",
+            headers={"Authorization": f"Bearer {token}"},
+            json={
+                "latitude": lat,
+                "longitude": lng,
+                "category": "food",
+                "tags": ["food"],
+            },
+        )
+        assert resp.status_code == 201, resp.text
+        created_ids.append(uuid.UUID(resp.json()["id"]))
+
+    reports = list(
+        db_session.execute(select(Report).where(Report.id.in_(created_ids))).scalars()
+    )
+    assert len(reports) == 6
+    reports[0].visibility_status = "visible"
+    reports[1].visibility_status = "visible"
+    reports[2].visibility_status = "pending"
+    reports[3].visibility_status = "pending"
+    reports[4].visibility_status = "removed"
+    reports[5].visibility_status = "flagged"
+    db_session.commit()
+
+    filled = client.get(
+        "/api/v1/users/me/contributions",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert filled.status_code == 200, filled.text
+    stats = filled.json()["stats"]
+    assert stats["submitted"] == 6
+    assert stats["approved"] == 2
+    assert stats["pending"] == 2
+    assert stats["rejected"] == 1
+    assert stats["flagged"] == 1
+    assert stats["hidden"] == 0
+    assert stats["submitted"] == (
+        stats["approved"] + stats["pending"] + stats["rejected"] + stats["flagged"] + stats["hidden"]
+    )
+    statuses = {item["visibility_status"] for item in filled.json()["recent_reports"]}
+    assert statuses >= {"visible", "pending", "removed", "flagged"}
