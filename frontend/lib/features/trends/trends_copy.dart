@@ -182,7 +182,6 @@ String formatPeakPeriod(String? raw) {
   final value = (raw ?? '').trim();
   if (value.isEmpty) return 'Peak hours vary';
   return value
-      .replaceAll('–', '–')
       .replaceAll('-', '–')
       .replaceAll('AM', ' AM')
       .replaceAll('PM', ' PM')

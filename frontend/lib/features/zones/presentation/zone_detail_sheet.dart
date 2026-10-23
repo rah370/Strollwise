@@ -141,7 +141,7 @@ Future<void> _toggleSavedZone(
   required bool isSaved,
 }) async {
   final token = ref.read(authTokenProvider);
-  if (token == null || token == 'demo-token-local') {
+  if (isLocalDemoSession(token)) {
     pushAppNotification(
       ref,
       title: 'Sign in required',

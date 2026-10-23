@@ -298,7 +298,7 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
   Future<bool> _applyServerManualLocationIfAvailable() async {
     try {
       final token = ref.read(authTokenProvider);
-      if (token == null || token == 'demo-token-local') return false;
+      if (isLocalDemoSession(token)) return false;
       final me = await ref.read(userMeProvider.future);
       final lat = me?.manualMapLat;
       final lng = me?.manualMapLng;
@@ -1000,7 +1000,7 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
 
   Future<void> _markVisitedHere({String? label}) async {
     final token = ref.read(authTokenProvider);
-    if (token == null || token == 'demo-token-local') {
+    if (isLocalDemoSession(token)) {
       if (!mounted) return;
       pushAppNotification(
         ref,

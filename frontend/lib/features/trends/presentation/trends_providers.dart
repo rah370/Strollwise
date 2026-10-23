@@ -36,7 +36,7 @@ final zoneCategoryTrendsProvider = FutureProvider.autoDispose
     final response = await dio.get(
       '/analytics/zone/${query.zoneId}/category-trends',
       queryParameters: {'window_days': query.days},
-      options: token == null || token == 'demo-token-local'
+      options: isLocalDemoSession(token)
           ? null
           : Options(headers: {'Authorization': 'Bearer $token'}),
     );

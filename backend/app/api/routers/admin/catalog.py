@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_current_admin
 from app.core.database import get_db
 from app.models.user import User
-from app.schemas.admin import AdminAuditListResponse, AdminCatalogCreate, AdminCatalogEntry, AdminCatalogUpdate
+from app.schemas.admin import AdminCatalogCreate, AdminCatalogEntry, AdminCatalogUpdate
 from app.services.admin_service import AdminService
 
 router = APIRouter(prefix="/catalog", tags=["admin"])

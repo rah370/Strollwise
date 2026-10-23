@@ -9,7 +9,7 @@ import 'providers/app_providers.dart';
 /// Returns false for demo sessions or failed requests.
 Future<bool> persistUserManualMapLocation(WidgetRef ref, LatLng location) async {
   final token = ref.read(authTokenProvider);
-  if (token == null || token == 'demo-token-local') {
+  if (isLocalDemoSession(token)) {
     return false;
   }
   try {

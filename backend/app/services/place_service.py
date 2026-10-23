@@ -19,7 +19,7 @@ from app.services import h3_service
 from app.services.place_catalog import CatalogPlace, catalog_by_slug, place_catalog_for_db
 from app.services.polygon_service import PolygonService
 from app.utils.place_geometry import point_in_geojson
-from app.utils.place_type_utils import dominant_place_type, place_type_from_function
+from app.utils.place_type_utils import dominant_place_type
 
 
 class PlaceService:

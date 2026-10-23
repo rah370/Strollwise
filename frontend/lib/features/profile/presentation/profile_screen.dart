@@ -30,7 +30,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
       if (!mounted) return;
       unawaited(ZoneCatalog.ensureLoaded());
       final token = ref.read(authTokenProvider);
-      if (token == null || token == 'demo-token-local') return;
+      if (isLocalDemoSession(token)) return;
       ref.invalidate(userMeProvider);
       unawaited(ref.read(userContributionsProvider.notifier).refresh());
     });
@@ -46,7 +46,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
   Widget build(BuildContext context) {
     final email = ref.watch(authUserEmailProvider);
     final token = ref.watch(authTokenProvider);
-    final isDemo = token == null || token == 'demo-token-local';
+    final isDemo = isLocalDemoSession(token);
     final userMe = ref.watch(userMeProvider);
     final contributions = ref.watch(userContributionsProvider);
     final visits = ref.watch(ownVisitHistoryProvider);

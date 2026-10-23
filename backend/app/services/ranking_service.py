@@ -4,7 +4,7 @@ from __future__ import annotations
 import heapq
 from collections.abc import Iterable
 
-from app.models.enums import BehaviorType, FunctionType
+from app.models.enums import FunctionType
 from app.models.merged_zone import MergedZone
 from app.utils.geo_utils import haversine_km
 from app.utils.traveler_mix_utils import behavior_to_traveler_mix

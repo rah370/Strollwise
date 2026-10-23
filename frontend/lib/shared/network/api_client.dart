@@ -21,9 +21,7 @@ final dioProvider = Provider<Dio>((ref) {
     InterceptorsWrapper(
       onRequest: (options, handler) {
         final token = ref.read(authTokenProvider);
-        if (token != null &&
-            token.isNotEmpty &&
-            token != 'demo-token-local') {
+        if (isUsableAccessToken(token)) {
           options.headers['Authorization'] = 'Bearer $token';
         }
         handler.next(options);
@@ -36,9 +34,7 @@ final dioProvider = Provider<Dio>((ref) {
             path.contains('/auth/register');
         if (status == 401 && hadAuth && !isAuthRoute) {
           final token = ref.read(authTokenProvider);
-          if (token != null &&
-              token.isNotEmpty &&
-              token != 'demo-token-local') {
+          if (isUsableAccessToken(token)) {
             await clearPersistedAuth();
             ref.read(authTokenProvider.notifier).state = null;
             ref.read(authUserEmailProvider.notifier).state = null;

@@ -120,7 +120,7 @@ class CellDetailSheet extends ConsumerWidget {
     String title,
   ) async {
     final token = ref.read(authTokenProvider);
-    if (token == null || token == 'demo-token-local') {
+    if (isLocalDemoSession(token)) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           behavior: SnackBarBehavior.floating,

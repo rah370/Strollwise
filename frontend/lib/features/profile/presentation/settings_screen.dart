@@ -15,7 +15,7 @@ class SettingsScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final email = ref.watch(authUserEmailProvider);
     final token = ref.watch(authTokenProvider);
-    final isDemo = token == null || token == 'demo-token-local';
+    final isDemo = isLocalDemoSession(token);
     final userMe = ref.watch(userMeProvider);
     final user = userMe.maybeWhen(data: (u) => u, orElse: () => null);
     final mapLocation = ref.watch(currentUserLocationProvider);

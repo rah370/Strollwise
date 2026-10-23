@@ -26,7 +26,7 @@ import '../profile_copy.dart';
 
 Future<void> refreshProfileData(WidgetRef ref) async {
   final token = ref.read(authTokenProvider);
-  if (token == null || token == 'demo-token-local') return;
+  if (isLocalDemoSession(token)) return;
   ref.invalidate(userMeProvider);
   ref.invalidate(savedZonesProfileProvider);
   ref.invalidate(ownVisitHistoryProvider);
@@ -339,7 +339,7 @@ class _EditProfileDialogState extends State<EditProfileDialog> {
 
 Future<void> editProfile(BuildContext context, WidgetRef ref) async {
   final token = ref.read(authTokenProvider);
-  if (token == null || token == 'demo-token-local') {
+  if (isLocalDemoSession(token)) {
     if (!context.mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
@@ -538,7 +538,7 @@ Future<void> setManualLocationFromProfile(
   if (!context.mounted) return;
 
   final token = ref.read(authTokenProvider);
-  final isDemo = token == null || token == 'demo-token-local';
+  final isDemo = isLocalDemoSession(token);
   if (!isDemo) {
     final saved = await persistUserManualMapLocation(ref, result);
     if (!context.mounted) return;

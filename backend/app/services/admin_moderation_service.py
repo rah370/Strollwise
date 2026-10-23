@@ -9,7 +9,6 @@ from uuid import UUID
 from sqlalchemy.orm import Session
 
 from app.core.cache import cache_delete_pattern
-from app.core.config import settings
 from app.models.enums import VisibilityStatus
 from app.models.report import Report
 from app.models.user import User
@@ -26,12 +25,12 @@ from app.schemas.admin import (
     ModerationQueueFilter,
 )
 from app.services import h3_service
+from app.services.admin_events import publish_report_event, publish_zones_updated
 from app.services.aggregation_service import AggregationService
 from app.services.audit_service import AuditService
 from app.services.place_service import PlaceService
 from app.services.report_service import _distinct_contributors, _tags_refer_to_uspf
 from app.services.system_settings_service import SystemSettingsService
-from app.services.admin_events import publish_report_event, publish_zones_updated
 from app.services.zone_merge_service import ZoneMergeService
 
 log = logging.getLogger(__name__)

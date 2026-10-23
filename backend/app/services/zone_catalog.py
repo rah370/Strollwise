@@ -326,8 +326,6 @@ CEBU_ZONE_CATALOG: tuple[ZoneCatalogEntry, ...] = (
 
 def nearest_catalog_entry(lat: float, lng: float) -> ZoneCatalogEntry | None:
     """Closest catalog zone centroid to a point."""
-    from app.utils.geo_utils import haversine_km
-
     best: ZoneCatalogEntry | None = None
     best_km = float("inf")
     for entry in CEBU_ZONE_CATALOG:

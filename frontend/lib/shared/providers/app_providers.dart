@@ -38,6 +38,13 @@ final routerRefreshListenable = ValueNotifier<int>(0);
 const authPrefsTokenKey = 'strollwise.auth.access_token';
 const authPrefsEmailKey = 'strollwise.auth.user_email';
 const authPrefsUserJsonKey = 'strollwise.auth.user_json';
+const kLocalDemoAccessToken = 'demo-token-local';
+
+bool isLocalDemoSession(String? token) =>
+    token == null || token == kLocalDemoAccessToken;
+
+bool isUsableAccessToken(String? token) =>
+    token != null && token.isNotEmpty && token != kLocalDemoAccessToken;
 
 const _secureStorage = FlutterSecureStorage(
   aOptions: AndroidOptions(encryptedSharedPreferences: true),
@@ -92,9 +99,7 @@ Future<void> bootstrapAuthSession(dynamic ref) async {
   final email = prefs.getString(authPrefsEmailKey);
   final raw = prefs.getString(authPrefsUserJsonKey);
 
-  if (token != null &&
-      token.isNotEmpty &&
-      token != 'demo-token-local') {
+  if (isUsableAccessToken(token)) {
     ref.read(authTokenProvider.notifier).state = token;
     if (email != null && email.isNotEmpty) {
       ref.read(authUserEmailProvider.notifier).state = email;
@@ -118,7 +123,7 @@ Future<void> bootstrapAuthSession(dynamic ref) async {
 /// Confirms the saved JWT still works; clears stale prefs on 401.
 Future<void> _validatePersistedAuthSession(dynamic ref) async {
   final token = ref.read(authTokenProvider);
-  if (token == null || token.isEmpty || token == 'demo-token-local') {
+  if (!isUsableAccessToken(token)) {
     return;
   }
   try {
@@ -272,7 +277,7 @@ final ownVisitPinsProvider = FutureProvider<List<VisitPinModel>>((ref) async {
   final dio = ref.watch(dioProvider);
   final viewport = ref.watch(dataFetchViewportProvider);
   final token = ref.watch(authTokenProvider);
-  if (token == null || token == 'demo-token-local') {
+  if (isLocalDemoSession(token)) {
     return const [];
   }
   try {
@@ -305,7 +310,7 @@ final ownVisitPinsProvider = FutureProvider<List<VisitPinModel>>((ref) async {
 final ownVisitHistoryProvider = FutureProvider<List<VisitPinModel>>((ref) async {
   final dio = ref.watch(dioProvider);
   final token = ref.watch(authTokenProvider);
-  if (token == null || token == 'demo-token-local') {
+  if (isLocalDemoSession(token)) {
     return const [];
   }
   try {
@@ -334,7 +339,7 @@ final ownPendingTagPinsProvider =
   final dio = ref.watch(dioProvider);
   final viewport = ref.watch(dataFetchViewportProvider);
   final token = ref.watch(authTokenProvider);
-  if (token == null || token == 'demo-token-local') {
+  if (isLocalDemoSession(token)) {
     return const [];
   }
   try {
@@ -511,9 +516,10 @@ final feedProvider = FutureProvider<List<ReportModel>>((ref) async {
 
 final userMeProvider = FutureProvider<UserMeModel?>((ref) async {
   final token = ref.watch(authTokenProvider);
-  if (token == null || token == 'demo-token-local') {
+  if (isLocalDemoSession(token)) {
     return null;
   }
+  final accessToken = token!;
   final dio = ref.watch(dioProvider);
   final cached = ref.read(cachedUserMeProvider);
   try {
@@ -523,14 +529,18 @@ final userMeProvider = FutureProvider<UserMeModel?>((ref) async {
         headers: {
           'Cache-Control': 'no-cache',
           'Pragma': 'no-cache',
-          'Authorization': 'Bearer $token',
+          'Authorization': 'Bearer $accessToken',
         },
       ),
     );
     final data = response.data as Map<String, dynamic>;
     final model = UserMeModel.fromJson(data);
     ref.read(cachedUserMeProvider.notifier).state = model;
-    await persistAuthCredentials(token: token, email: model.email, user: model);
+    await persistAuthCredentials(
+      token: accessToken,
+      email: model.email,
+      user: model,
+    );
     return model;
   } on DioException {
     return cached;
@@ -567,7 +577,7 @@ class UserContributionsNotifier
 
   Future<void> _load({required bool initial}) async {
     final token = ref.read(authTokenProvider);
-    if (token == null || token == 'demo-token-local') {
+    if (isLocalDemoSession(token)) {
       state = const AsyncData(null);
       return;
     }
@@ -652,7 +662,7 @@ final userContributionsProvider = StateNotifierProvider<
 final savedZonesProfileProvider =
     FutureProvider.autoDispose<List<ZoneModel>>((ref) async {
   final token = ref.watch(authTokenProvider);
-  if (token == null || token == 'demo-token-local') {
+  if (isLocalDemoSession(token)) {
     return const [];
   }
   final dio = ref.watch(dioProvider);
@@ -1081,8 +1091,6 @@ final tagFlowZoneOverviewNotifierProvider =
 
 /// Matches backend `h3_resolution` (8); catalog zones use res-8 hex disks only.
 const int _kFallbackH3AggregateRes = 8;
-const int _kFallbackH3DisplayRes = 9;
-const int _kFallbackH3MaxDisplayCells = 600;
 
 Future<List<ZoneModel>> _fallbackVisibleZones(String? filter) async {
   await ZoneCatalog.ensureLoaded();
@@ -1127,231 +1135,6 @@ List<ZoneModel> _filterFallbackZones(List<ZoneModel> zones, String? filter) {
             zone.displayName.toLowerCase().contains(f);
       })
       .toList(growable: false);
-}
-
-// ignore: unused_element
-List<ZoneModel> _h3FallbackZoneList(H3 h3) {
-  return [
-    _fallbackZoneFromH3(
-      h3,
-      zoneId: 'dev-it-park',
-      displayName: 'IT Park Business Zone',
-      behaviorType: 'tourist_area',
-      functionType: 'commercial_zone',
-      summary:
-          'Digital nomads, business travelers, hotels, and nightlife around IT Park.',
-      liveStatus: 'busy_now',
-      lat: 10.3305,
-      lng: 123.9066,
-      crowd: 78,
-      localPresence: 22,
-      confidence: 82,
-      priority: 94,
-      reports: 64,
-    ),
-    _fallbackZoneFromH3(
-      h3,
-      zoneId: 'dev-ayala',
-      displayName: 'Ayala Center Cebu',
-      behaviorType: 'mixed_area',
-      functionType: 'commercial_zone',
-      summary:
-          'Shopping, offices, tourists, and locals overlapping at Ayala Center.',
-      liveStatus: 'active_now',
-      lat: 10.3176,
-      lng: 123.9053,
-      crowd: 67,
-      localPresence: 55,
-      confidence: 76,
-      priority: 90,
-      reports: 58,
-    ),
-    _fallbackZoneFromH3(
-      h3,
-      zoneId: 'dev-colon',
-      displayName: 'Colon Basilica Heritage Zone',
-      behaviorType: 'tourist_area',
-      functionType: 'food_hotspot',
-      summary:
-          'Heritage sites, tourism, historical landmarks, and guided tours.',
-      liveStatus: 'busy_now',
-      lat: 10.2943,
-      lng: 123.9018,
-      crowd: 72,
-      localPresence: 18,
-      confidence: 79,
-      priority: 88,
-      reports: 61,
-    ),
-    _fallbackZoneFromH3(
-      h3,
-      zoneId: 'dev-lahug',
-      displayName: 'Lahug Local Neighborhood Zone',
-      behaviorType: 'local_area',
-      functionType: 'residential_zone',
-      summary:
-          'Mostly local neighborhood activity with carinderias and quiet side streets.',
-      liveStatus: 'quiet_now',
-      lat: 10.3388,
-      lng: 123.8950,
-      crowd: 42,
-      localPresence: 76,
-      confidence: 67,
-      priority: 74,
-      reports: 35,
-    ),
-    _fallbackZoneFromH3(
-      h3,
-      zoneId: 'dev-university',
-      displayName: 'USC Main Student Activity Zone',
-      behaviorType: 'local_area',
-      functionType: 'student_area',
-      summary: 'Student movement around study hubs, cafes, and budget meals.',
-      liveStatus: 'active_now',
-      lat: 10.3075,
-      lng: 123.8940,
-      crowd: 58,
-      localPresence: 69,
-      confidence: 73,
-      priority: 82,
-      reports: 49,
-    ),
-    _fallbackZoneFromH3(
-      h3,
-      zoneId: 'dev-port',
-      displayName: 'Pier Transit + Safety Zone',
-      behaviorType: 'mixed_area',
-      functionType: 'transport_zone',
-      summary:
-          'Transport pressure, terminal movement, and safety awareness near the port.',
-      liveStatus: 'peak_now',
-      lat: 10.3044,
-      lng: 123.9129,
-      crowd: 81,
-      localPresence: 48,
-      confidence: 71,
-      priority: 86,
-      reports: 52,
-    ),
-    _fallbackZoneFromH3(
-      h3,
-      zoneId: 'dev-carbon',
-      displayName: 'Carbon Market Area',
-      behaviorType: 'mixed_area',
-      functionType: 'food_hotspot',
-      summary:
-          'Local market, heritage, tourist interest, and commercial activity.',
-      liveStatus: 'busy_now',
-      lat: 10.2932,
-      lng: 123.8997,
-      crowd: 74,
-      localPresence: 58,
-      confidence: 81,
-      priority: 87,
-      reports: 55,
-    ),
-    _fallbackZoneFromH3(
-      h3,
-      zoneId: 'dev-escario',
-      displayName: 'Escario Street',
-      behaviorType: 'mixed_area',
-      functionType: 'commercial_zone',
-      summary:
-          'Capitol-area offices, restaurants, and local commerce — separate from IT Park.',
-      liveStatus: 'active_now',
-      lat: 10.3155,
-      lng: 123.8965,
-      crowd: 64,
-      localPresence: 54,
-      confidence: 74,
-      priority: 83,
-      reports: 42,
-    ),
-    _fallbackZoneFromH3(
-      h3,
-      zoneId: 'dev-fuente',
-      displayName: 'Fuente Osmeña',
-      behaviorType: 'mixed_area',
-      functionType: 'transport_zone',
-      summary:
-          'Hotels, hospitals, restaurants, and transport hub activity.',
-      liveStatus: 'busy_now',
-      lat: 10.3099,
-      lng: 123.8915,
-      crowd: 70,
-      localPresence: 52,
-      confidence: 77,
-      priority: 84,
-      reports: 50,
-    ),
-    _fallbackZoneFromH3(
-      h3,
-      zoneId: 'dev-busay',
-      displayName: 'Busay Nature + Sunset Zone',
-      behaviorType: 'tourist_area',
-      functionType: 'tourist_hotspot',
-      summary: 'Sunset drives, mountain cafes, and sightseeing near Tops.',
-      liveStatus: 'active_now',
-      lat: 10.3700,
-      lng: 123.8780,
-      crowd: 62,
-      localPresence: 24,
-      confidence: 74,
-      priority: 83,
-      reports: 46,
-    ),
-    _fallbackZoneFromH3(
-      h3,
-      zoneId: 'dev-mactan',
-      displayName: 'Mactan Resort Zone',
-      behaviorType: 'tourist_area',
-      functionType: 'tourist_hotspot',
-      summary:
-          'Resorts, hotels, airport access, and foreign visitor movement.',
-      liveStatus: 'active_now',
-      lat: 10.2995,
-      lng: 124.0118,
-      crowd: 59,
-      localPresence: 12,
-      confidence: 72,
-      priority: 81,
-      reports: 43,
-    ),
-    _fallbackZoneFromH3(
-      h3,
-      zoneId: 'dev-sirao',
-      displayName: 'Sirao Flower Garden Nature Zone',
-      behaviorType: 'tourist_area',
-      functionType: 'tourist_hotspot',
-      summary:
-          'Flower garden visits, photo stops, and mountain-drive behavior.',
-      liveStatus: 'active_now',
-      lat: 10.3940,
-      lng: 123.8680,
-      crowd: 46,
-      localPresence: 22,
-      confidence: 67,
-      priority: 75,
-      reports: 31,
-    ),
-    _fallbackZoneFromH3(
-      h3,
-      zoneId: 'dev-south-bus',
-      displayName: 'South Bus Terminal Backpacker Transit Zone',
-      behaviorType: 'local_area',
-      functionType: 'transport_zone',
-      summary:
-          'Budget traveler and local commute behavior around bus departures.',
-      liveStatus: 'busy_now',
-      lat: 10.3001,
-      lng: 123.8931,
-      crowd: 76,
-      localPresence: 82,
-      confidence: 75,
-      priority: 82,
-      reports: 47,
-    ),
-  ];
 }
 
 List<ZoneModel> _legacyBlobFallbackZoneList() {
@@ -1572,128 +1355,6 @@ List<ZoneModel> _legacyBlobFallbackZoneList() {
   ];
 }
 
-Map<String, dynamic> _geoJsonFromH3MultiPolygon(
-  List<List<List<GeoCoord>>> multiPolygon,
-) {
-  if (multiPolygon.isEmpty) {
-    return const {'type': 'Polygon', 'coordinates': <List<List<double>>>[]};
-  }
-  final polygons = <List<List<List<double>>>>[];
-  for (final polygon in multiPolygon) {
-    final rings = <List<List<double>>>[];
-    for (final ring in polygon) {
-      final pts = ring
-          .map((g) => <double>[g.lon, g.lat])
-          .toList(growable: false);
-      if (pts.length < 3) continue;
-      if (pts.first[0] != pts.last[0] || pts.first[1] != pts.last[1]) {
-        rings.add([...pts, pts.first]);
-      } else {
-        rings.add(pts);
-      }
-    }
-    if (rings.isNotEmpty) {
-      polygons.add(rings);
-    }
-  }
-  if (polygons.isEmpty) {
-    return const {'type': 'Polygon', 'coordinates': <List<List<double>>>[]};
-  }
-  if (polygons.length == 1) {
-    return {'type': 'Polygon', 'coordinates': polygons.first};
-  }
-  return {'type': 'MultiPolygon', 'coordinates': polygons};
-}
-
-List<List<List<double>>> _ringsForDisplayCells(H3 h3, List<H3Index> cells) {
-  final rings = <List<List<double>>>[];
-  for (final cell in cells) {
-    final boundary = h3.cellToBoundary(cell);
-    if (boundary.length < 3) continue;
-    final ring = boundary.map((g) => <double>[g.lon, g.lat]).toList();
-    if (ring.length >= 3) {
-      final first = ring.first;
-      final last = ring.last;
-      if (first[0] != last[0] || first[1] != last[1]) {
-        ring.add([first[0], first[1]]);
-      }
-    }
-    if (ring.length >= 6) {
-      rings.add(ring);
-    }
-  }
-  return rings;
-}
-
-ZoneModel _fallbackZoneFromH3(
-  H3 h3, {
-  required String zoneId,
-  required String displayName,
-  required String behaviorType,
-  required String functionType,
-  required String summary,
-  required String liveStatus,
-  required double lat,
-  required double lng,
-  required double crowd,
-  required double localPresence,
-  required double confidence,
-  required double priority,
-  required int reports,
-}) {
-  final parent = h3.geoToCell(
-    GeoCoord(lon: lng, lat: lat),
-    _kFallbackH3AggregateRes,
-  );
-  var displayCells = h3.uncompactCells([
-    parent,
-  ], resolution: _kFallbackH3DisplayRes);
-  if (displayCells.length > _kFallbackH3MaxDisplayCells) {
-    displayCells = displayCells.sublist(0, _kFallbackH3MaxDisplayCells);
-  }
-
-  var mp = h3.cellsToMultiPolygon([parent]);
-  if (mp.isEmpty) {
-    final boundary = h3.cellToBoundary(parent);
-    mp = [
-      [boundary],
-    ];
-  }
-  final polygonGeoJson = _geoJsonFromH3MultiPolygon(mp);
-  final sourceH3Rings = _ringsForDisplayCells(h3, displayCells);
-  final centroid = h3.cellToGeo(parent);
-  final mix = behaviorType == 'local_area'
-      ? 'local'
-      : behaviorType == 'tourist_area'
-      ? 'international'
-      : 'mixed';
-  final localRatio = TravelerGradient.localRatioFromMix(
-    mix,
-    localPresencePercent: localPresence,
-  );
-
-  return ZoneModel.fromJson({
-    'zone_id': zoneId,
-    'display_name': displayName,
-    'behavior_type': behaviorType,
-    'traveler_mix': mix,
-    'function_type': functionType,
-    'summary': summary,
-    'live_status': liveStatus,
-    'polygon_geojson': polygonGeoJson,
-    'centroid': {'lat': centroid.lat, 'lng': centroid.lon},
-    'crowd_level': crowd,
-    'local_presence_percent': localPresence,
-    'local_ratio': localRatio,
-    'map_color': TravelerGradient.hexForRatio(localRatio),
-    'peak_time_label': '4PM-9PM',
-    'confidence_score': confidence,
-    'priority_score': priority,
-    'report_count': reports,
-    'source_h3_rings': sourceH3Rings,
-  });
-}
-
 List<ReportModel> _fallbackFeed() {
   final now = DateTime.now();
   return [
@@ -1902,7 +1563,7 @@ Future<void> _applyZoneValidationAfterTag(
   ref.invalidate(currentZoneOverviewProvider);
 
   final token = ref.read(authTokenProvider);
-  final isDemoSession = token == null || token == 'demo-token-local';
+  final isDemoSession = isLocalDemoSession(token);
   ZoneModel? fromApi;
 
   if (!isDemoSession) {
@@ -2000,7 +1661,7 @@ class TagSubmissionController
     try {
       final dio = ref.read(dioProvider);
       final token = ref.read(authTokenProvider);
-      final isDemoSession = token == null || token == 'demo-token-local';
+      final isDemoSession = isLocalDemoSession(token);
       if (isDemoSession) {
         // Demo/offline mode has no valid backend JWT, so keep the prototype flow
         // responsive while still refreshing local fallback providers.
@@ -2208,7 +1869,7 @@ class AuthActionController extends StateNotifier<AsyncValue<void>> {
     }
     unawaited(clearPersistedAuth());
     ref.read(explorePendingGpsCenterProvider.notifier).state = true;
-    ref.read(authTokenProvider.notifier).state = 'demo-token-local';
+    ref.read(authTokenProvider.notifier).state = kLocalDemoAccessToken;
     ref.read(authUserEmailProvider.notifier).state = 'demo@strollwise.local';
     ref.read(cachedUserMeProvider.notifier).state = null;
     routerRefreshListenable.value++;

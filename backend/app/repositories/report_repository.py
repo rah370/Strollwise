@@ -8,7 +8,6 @@ from sqlalchemy import desc, func, select
 from sqlalchemy.orm import Session
 
 from app.models.report import Report
-from app.models.user import User
 
 
 def _tag_filter_matches(tag_l: str, tags_lower: list[str]) -> bool:

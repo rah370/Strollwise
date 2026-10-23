@@ -4,7 +4,7 @@ from __future__ import annotations
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.core.config import Settings, get_settings, settings
+from app.core.config import Settings, get_settings
 from app.models.system_setting import SystemSetting
 
 _CONFIG_KEYS = (

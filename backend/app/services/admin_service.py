@@ -35,16 +35,15 @@ from app.schemas.admin import (
     AdminZoneUpdate,
     AdminZoneValidation,
 )
-from app.services.aggregation_service import AggregationService
-from app.services.audit_service import AuditService
-from app.services.city_pulse_service import CityPulseService
-from app.services.place_service import PlaceService
-from app.services.system_settings_service import SystemSettingsService
 from app.services.admin_events import (
     publish_catalog_updated,
     publish_dashboard_refresh,
     publish_zones_updated,
 )
+from app.services.aggregation_service import AggregationService
+from app.services.audit_service import AuditService
+from app.services.city_pulse_service import CityPulseService
+from app.services.place_service import PlaceService
 from app.services.zone_catalog import invalidate_catalog_cache
 from app.services.zone_merge_service import ZoneMergeService
 

@@ -16,28 +16,26 @@ from app.core.cache import (
 )
 from app.core.config import settings
 from app.core.database import get_db
+from app.models.enums import BehaviorType, FunctionType, LiveStatus
 from app.repositories.place_repository import PlaceRepository
 from app.repositories.zone_repository import ZoneRepository
 from app.schemas.common import Centroid
-from app.models.enums import BehaviorType, FunctionType, LiveStatus
 from app.schemas.place import PlaceSummary
 from app.schemas.zone import CurrentZoneOverview, ZoneDetail, ZoneLaunchContext, ZoneListItem
 from app.services.place_catalog import catalog_place_at_point_db
+from app.services.ranking_service import RankingService
 from app.services.zone_catalog import (
     catalog_entry_for_name,
     default_local_ratio_for_name,
     nearest_catalog_entry,
 )
-from app.utils.place_geometry import point_in_geojson
+from app.utils.geo_utils import haversine_km, polygon_intersects_bbox
+from app.utils.h3_display import zone_display_rings
 from app.utils.traveler_gradient import (
     local_ratio_from_traveler_mix,
     map_color_hex,
 )
 from app.utils.traveler_mix_utils import behavior_to_traveler_mix
-from app.services.ranking_service import RankingService
-from app.services import h3_service
-from app.utils.geo_utils import haversine_km, polygon_intersects_bbox
-from app.utils.h3_display import display_h3_rings, zone_display_rings
 
 log = logging.getLogger(__name__)
 
@@ -535,8 +533,10 @@ def _nearby_ranked(
 def _polygon_intersection_geojson(zones: list) -> dict | None:
     """Return GeoJSON for the geometric intersection of all zone polygons."""
     try:
-        from shapely.geometry import mapping  # type: ignore
-        from shapely.geometry import shape  # type: ignore
+        from shapely.geometry import (
+            mapping,  # type: ignore
+            shape,  # type: ignore
+        )
         from shapely.ops import unary_union  # type: ignore
     except ImportError:
         log.debug("shapely unavailable; cannot compute zone overlap")

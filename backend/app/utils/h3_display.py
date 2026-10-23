@@ -3,7 +3,6 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
-from app.core.config import settings
 from app.services import h3_service
 
 
