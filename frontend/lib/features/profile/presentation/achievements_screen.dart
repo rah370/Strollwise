@@ -119,34 +119,37 @@ class _BadgeTile extends StatelessWidget {
     final style = badgeStyleFor(badge.key);
     return ProfilePanel(
       padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
-      child: ListTile(
-        onTap: onTap,
-        contentPadding: const EdgeInsets.symmetric(horizontal: 4),
-        leading: CircleAvatar(
-          backgroundColor: earned ? style.$1 : AppColors.residentialFill,
-          child: Icon(
-            badge.icon,
-            color: earned ? style.$2 : AppColors.mutedText,
+      child: Material(
+        color: Colors.transparent,
+        child: ListTile(
+          onTap: onTap,
+          contentPadding: const EdgeInsets.symmetric(horizontal: 4),
+          leading: CircleAvatar(
+            backgroundColor: earned ? style.$1 : AppColors.residentialFill,
+            child: Icon(
+              badge.icon,
+              color: earned ? style.$2 : AppColors.mutedText,
+            ),
           ),
-        ),
-        title: Text(
-          badge.label,
-          style: TextStyle(
-            fontWeight: FontWeight.w800,
-            color: earned ? AppColors.primaryText : AppColors.secondaryText,
+          title: Text(
+            badge.label,
+            style: TextStyle(
+              fontWeight: FontWeight.w800,
+              color: earned ? AppColors.primaryText : AppColors.secondaryText,
+            ),
           ),
-        ),
-        subtitle: Text(
-          earned ? badge.earnedCopy : badge.howToEarn,
-          style: const TextStyle(
-            fontWeight: FontWeight.w600,
-            fontSize: 12.5,
-            color: AppColors.secondaryText,
+          subtitle: Text(
+            earned ? badge.earnedCopy : badge.howToEarn,
+            style: const TextStyle(
+              fontWeight: FontWeight.w600,
+              fontSize: 12.5,
+              color: AppColors.secondaryText,
+            ),
           ),
-        ),
-        trailing: Icon(
-          earned ? Icons.check_circle_rounded : Icons.lock_outline_rounded,
-          color: earned ? AppColors.localAccent : AppColors.mutedText,
+          trailing: Icon(
+            earned ? Icons.check_circle_rounded : Icons.lock_outline_rounded,
+            color: earned ? AppColors.localAccent : AppColors.mutedText,
+          ),
         ),
       ),
     );

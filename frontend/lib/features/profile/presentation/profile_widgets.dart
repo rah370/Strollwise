@@ -551,7 +551,8 @@ class TagFilterBar extends StatelessWidget {
           for (final filter in filters) ...[
             Padding(
               padding: const EdgeInsets.only(right: 8),
-              child: ChoiceChip(
+              child:               ChoiceChip(
+                showCheckmark: false,
                 label: Text(
                   '${tagFilterLabel(filter)} (${countForFilter(stats, filter)})',
                 ),
@@ -645,32 +646,35 @@ class ProfileLinkRow extends StatelessWidget {
   Widget build(BuildContext context) {
     return ProfilePanel(
       padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
-      child: ListTile(
-        contentPadding: const EdgeInsets.symmetric(horizontal: 4),
-        leading: CircleAvatar(
-          backgroundColor: AppColors.backgroundAlt,
-          child: Icon(icon, color: AppColors.mapInk),
-        ),
-        title: Text(
-          title,
-          style: const TextStyle(
-            fontWeight: FontWeight.w800,
-            color: AppColors.primaryText,
+      child: Material(
+        color: Colors.transparent,
+        child: ListTile(
+          contentPadding: const EdgeInsets.symmetric(horizontal: 4),
+          leading: CircleAvatar(
+            backgroundColor: AppColors.backgroundAlt,
+            child: Icon(icon, color: AppColors.mapInk),
           ),
-        ),
-        subtitle: Text(
-          subtitle,
-          style: const TextStyle(
-            fontWeight: FontWeight.w600,
-            color: AppColors.secondaryText,
-            fontSize: 12.5,
+          title: Text(
+            title,
+            style: const TextStyle(
+              fontWeight: FontWeight.w800,
+              color: AppColors.primaryText,
+            ),
           ),
+          subtitle: Text(
+            subtitle,
+            style: const TextStyle(
+              fontWeight: FontWeight.w600,
+              color: AppColors.secondaryText,
+              fontSize: 12.5,
+            ),
+          ),
+          trailing: const Icon(
+            Icons.chevron_right_rounded,
+            color: AppColors.mutedText,
+          ),
+          onTap: onTap,
         ),
-        trailing: const Icon(
-          Icons.chevron_right_rounded,
-          color: AppColors.mutedText,
-        ),
-        onTap: onTap,
       ),
     );
   }

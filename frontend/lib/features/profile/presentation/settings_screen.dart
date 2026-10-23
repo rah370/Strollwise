@@ -103,26 +103,29 @@ class SettingsScreen extends ConsumerWidget {
           const SizedBox(height: 8),
           ProfilePanel(
             padding: EdgeInsets.zero,
-            child: Column(
-              children: [
-                ListTile(
-                  title: const Text(
-                    'Privacy policy',
-                    style: TextStyle(fontWeight: FontWeight.w700),
+            child: Material(
+              color: Colors.transparent,
+              child: Column(
+                children: [
+                  ListTile(
+                    title: const Text(
+                      'Privacy policy',
+                      style: TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                    trailing: const Icon(Icons.chevron_right_rounded),
+                    onTap: () => context.push('/privacy'),
                   ),
-                  trailing: const Icon(Icons.chevron_right_rounded),
-                  onTap: () => context.push('/privacy'),
-                ),
-                const Divider(height: 1, color: AppColors.border),
-                ListTile(
-                  title: const Text(
-                    'Terms of use',
-                    style: TextStyle(fontWeight: FontWeight.w700),
+                  const Divider(height: 1, color: AppColors.border),
+                  ListTile(
+                    title: const Text(
+                      'Terms of use',
+                      style: TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                    trailing: const Icon(Icons.chevron_right_rounded),
+                    onTap: () => context.push('/terms'),
                   ),
-                  trailing: const Icon(Icons.chevron_right_rounded),
-                  onTap: () => context.push('/terms'),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
           const SizedBox(height: 24),
