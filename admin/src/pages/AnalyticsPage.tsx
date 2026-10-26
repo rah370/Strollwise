@@ -14,6 +14,33 @@ import { colors } from '../theme/colors'
 
 const barColors = [colors.travelerLocal, colors.travelerInternational, colors.secondary]
 
+const exports = [
+  {
+    path: 'reports',
+    fmt: 'csv' as const,
+    file: 'strollwise-tags-by-place.csv',
+    title: 'Tags by place',
+    blurb:
+      'A spreadsheet of each place, how many tags it received, the most common kind of tag, and the words people used. Safe to open in Excel or Google Sheets.',
+  },
+  {
+    path: 'zones',
+    fmt: 'csv' as const,
+    file: 'strollwise-places.csv',
+    title: 'Places on the map',
+    blurb:
+      'One row per place: its name, who visits, how sure we are, how many tags it has, and whether it is just starting, growing, or established.',
+  },
+  {
+    path: 'audit',
+    fmt: 'csv' as const,
+    file: 'strollwise-activity.csv',
+    title: 'What admins did',
+    blurb:
+      'A dated list of approvals, flags, and rejections. Useful for a thesis methods section. No traveler emails.',
+  },
+]
+
 export function AnalyticsPage() {
   const [exportError, setExportError] = useState('')
 
@@ -42,25 +69,20 @@ export function AnalyticsPage() {
   }
 
   const chartData = [
-    { name: 'Local', value: data.local_contributors, key: 'local' },
-    { name: 'International', value: data.international_contributors, key: 'intl' },
-    { name: 'Domestic', value: data.domestic_contributors, key: 'domestic' },
+    { name: 'Live in Cebu', value: data.local_contributors, key: 'local' },
+    { name: 'From abroad', value: data.international_contributors, key: 'intl' },
+    { name: 'From elsewhere in PH', value: data.domestic_contributors, key: 'domestic' },
   ]
 
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Analytics & Export"
-        description="Thesis-ready exports and contributor breakdowns — anonymized, aggregated by H3 cell."
+        title="Export"
+        description="Download spreadsheets with everyday column names. These files are anonymized — they do not include emails or exact GPS."
         actions={
-          <>
-            <Button variant="secondary" onClick={() => download('reports', 'csv', 'reports.csv')}>Reports CSV</Button>
-            <Button variant="secondary" onClick={() => download('zones', 'json', 'zones.json')}>Zones JSON</Button>
-            <Button onClick={() => download('audit', 'csv', 'audit.csv')}>Audit CSV</Button>
-            <Link to="/audit">
-              <Button variant="ghost">View audit log</Button>
-            </Link>
-          </>
+          <Link to="/audit">
+            <Button variant="ghost">View activity log</Button>
+          </Link>
         }
       />
 
@@ -71,21 +93,34 @@ export function AnalyticsPage() {
       ) : null}
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <StatCard label="Visible reports" value={data.visible_reports} accent={colors.primary} />
-        <StatCard label="Defined zones" value={data.zones_defined} accent={colors.travelerLocal} />
-        <StatCard label="Emerging zones" value={data.zones_emerging} accent={colors.accent} />
-        <StatCard label="Active zones" value={data.active_zones} accent={colors.secondary} />
+        <StatCard label="Tags on the map" value={data.visible_reports} hint="Already public" accent={colors.primary} />
+        <StatCard label="Established places" value={data.zones_defined} hint="Strong agreement" accent={colors.travelerLocal} />
+        <StatCard label="Growing places" value={data.zones_emerging} hint="Still collecting tags" accent={colors.accent} />
+        <StatCard label="Places shown" value={data.active_zones} hint="On the traveler map" accent={colors.secondary} />
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        {exports.map((item) => (
+          <Card key={item.path}>
+            <h2 className="font-black text-sw-ink">{item.title}</h2>
+            <p className="text-sm text-sw-muted mt-2 mb-4 leading-relaxed">{item.blurb}</p>
+            <Button onClick={() => download(item.path, item.fmt, item.file)}>
+              Download spreadsheet
+            </Button>
+          </Card>
+        ))}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <Card className="h-72">
-          <h2 className="font-black text-sw-ink mb-4">Contributor types</h2>
-          <ResponsiveContainer width="100%" height="85%">
+          <h2 className="font-black text-sw-ink mb-1">Who is tagging</h2>
+          <p className="text-xs text-sw-muted mb-3">Counts of people, not tags.</p>
+          <ResponsiveContainer width="100%" height="80%">
             <BarChart data={chartData}>
-              <XAxis dataKey="name" tick={{ fontSize: 12 }} />
+              <XAxis dataKey="name" tick={{ fontSize: 11 }} />
               <YAxis allowDecimals={false} />
               <Tooltip />
-              <Bar dataKey="value" radius={[8, 8, 0, 0]}>
+              <Bar dataKey="value" name="People" radius={[8, 8, 0, 0]}>
                 {chartData.map((_, i) => (
                   <Cell key={chartData[i].key} fill={barColors[i % barColors.length]} />
                 ))}
@@ -95,21 +130,29 @@ export function AnalyticsPage() {
         </Card>
 
         <Card>
-          <h2 className="font-black text-sw-ink mb-4">Research questions supported</h2>
+          <h2 className="font-black text-sw-ink mb-4">How to read the files</h2>
           <ul className="space-y-3 text-sm text-sw-secondary">
-            <li className="flex gap-2">
-              <span className="text-sw-primary font-bold">•</span>
-              Local vs international spatial knowledge differences in Metro Cebu
+            <li>
+              <strong>Place or area</strong> is the neighborhood or named place, not a GPS point.
             </li>
-            <li className="flex gap-2">
-              <span className="text-sw-primary font-bold">•</span>
-              Zone lifecycle progression (unthreshold → emerging → defined)
+            <li>
+              <strong>How sure we are</strong> is 0–100%. Higher means more people described the place the same way.
             </li>
-            <li className="flex gap-2">
-              <span className="text-sw-primary font-bold">•</span>
-              Community validation thresholds and moderation audit trail
+            <li>
+              <strong>Stage</strong> is Just starting, Growing, or Established — the same language as the Places page.
+            </li>
+            <li>
+              JSON downloads still exist for researchers who want the original field names. Ask if you need those.
             </li>
           </ul>
+          <div className="mt-4 flex gap-2 flex-wrap">
+            <Button variant="ghost" onClick={() => download('zones', 'json', 'strollwise-places.json')}>
+              Places JSON
+            </Button>
+            <Button variant="ghost" onClick={() => download('reports', 'json', 'strollwise-tags.json')}>
+              Tags JSON
+            </Button>
+          </div>
         </Card>
       </div>
     </div>

@@ -26,6 +26,7 @@ from app.schemas.admin import (
     AdminCatalogEntry,
     AdminCatalogUpdate,
     AdminDashboardStats,
+    AdminPeopleSnapshot,
     AdminPipelineResult,
     AdminUserContributions,
     AdminUserListResponse,
@@ -58,6 +59,79 @@ def _zone_lifecycle(zone: MergedZone) -> str:
     return "unthreshold"
 
 
+def _zone_plain_summary(
+    name: str, total: int, matching: int, top: str | None, lifecycle: str
+) -> str:
+    kind = _category_label(top) if top else "the same kind of place"
+    if lifecycle == "defined":
+        return (
+            f"{name} is established on the map. {total} tags were sent here"
+            + (f", and {matching} of them agree it is mainly {kind}." if top else ".")
+        )
+    if lifecycle == "emerging":
+        extra = f" Most people tagged it as {kind}." if top else ""
+        return (
+            f"{name} is still growing, with {total} tags so far.{extra} "
+            "A few more matching tags would make this more certain."
+        )
+    noun = "tag" if total == 1 else "tags"
+    return (
+        f"{name} is just getting started, with {total} {noun}. "
+        "It will show more clearly once more people tag the same thing."
+    )
+
+
+def _category_label(value: str | None) -> str:
+    labels = {
+        "food": "Food",
+        "activity": "Activity",
+        "crowd": "Crowd",
+        "safety": "Safety",
+        "transport": "Transport",
+        "school": "School",
+        "issue": "Issue",
+        "shopping": "Shopping",
+        "nightlife": "Nightlife",
+        "other": "Other",
+    }
+    if not value:
+        return ""
+    return labels.get(value.lower(), value.replace("_", " ").title())
+
+
+def _mix_label(value: str | None) -> str:
+    labels = {
+        "local": "Mostly locals",
+        "international": "Mostly visitors",
+        "mixed": "Locals and visitors",
+    }
+    if not value:
+        return "Not sure yet"
+    return labels.get(value.lower(), value.replace("_", " ").title())
+
+
+def _lifecycle_label(value: str) -> str:
+    labels = {
+        "defined": "Established",
+        "emerging": "Growing",
+        "unthreshold": "Just starting",
+    }
+    return labels.get(value, value.replace("_", " ").title())
+
+
+def _audit_label(action: str) -> str:
+    labels = {
+        "report.admin_approve": "Approved a tag",
+        "report.admin_reject": "Rejected a tag",
+        "report.admin_flag": "Flagged a tag",
+        "report.created": "Someone sent a tag",
+        "report.approved": "A tag was approved",
+        "report.rejected": "A tag was rejected",
+        "report.flagged": "A tag was flagged",
+    }
+    return labels.get(action, action.replace(".", " ").replace("_", " "))
+
+
 class AdminService:
     def __init__(self, db: Session) -> None:
         self.db = db
@@ -76,13 +150,46 @@ class AdminService:
         domestic = self.users.count_by_user_type("domestic_traveler")
         total_contrib = max(local + intl + domestic, 1)
         per_day = self.reports.count_reports_per_day(30)
+        pending = self.reports.count_by_visibility("pending")
+        flagged = self.reports.count_by_visibility("flagged")
+        visible = self.reports.count_by_visibility("visible")
+        active_zones = self.zones.list_active()
+        defined = sum(1 for z in active_zones if _zone_lifecycle(z) == "defined")
+        emerging = sum(1 for z in active_zones if _zone_lifecycle(z) == "emerging")
+        from app.services.system_settings_service import SystemSettingsService
+
+        threshold = max(
+            SystemSettingsService(self.db).get_effective_settings().pending_min_reports_per_cell,
+            1,
+        )
+        near = len(self.reports.list_near_threshold_cells(threshold))
+        if pending:
+            next_step = (
+                f"{pending} tag{'s' if pending != 1 else ''} waiting for review. "
+                "Open Review tags to approve, flag, or send back."
+            )
+        elif flagged:
+            next_step = (
+                f"{flagged} flagged tag{'s' if flagged != 1 else ''} need a closer look."
+            )
+        else:
+            next_step = "Nothing is waiting. The public map is up to date."
         return AdminDashboardStats(
-            pending_reports=self.reports.count_by_visibility("pending"),
-            flagged_reports=self.reports.count_by_visibility("flagged"),
-            active_zones=len(self.zones.list_active()),
+            pending_reports=pending,
+            flagged_reports=flagged,
+            active_zones=len(active_zones),
             total_users=self.users.count_all(),
             local_contributor_ratio=round(local / total_contrib, 3),
             reports_last_30_days=[{"date": d, "count": c} for d, c in per_day],
+            visible_reports=visible,
+            near_threshold_reports=near,
+            defined_zones=defined,
+            emerging_zones=emerging,
+            local_users=local,
+            international_users=intl,
+            domestic_users=domestic,
+            admin_users=self.users.count_admins(),
+            plain_summary=next_step,
         )
 
     # --- Zones -------------------------------------------------------------
@@ -111,15 +218,25 @@ class AdminService:
             categories[r.category] = categories.get(r.category, 0) + 1
         top = max(categories, key=categories.get) if categories else None
         matching = categories.get(top, 0) if top else 0
+        total = len(reports)
+        lifecycle = _zone_lifecycle(zone)
+        ratio = (matching / total) if total else 0.0
         return AdminZoneValidation(
             zone_id=zone.zone_id,
             display_name=zone.display_name,
-            total_signals=len(reports),
+            total_signals=total,
             matching_signals=matching,
             confidence=zone.confidence_score,
             top_category=top,
             last_updated=zone.updated_at,
-            lifecycle_state=_zone_lifecycle(zone),
+            lifecycle_state=lifecycle,
+            traveler_mix=zone.traveler_mix,
+            function_type=zone.function_type,
+            live_status=zone.live_status,
+            matching_ratio=round(ratio, 3),
+            plain_summary=_zone_plain_summary(
+                zone.display_name, total, matching, top, lifecycle
+            ),
         )
 
     def update_zone(self, zone_id: UUID, payload: AdminZoneUpdate) -> AdminZoneSummary | None:
@@ -154,26 +271,51 @@ class AdminService:
     # --- Users -------------------------------------------------------------
 
     def list_users(
-        self, *, page: int = 1, page_size: int = 50, search: str | None = None
+        self,
+        *,
+        page: int = 1,
+        page_size: int = 50,
+        search: str | None = None,
+        user_type: str | None = None,
+        role: str | None = None,
+        status: str | None = None,
     ) -> AdminUserListResponse:
-        rows, total = self.users.list_paginated(page=page, page_size=page_size, search=search)
-        items = []
-        for user in rows:
-            counts = self.reports.count_grouped_by_visibility(user.id)
-            items.append(
-                AdminUserSummary(
-                    id=user.id,
-                    email=user.email,
-                    display_name=user.display_name,
-                    user_type=user.user_type,
-                    traveler_type=user.traveler_type,
-                    is_active=user.is_active,
-                    is_admin=user.is_admin,
-                    report_count=sum(counts.values()),
-                    created_at=user.created_at,
-                )
-            )
-        return AdminUserListResponse(items=items, total=total, page=page, page_size=page_size)
+        is_admin = None
+        if role == "admin":
+            is_admin = True
+        elif role == "contributor":
+            is_admin = False
+        is_active = None
+        if status == "active":
+            is_active = True
+        elif status == "inactive":
+            is_active = False
+        rows, total = self.users.list_paginated(
+            page=page,
+            page_size=page_size,
+            search=search,
+            user_type=user_type,
+            is_admin=is_admin,
+            is_active=is_active,
+        )
+        items = [self._user_summary(user) for user in rows]
+        return AdminUserListResponse(
+            items=items,
+            total=total,
+            page=page,
+            page_size=page_size,
+            snapshot=AdminPeopleSnapshot(
+                total=self.users.count_all(),
+                active=self.users.count_active(),
+                admins=self.users.count_admins(),
+                contributors=max(self.users.count_all() - self.users.count_admins(), 0),
+                local_residents=self.users.count_by_user_type("local_resident"),
+                international_visitors=self.users.count_by_user_type(
+                    "international_visitor"
+                ),
+                domestic_travelers=self.users.count_by_user_type("domestic_traveler"),
+            ),
+        )
 
     def update_user(self, user_id: UUID, payload: AdminUserUpdate) -> AdminUserSummary | None:
         user = self.users.get_by_id(user_id)
@@ -186,18 +328,7 @@ class AdminService:
         self.users.save(user)
         self.db.commit()
         self.db.refresh(user)
-        counts = self.reports.count_grouped_by_visibility(user.id)
-        return AdminUserSummary(
-            id=user.id,
-            email=user.email,
-            display_name=user.display_name,
-            user_type=user.user_type,
-            traveler_type=user.traveler_type,
-            is_active=user.is_active,
-            is_admin=user.is_admin,
-            report_count=sum(counts.values()),
-            created_at=user.created_at,
-        )
+        return self._user_summary(user)
 
     def user_contributions(self, user_id: UUID) -> AdminUserContributions | None:
         user = self.users.get_by_id(user_id)
@@ -240,12 +371,14 @@ class AdminService:
 
     def export_reports(self, fmt: str = "json") -> str:
         rows, _ = self.reports.list_admin(page=1, page_size=5000)
+        area_names = self._h3_area_names()
         grouped: dict[str, dict] = {}
         for r in rows:
             bucket = grouped.setdefault(
                 r.h3_index,
                 {
                     "h3_index": r.h3_index,
+                    "area_name": area_names.get(r.h3_index) or "Unnamed area",
                     "categories": {},
                     "tag_counts": {},
                     "report_count": 0,
@@ -260,16 +393,29 @@ class AdminService:
             buf = io.StringIO()
             writer = csv.DictWriter(
                 buf,
-                fieldnames=["h3_index", "report_count", "categories", "tag_counts"],
+                fieldnames=[
+                    "Place or area",
+                    "Number of tags",
+                    "Most common kind of tag",
+                    "How people described it",
+                    "Map cell id",
+                ],
             )
             writer.writeheader()
             for row in data:
+                top_category = ""
+                if row["categories"]:
+                    top_category = max(row["categories"], key=row["categories"].get)
+                tags = sorted(
+                    row["tag_counts"].items(), key=lambda item: item[1], reverse=True
+                )
                 writer.writerow(
                     {
-                        "h3_index": row["h3_index"],
-                        "report_count": row["report_count"],
-                        "categories": json.dumps(row["categories"]),
-                        "tag_counts": json.dumps(row["tag_counts"]),
+                        "Place or area": row["area_name"],
+                        "Number of tags": row["report_count"],
+                        "Most common kind of tag": _category_label(top_category),
+                        "How people described it": "; ".join(name for name, _ in tags[:8]),
+                        "Map cell id": row["h3_index"],
                     }
                 )
             return buf.getvalue()
@@ -282,24 +428,24 @@ class AdminService:
             writer = csv.DictWriter(
                 buf,
                 fieldnames=[
-                    "zone_id",
-                    "display_name",
-                    "traveler_mix",
-                    "confidence_score",
-                    "report_count",
-                    "lifecycle_state",
+                    "Place name",
+                    "Who visits",
+                    "How sure we are",
+                    "Number of tags",
+                    "Stage",
+                    "Shown on the map",
                 ],
             )
             writer.writeheader()
             for z in zones:
                 writer.writerow(
                     {
-                        "zone_id": str(z.zone_id),
-                        "display_name": z.display_name,
-                        "traveler_mix": z.traveler_mix or "",
-                        "confidence_score": z.confidence_score,
-                        "report_count": z.report_count,
-                        "lifecycle_state": z.lifecycle_state,
+                        "Place name": z.display_name,
+                        "Who visits": _mix_label(z.traveler_mix),
+                        "How sure we are": f"{z.confidence_score:.0f}%",
+                        "Number of tags": z.report_count,
+                        "Stage": _lifecycle_label(z.lifecycle_state),
+                        "Shown on the map": "Yes" if z.is_active else "No",
                     }
                 )
             return buf.getvalue()
@@ -323,23 +469,16 @@ class AdminService:
             buf = io.StringIO()
             writer = csv.DictWriter(
                 buf,
-                fieldnames=[
-                    "id",
-                    "action_type",
-                    "entity_type",
-                    "entity_id",
-                    "created_at",
-                ],
+                fieldnames=["When", "What happened", "What it applied to", "Record id"],
             )
             writer.writeheader()
             for e in entries:
                 writer.writerow(
                     {
-                        "id": str(e.id),
-                        "action_type": e.action_type,
-                        "entity_type": e.entity_type,
-                        "entity_id": e.entity_id or "",
-                        "created_at": e.created_at.isoformat(),
+                        "When": e.created_at.isoformat(sep=" ", timespec="minutes"),
+                        "What happened": _audit_label(e.action_type),
+                        "What it applied to": e.entity_type.replace("_", " "),
+                        "Record id": e.entity_id or "",
                     }
                 )
             return buf.getvalue()
@@ -525,6 +664,37 @@ class AdminService:
 
         stmt = select(MergedZone)
         return list(self.db.execute(stmt).scalars())
+
+    def _user_summary(self, user) -> AdminUserSummary:
+        counts = self.reports.count_grouped_by_visibility(user.id)
+        return AdminUserSummary(
+            id=user.id,
+            email=user.email,
+            display_name=user.display_name,
+            user_type=user.user_type,
+            traveler_type=user.traveler_type,
+            country_of_origin=user.country_of_origin,
+            city_of_origin=user.city_of_origin,
+            is_active=user.is_active,
+            is_admin=user.is_admin,
+            report_count=sum(counts.values()),
+            visible_reports=counts.get("visible", 0),
+            pending_reports=counts.get("pending", 0),
+            flagged_reports=counts.get("flagged", 0),
+            created_at=user.created_at,
+        )
+
+    def _h3_area_names(self) -> dict[str, str]:
+        from app.repositories.place_repository import PlaceRepository
+
+        names: dict[str, str] = {}
+        for zone in self._all_zones():
+            for idx in zone.source_h3_indexes_json or []:
+                names.setdefault(idx, zone.display_name)
+        for place in PlaceRepository(self.db).list_active():
+            for idx in place.source_h3_indexes_json or []:
+                names.setdefault(idx, place.display_name)
+        return names
 
     def _zone_summary(self, zone: MergedZone) -> AdminZoneSummary:
         return AdminZoneSummary(

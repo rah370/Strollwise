@@ -27,11 +27,19 @@ def list_reports(
     queue: ModerationQueueFilter = Query(default=ModerationQueueFilter.PENDING),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=50, ge=1, le=200),
+    search: str | None = Query(default=None),
+    category: str | None = Query(default=None),
+    tag: str | None = Query(default=None),
     db: Session = Depends(get_db),
     _: User = Depends(get_current_admin),
 ) -> AdminReportListResponse:
     return AdminModerationService(db).list_reports(
-        queue=queue, page=page, page_size=page_size
+        queue=queue,
+        page=page,
+        page_size=page_size,
+        search=search,
+        category=category,
+        tag=tag,
     )
 
 

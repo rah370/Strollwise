@@ -49,19 +49,35 @@ class AdminModerationService:
         queue: ModerationQueueFilter = ModerationQueueFilter.PENDING,
         page: int = 1,
         page_size: int = 50,
+        search: str | None = None,
+        category: str | None = None,
+        tag: str | None = None,
     ) -> AdminReportListResponse:
+        location_h3s = self._h3_indexes_for_place_search(search)
         if queue == ModerationQueueFilter.DUPLICATES:
-            items = self._list_duplicates(page=page, page_size=page_size)
+            items = self._filter_summaries(
+                self._list_duplicates(page=1, page_size=500),
+                search=search,
+                category=category,
+                tag=tag,
+            )
+            start = max(page - 1, 0) * page_size
             return AdminReportListResponse(
-                items=items,
+                items=items[start : start + page_size],
                 total=len(items),
                 page=page,
                 page_size=page_size,
             )
         if queue == ModerationQueueFilter.NEAR_THRESHOLD:
-            items = self._list_near_threshold(page=page, page_size=page_size)
+            items = self._filter_summaries(
+                self._list_near_threshold(page=1, page_size=500),
+                search=search,
+                category=category,
+                tag=tag,
+            )
+            start = max(page - 1, 0) * page_size
             return AdminReportListResponse(
-                items=items,
+                items=items[start : start + page_size],
                 total=len(items),
                 page=page,
                 page_size=page_size,
@@ -72,6 +88,10 @@ class AdminModerationService:
             visibility_status=status,
             page=page,
             page_size=page_size,
+            search=search,
+            category=category,
+            tag=tag,
+            location_h3_indexes=location_h3s,
         )
         return AdminReportListResponse(
             items=[self._to_summary(r) for r in rows],
@@ -180,6 +200,7 @@ class AdminModerationService:
             duplicate_count=len(dupes),
             created_at=report.created_at,
             image_url=report.image_url,
+            area_name=self._area_name(report.h3_index),
         )
 
     def _cell_context(self, h3_index: str) -> AdminCellContext:
@@ -243,6 +264,65 @@ class AdminModerationService:
                 out.append(self._to_summary(report))
         start = max(page - 1, 0) * page_size
         return out[start : start + page_size]
+
+    def _area_names(self) -> dict[str, str]:
+        cached = getattr(self, "_area_name_cache", None)
+        if cached is not None:
+            return cached
+        from app.models.merged_zone import MergedZone
+        from app.repositories.place_repository import PlaceRepository
+        from sqlalchemy import select
+
+        names: dict[str, str] = {}
+        zones = list(self.db.execute(select(MergedZone)).scalars())
+        for zone in zones:
+            for idx in zone.source_h3_indexes_json or []:
+                names.setdefault(idx, zone.display_name)
+        for place in PlaceRepository(self.db).list_active():
+            for idx in place.source_h3_indexes_json or []:
+                names.setdefault(idx, place.display_name)
+        self._area_name_cache = names
+        return names
+
+    def _area_name(self, h3_index: str) -> str | None:
+        return self._area_names().get(h3_index)
+
+    def _h3_indexes_for_place_search(self, search: str | None) -> list[str]:
+        if not search or not search.strip():
+            return []
+        needle = search.strip().lower()
+        return [
+            idx
+            for idx, name in self._area_names().items()
+            if needle in name.lower()
+        ]
+
+    def _filter_summaries(
+        self,
+        items: list[AdminReportSummary],
+        *,
+        search: str | None,
+        category: str | None,
+        tag: str | None,
+    ) -> list[AdminReportSummary]:
+        rows = items
+        if category:
+            rows = [r for r in rows if r.category == category.lower()]
+        if tag:
+            needle = tag.lower()
+            rows = [r for r in rows if any(needle in t.lower() for t in r.tags)]
+        if search:
+            q = search.lower()
+            rows = [
+                r
+                for r in rows
+                if q in r.category
+                or q in r.h3_index.lower()
+                or q in (r.note_text or "").lower()
+                or q in (r.area_name or "").lower()
+                or any(q in t.lower() for t in r.tags)
+            ]
+        return rows
 
     def _run_pipeline(self, h3_index: str) -> bool:
         affected = {h3_index}

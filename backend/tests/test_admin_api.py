@@ -184,6 +184,53 @@ def test_admin_users_list(client, db_session):
     resp = client.get("/api/v1/admin/users", headers=headers)
     assert resp.status_code == 200
     assert resp.json()["total"] >= 1
+    assert "snapshot" in resp.json()
+    assert resp.json()["snapshot"]["admins"] >= 1
+
+
+def test_admin_users_search_by_city(client, db_session):
+    _register(client, "cebu-user@test.com", city_of_origin="Cebu City")
+    _register(
+        client,
+        "manila-user@test.com",
+        city_of_origin="Manila",
+        country_of_origin="Philippines",
+    )
+    admin = _make_admin(db_session, "admin-city-search@test.com")
+    headers = _admin_headers(client, db_session, admin.email)
+    resp = client.get("/api/v1/admin/users?search=Cebu", headers=headers)
+    assert resp.status_code == 200
+    emails = {u["email"] for u in resp.json()["items"]}
+    assert "cebu-user@test.com" in emails
+    assert "manila-user@test.com" not in emails
+
+
+def test_admin_moderation_search_by_tag(client, db_session):
+    admin = _make_admin(db_session, "admin-tag-search@test.com")
+    _pending_report(db_session, admin.id)
+    headers = _admin_headers(client, db_session, admin.email)
+    hit = client.get(
+        "/api/v1/admin/moderation/reports?search=good%20food", headers=headers
+    )
+    miss = client.get(
+        "/api/v1/admin/moderation/reports?search=nightlife", headers=headers
+    )
+    assert hit.status_code == 200
+    assert hit.json()["total"] >= 1
+    assert miss.json()["total"] == 0
+
+
+def test_admin_export_reports_csv_is_readable(client, db_session):
+    admin = _make_admin(db_session, "admin-csv@test.com")
+    _pending_report(db_session, admin.id)
+    headers = _admin_headers(client, db_session, admin.email)
+    resp = client.get("/api/v1/admin/analytics/export/reports?fmt=csv", headers=headers)
+    assert resp.status_code == 200
+    text = resp.text
+    assert "Place or area" in text
+    assert "Number of tags" in text
+    assert "latitude" not in text
+    assert "email" not in text
 
 
 def test_admin_catalog_list(client, db_session):

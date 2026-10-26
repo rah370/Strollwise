@@ -36,6 +36,7 @@ class AdminReportSummary(BaseModel):
     duplicate_count: int = 0
     created_at: datetime
     image_url: str | None = None
+    area_name: str | None = None
 
 
 class AdminCellContext(BaseModel):
@@ -99,6 +100,11 @@ class AdminZoneValidation(BaseModel):
     top_category: str | None = None
     last_updated: datetime | None = None
     lifecycle_state: str
+    traveler_mix: str | None = None
+    function_type: str | None = None
+    live_status: str = "quiet_now"
+    matching_ratio: float = 0.0
+    plain_summary: str = ""
 
 
 class AdminZoneUpdate(BaseModel):
@@ -114,9 +120,14 @@ class AdminUserSummary(BaseModel):
     display_name: str | None = None
     user_type: str | None = None
     traveler_type: str | None = None
+    country_of_origin: str | None = None
+    city_of_origin: str | None = None
     is_active: bool
     is_admin: bool
     report_count: int = 0
+    visible_reports: int = 0
+    pending_reports: int = 0
+    flagged_reports: int = 0
     created_at: datetime
 
 
@@ -125,11 +136,22 @@ class AdminUserUpdate(BaseModel):
     is_admin: bool | None = None
 
 
+class AdminPeopleSnapshot(BaseModel):
+    total: int = 0
+    active: int = 0
+    admins: int = 0
+    contributors: int = 0
+    local_residents: int = 0
+    international_visitors: int = 0
+    domestic_travelers: int = 0
+
+
 class AdminUserListResponse(BaseModel):
     items: list[AdminUserSummary]
     total: int
     page: int
     page_size: int
+    snapshot: AdminPeopleSnapshot = Field(default_factory=AdminPeopleSnapshot)
 
 
 class AdminUserContributions(BaseModel):
@@ -239,3 +261,12 @@ class AdminDashboardStats(BaseModel):
     total_users: int
     local_contributor_ratio: float
     reports_last_30_days: list[dict[str, int | str]] = Field(default_factory=list)
+    visible_reports: int = 0
+    near_threshold_reports: int = 0
+    defined_zones: int = 0
+    emerging_zones: int = 0
+    local_users: int = 0
+    international_users: int = 0
+    domestic_users: int = 0
+    admin_users: int = 0
+    plain_summary: str = ""

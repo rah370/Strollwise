@@ -9,6 +9,7 @@ export type AdminReport = {
   contributor_count: number
   duplicate_count: number
   created_at: string
+  area_name?: string | null
 }
 
 export type AdminReportList = {
@@ -43,6 +44,11 @@ export type AdminZoneValidation = {
   top_category: string | null
   last_updated: string | null
   lifecycle_state: string
+  traveler_mix?: string | null
+  function_type?: string | null
+  live_status?: string
+  matching_ratio?: number
+  plain_summary?: string
 }
 
 export type AdminDashboardStats = {
@@ -52,6 +58,15 @@ export type AdminDashboardStats = {
   total_users: number
   local_contributor_ratio: number
   reports_last_30_days: { date: string; count: number }[]
+  visible_reports?: number
+  near_threshold_reports?: number
+  defined_zones?: number
+  emerging_zones?: number
+  local_users?: number
+  international_users?: number
+  domestic_users?: number
+  admin_users?: number
+  plain_summary?: string
 }
 
 export type AdminZone = {
@@ -72,15 +87,43 @@ export type AdminUser = {
   email: string
   display_name?: string | null
   user_type?: string | null
+  traveler_type?: string | null
+  country_of_origin?: string | null
+  city_of_origin?: string | null
   is_active: boolean
   is_admin: boolean
   report_count: number
+  visible_reports?: number
+  pending_reports?: number
+  flagged_reports?: number
   created_at: string
+}
+
+export type AdminPeopleSnapshot = {
+  total: number
+  active: number
+  admins: number
+  contributors: number
+  local_residents: number
+  international_visitors: number
+  domestic_travelers: number
 }
 
 export type AdminUserList = {
   items: AdminUser[]
   total: number
+  page: number
+  page_size: number
+  snapshot?: AdminPeopleSnapshot
+}
+
+export type AdminUserContributions = {
+  user_id: string
+  total_reports: number
+  visible_reports: number
+  pending_reports: number
+  flagged_reports: number
+  badges: string[]
 }
 
 export type AdminCatalogEntry = {

@@ -234,9 +234,15 @@ class ReportRepository:
         *,
         visibility_status: str | None = None,
         h3_index: str | None = None,
+        search: str | None = None,
+        category: str | None = None,
+        tag: str | None = None,
+        location_h3_indexes: list[str] | None = None,
         page: int = 1,
         page_size: int = 50,
     ) -> tuple[list[Report], int]:
+        from sqlalchemy import String, cast, or_
+
         stmt = select(Report)
         count_stmt = select(func.count()).select_from(Report)
         if visibility_status:
@@ -245,6 +251,27 @@ class ReportRepository:
         if h3_index:
             stmt = stmt.where(Report.h3_index == h3_index)
             count_stmt = count_stmt.where(Report.h3_index == h3_index)
+        if category:
+            stmt = stmt.where(Report.category == category.lower())
+            count_stmt = count_stmt.where(Report.category == category.lower())
+        if tag:
+            tag_pattern = f"%{tag.lower()}%"
+            tag_clause = cast(Report.tags_json, String).ilike(tag_pattern)
+            stmt = stmt.where(tag_clause)
+            count_stmt = count_stmt.where(tag_clause)
+        if search:
+            pattern = f"%{search.lower()}%"
+            clauses = [
+                Report.category.ilike(pattern),
+                Report.h3_index.ilike(pattern),
+                Report.note_text.ilike(pattern),
+                cast(Report.tags_json, String).ilike(pattern),
+            ]
+            if location_h3_indexes:
+                clauses.append(Report.h3_index.in_(location_h3_indexes))
+            search_clause = or_(*clauses)
+            stmt = stmt.where(search_clause)
+            count_stmt = count_stmt.where(search_clause)
         total = int(self.db.scalar(count_stmt) or 0)
         offset = max(page - 1, 0) * page_size
         stmt = stmt.order_by(desc(Report.created_at)).offset(offset).limit(page_size)

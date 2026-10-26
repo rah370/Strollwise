@@ -24,10 +24,20 @@ def list_users(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=50, ge=1, le=200),
     search: str | None = Query(default=None),
+    user_type: str | None = Query(default=None),
+    role: str | None = Query(default=None),
+    status: str | None = Query(default=None),
     db: Session = Depends(get_db),
     _: User = Depends(get_current_admin),
 ) -> AdminUserListResponse:
-    return AdminService(db).list_users(page=page, page_size=page_size, search=search)
+    return AdminService(db).list_users(
+        page=page,
+        page_size=page_size,
+        search=search,
+        user_type=user_type,
+        role=role,
+        status=status,
+    )
 
 
 @router.patch("/{user_id}", response_model=AdminUserSummary)

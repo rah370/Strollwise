@@ -1,19 +1,23 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { api } from '../api/client'
 import type { AdminReportDetail, AdminReportList } from '../api/types'
 import { Badge } from '../components/Badge'
 import { Button } from '../components/Button'
 import { Card } from '../components/Card'
 import { PageHeader } from '../components/PageHeader'
+import { Pagination } from '../components/Pagination'
 import { colors } from '../theme/colors'
 import { LIVE_POLL_MS, useAdminPollInterval } from '../hooks/useAdminLiveUpdates'
+import { REPORT_CATEGORIES, categoryLabel, statusLabel } from '../lib/copy'
+
+const PAGE_SIZE = 20
 
 const queues = [
-  { id: 'pending', label: 'Pending' },
-  { id: 'flagged', label: 'Flagged' },
-  { id: 'duplicates', label: 'Duplicates' },
-  { id: 'near_threshold', label: 'Near threshold' },
+  { id: 'pending', label: 'Waiting', hint: 'Need a yes or no' },
+  { id: 'flagged', label: 'Flagged', hint: 'Someone asked for a closer look' },
+  { id: 'duplicates', label: 'Repeats', hint: 'Similar tags in the same area' },
+  { id: 'near_threshold', label: 'Almost ready', hint: 'A few more matching tags would publish this' },
 ] as const
 
 export function ModerationPage() {
@@ -22,14 +26,35 @@ export function ModerationPage() {
   const [selected, setSelected] = useState<string[]>([])
   const [focusedId, setFocusedId] = useState<string | null>(null)
   const [search, setSearch] = useState('')
-
+  const [debounced, setDebounced] = useState('')
+  const [category, setCategory] = useState('')
+  const [tag, setTag] = useState('')
+  const [page, setPage] = useState(1)
   const [actionError, setActionError] = useState('')
 
+  useEffect(() => {
+    const t = window.setTimeout(() => setDebounced(search.trim()), 250)
+    return () => window.clearTimeout(t)
+  }, [search])
+
+  useEffect(() => {
+    setPage(1)
+    setSelected([])
+  }, [queue, debounced, category, tag])
+
   const poll = useAdminPollInterval(LIVE_POLL_MS.moderation)
+  const params = new URLSearchParams({
+    queue,
+    page: String(page),
+    page_size: String(PAGE_SIZE),
+  })
+  if (debounced) params.set('search', debounced)
+  if (category) params.set('category', category)
+  if (tag.trim()) params.set('tag', tag.trim())
+
   const { data, isLoading } = useQuery({
-    queryKey: ['moderation', queue],
-    queryFn: () =>
-      api<AdminReportList>(`/admin/moderation/reports?queue=${queue}&page_size=100`),
+    queryKey: ['moderation', params.toString()],
+    queryFn: () => api<AdminReportList>(`/admin/moderation/reports?${params}`),
     refetchInterval: poll,
   })
 
@@ -39,18 +64,9 @@ export function ModerationPage() {
     enabled: !!focusedId,
   })
 
-  const filtered = useMemo(() => {
-    const items = data?.items ?? []
-    const q = search.trim().toLowerCase()
-    if (!q) return items
-    return items.filter(
-      (r) =>
-        r.category.includes(q) ||
-        r.h3_index.includes(q) ||
-        r.tags.some((t) => t.includes(q)) ||
-        (r.note_text ?? '').toLowerCase().includes(q),
-    )
-  }, [data?.items, search])
+  const items = data?.items ?? []
+  const visibleIds = useMemo(() => items.map((r) => r.id), [items])
+  const allSelected = visibleIds.length > 0 && visibleIds.every((id) => selected.includes(id))
 
   const action = useMutation({
     mutationFn: async ({
@@ -85,11 +101,15 @@ export function ModerationPage() {
     onError: (err: Error) => setActionError(err.message),
   })
 
+  function toggleAll(checked: boolean) {
+    setSelected(checked ? visibleIds : [])
+  }
+
   return (
     <div className="space-y-4">
       <PageHeader
-        title="Moderation Queue"
-        description="Review pending and flagged tag submissions. Privacy-safe view — no raw GPS or user identities."
+        title="Review tags"
+        description="Decide which traveler tags should appear on the public map. Search a place or tag so you are not scrolling through everything at once."
       />
 
       {actionError ? (
@@ -105,6 +125,7 @@ export function ModerationPage() {
               key={q.id}
               type="button"
               onClick={() => setQueue(q.id)}
+              title={q.hint}
               className={`px-4 py-2 rounded-xl text-sm font-bold border transition-colors ${
                 queue === q.id
                   ? 'bg-sw-primary text-white border-sw-primary'
@@ -115,19 +136,58 @@ export function ModerationPage() {
             </button>
           ))}
         </div>
-        <input
-          placeholder="Search category, H3, tags…"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="border border-sw-border rounded-xl px-3 py-2 text-sm w-full lg:w-64 bg-sw-surface"
-        />
       </div>
 
+      <Card className="p-4">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <input
+            placeholder="Search place, tag, or note…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="border border-sw-border rounded-xl px-3 py-2 text-sm bg-sw-surface"
+          />
+          <select
+            value={category}
+            onChange={(e) => setCategory(e.target.value)}
+            className="border border-sw-border rounded-xl px-3 py-2 text-sm bg-sw-surface"
+          >
+            <option value="">All kinds of tags</option>
+            {REPORT_CATEGORIES.map((c) => (
+              <option key={c} value={c}>
+                {categoryLabel(c)}
+              </option>
+            ))}
+          </select>
+          <input
+            placeholder="Filter by a specific tag word…"
+            value={tag}
+            onChange={(e) => setTag(e.target.value)}
+            className="border border-sw-border rounded-xl px-3 py-2 text-sm bg-sw-surface"
+          />
+        </div>
+        <p className="text-xs text-sw-muted mt-2">
+          Example: type “IT Park” or “lahug” to only see tags from that area.
+        </p>
+      </Card>
+
       {selected.length > 0 ? (
-        <div className="flex gap-2 flex-wrap">
-          <Button onClick={() => bulk.mutate('approve')}>Bulk approve ({selected.length})</Button>
-          <Button variant="warning" onClick={() => bulk.mutate('flag')}>Bulk flag</Button>
-          <Button variant="danger" onClick={() => bulk.mutate('reject')}>Bulk reject</Button>
+        <div className="flex gap-2 flex-wrap items-center">
+          <Button onClick={() => bulk.mutate('approve')}>
+            Approve selected ({selected.length})
+          </Button>
+          <Button variant="warning" onClick={() => bulk.mutate('flag')}>
+            Flag selected
+          </Button>
+          <Button variant="danger" onClick={() => bulk.mutate('reject')}>
+            Reject selected
+          </Button>
+          <button
+            type="button"
+            className="text-sm font-bold text-sw-muted"
+            onClick={() => setSelected([])}
+          >
+            Clear selection
+          </button>
         </div>
       ) : null}
 
@@ -137,22 +197,29 @@ export function ModerationPage() {
             <table className="w-full text-sm">
               <thead className="bg-sw-bg-alt text-left sticky top-0">
                 <tr>
-                  <th className="p-3 w-8" />
-                  <th className="p-3 font-bold text-sw-muted text-[11px] uppercase">H3 cell</th>
-                  <th className="p-3 font-bold text-sw-muted text-[11px] uppercase">Category</th>
+                  <th className="p-3 w-10">
+                    <input
+                      type="checkbox"
+                      aria-label="Select all on this page"
+                      checked={allSelected}
+                      onChange={(e) => toggleAll(e.target.checked)}
+                    />
+                  </th>
+                  <th className="p-3 font-bold text-sw-muted text-[11px] uppercase">Place or area</th>
+                  <th className="p-3 font-bold text-sw-muted text-[11px] uppercase">Kind</th>
                   <th className="p-3 font-bold text-sw-muted text-[11px] uppercase">Tags</th>
-                  <th className="p-3 font-bold text-sw-muted text-[11px] uppercase">Conf.</th>
+                  <th className="p-3 font-bold text-sw-muted text-[11px] uppercase">Agreement</th>
                   <th className="p-3 font-bold text-sw-muted text-[11px] uppercase">Status</th>
                   <th className="p-3 font-bold text-sw-muted text-[11px] uppercase">Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {isLoading ? (
-                  <tr><td colSpan={7} className="p-6 text-sw-muted">Loading…</td></tr>
-                ) : filtered.length === 0 ? (
-                  <tr><td colSpan={7} className="p-6 text-sw-muted">No reports in this queue.</td></tr>
+                  <tr><td colSpan={7} className="p-6 text-sw-muted">Loading tags…</td></tr>
+                ) : items.length === 0 ? (
+                  <tr><td colSpan={7} className="p-6 text-sw-muted">Nothing in this list. Try another filter.</td></tr>
                 ) : (
-                  filtered.map((r) => (
+                  items.map((r) => (
                     <tr
                       key={r.id}
                       className={`border-t border-sw-border cursor-pointer hover:bg-sw-bg-alt/60 ${
@@ -173,12 +240,17 @@ export function ModerationPage() {
                           }
                         />
                       </td>
-                      <td className="p-3 font-mono text-xs">{r.h3_index.slice(0, 12)}…</td>
-                      <td className="p-3 font-semibold capitalize">{r.category}</td>
-                      <td className="p-3 text-sw-muted max-w-[140px] truncate">{r.tags.join(', ')}</td>
-                      <td className="p-3">{r.confidence_score}%</td>
                       <td className="p-3">
-                        <Badge variant="status" value={r.visibility_status} />
+                        <div className="font-semibold">{r.area_name || 'Unnamed area'}</div>
+                        <div className="text-[11px] text-sw-muted">
+                          {r.contributor_count} people tagged this area
+                        </div>
+                      </td>
+                      <td className="p-3 font-semibold">{categoryLabel(r.category)}</td>
+                      <td className="p-3 text-sw-muted max-w-[160px] truncate">{r.tags.join(', ') || '—'}</td>
+                      <td className="p-3">{Math.round(r.confidence_score)}%</td>
+                      <td className="p-3">
+                        <Badge variant="status" value={r.visibility_status} label={statusLabel(r.visibility_status)} />
                       </td>
                       <td className="p-3 space-x-1" onClick={(e) => e.stopPropagation()}>
                         <button type="button" className="text-sw-primary-dark font-bold text-xs" onClick={() => action.mutate({ id: r.id, kind: 'approve' })}>Approve</button>
@@ -191,36 +263,46 @@ export function ModerationPage() {
               </tbody>
             </table>
           </div>
-          <div className="px-4 py-2 text-xs text-sw-muted border-t border-sw-border bg-sw-bg">
-            {data?.total ?? 0} reports · auto-refreshes every 30s
-          </div>
+          <Pagination
+            page={page}
+            pageSize={PAGE_SIZE}
+            total={data?.total ?? 0}
+            onPageChange={setPage}
+            noun="tags"
+          />
         </Card>
 
         <Card className="h-fit sticky top-6">
-          <h2 className="font-black text-sw-ink mb-3">Validation context</h2>
+          <h2 className="font-black text-sw-ink mb-3">Should this go on the map?</h2>
           {!focusedId || !detail ? (
-            <p className="text-sm text-sw-muted">Select a report to see cell-level validation metrics.</p>
+            <p className="text-sm text-sw-muted">
+              Select a tag to see how many other people described this area the same way.
+            </p>
           ) : (
             <div className="space-y-4 text-sm">
-              <div>
-                <div className="text-[11px] font-bold uppercase text-sw-muted">H3 cell</div>
-                <div className="font-mono text-xs mt-1 break-all">{detail.h3_index}</div>
-              </div>
+              <p className="text-sw-secondary leading-relaxed">
+                {detail.area_name || 'This area'} was tagged as{' '}
+                <strong>{categoryLabel(detail.category)}</strong>
+                {detail.tags.length ? ` (${detail.tags.join(', ')})` : ''}.{' '}
+                {detail.cell_context.threshold_met
+                  ? 'Enough people already agree, so approving it will publish it to the traveler map.'
+                  : `${Math.max(detail.cell_context.threshold - detail.cell_context.distinct_contributors, 0)} more person(s) tagging the same thing would auto-publish this area.`}
+              </p>
               {detail.note_text ? (
                 <div>
-                  <div className="text-[11px] font-bold uppercase text-sw-muted">Note</div>
+                  <div className="text-[11px] font-bold uppercase text-sw-muted">Note from the traveler</div>
                   <p className="mt-1 text-sw-secondary">{detail.note_text}</p>
                 </div>
               ) : null}
               <div className="grid grid-cols-2 gap-3">
-                <Metric label="Contributors" value={detail.cell_context.distinct_contributors} />
-                <Metric label="Threshold" value={detail.cell_context.threshold} />
-                <Metric label="Pending in cell" value={detail.cell_context.pending_count} />
-                <Metric label="Agreement" value={`${Math.round(detail.cell_context.category_agreement * 100)}%`} />
+                <Metric label="People in this area" value={detail.cell_context.distinct_contributors} />
+                <Metric label="Needed to auto-publish" value={detail.cell_context.threshold} />
+                <Metric label="Waiting here" value={detail.cell_context.pending_count} />
+                <Metric label="How much they agree" value={`${Math.round(detail.cell_context.category_agreement * 100)}%`} />
               </div>
               <div>
-                <div className="text-[11px] font-bold uppercase text-sw-muted">Top category</div>
-                <div className="font-semibold capitalize mt-1">{detail.cell_context.top_category ?? '—'}</div>
+                <div className="text-[11px] font-bold uppercase text-sw-muted">Most common tag here</div>
+                <div className="font-semibold mt-1">{categoryLabel(detail.cell_context.top_category)}</div>
               </div>
               <div
                 className="rounded-xl p-3 text-xs font-semibold"
@@ -230,8 +312,8 @@ export function ModerationPage() {
                 }}
               >
                 {detail.cell_context.threshold_met
-                  ? 'Auto-threshold met — approval will publish to the map.'
-                  : `${detail.cell_context.threshold - detail.cell_context.distinct_contributors} more contributor(s) needed for auto-approval.`}
+                  ? 'Ready for the map — approve if this looks right.'
+                  : 'Not enough matching tags yet. Approve only if you personally know this place.'}
               </div>
               <div className="flex gap-2 pt-2 flex-wrap">
                 <Button className="flex-1 min-w-[6rem]" onClick={() => action.mutate({ id: detail.id, kind: 'approve' })}>Approve</Button>

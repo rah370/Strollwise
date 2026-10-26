@@ -7,14 +7,13 @@ import { BrandLogo } from './BrandLogo'
 
 const nav = [
   { to: '/', label: 'Dashboard', end: true },
-  { to: '/moderation', label: 'Moderation' },
-  { to: '/zones', label: 'Zones' },
+  { to: '/moderation', label: 'Review tags' },
+  { to: '/zones', label: 'Places' },
   { to: '/users', label: 'Users' },
-  { to: '/catalog', label: 'Catalog' },
-  { to: '/analytics', label: 'Analytics' },
-  { to: '/pipeline', label: 'Pipeline' },
+  { to: '/catalog', label: 'Place list' },
+  { to: '/analytics', label: 'Export' },
   { to: '/settings', label: 'Settings' },
-  { to: '/audit', label: 'Audit Log' },
+  { to: '/audit', label: 'Activity' },
 ]
 
 function navClass({ isActive }: { isActive: boolean }) {
