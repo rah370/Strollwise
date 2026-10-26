@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' show Point;
 
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
@@ -104,6 +105,8 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
   Timer? _zoneLookupDebounce;
   DateTime? _lastFollowCameraAt;
   DateTime? _ignoreMapClicksUntil;
+  DateTime? _lastHexFeatureTapAt;
+  bool _hexFeatureTapBound = false;
   LatLng? _hexLabelAt;
   Offset? _hexLabelScreen;
   LatLng? _lastFollowCameraTarget;
@@ -479,6 +482,7 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
               : 'sparse';
           features.add({
             'type': 'Feature',
+            'id': cell.h3Index,
             'properties': {
               'h3_index': cell.h3Index,
               'zone_type': layerKey,
@@ -522,6 +526,7 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
             if (closed.length < 4) continue;
             features.add({
               'type': 'Feature',
+              'id': zone.zoneId,
               'properties': {
                 'zone_id': zone.zoneId,
                 'zone_type': layerKey,
@@ -992,6 +997,107 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
       }
     } finally {
       _isUpdatingViewport = false;
+    }
+  }
+
+  void _ensureHexFeatureTaps(MapLibreMapController controller) {
+    if (_hexFeatureTapBound) return;
+    _hexFeatureTapBound = true;
+    controller.onFeatureTapped.add(_onHexFeatureTapped);
+  }
+
+  void _onHexFeatureTapped(
+    Point<double> point,
+    LatLng coordinates,
+    String id,
+    String layerId,
+    Annotation? annotation,
+  ) {
+    if (layerId != _zonesFillLayerId && layerId != _zonesLineLayerId) {
+      return;
+    }
+    final ignoreUntil = _ignoreMapClicksUntil;
+    if (ignoreUntil != null && DateTime.now().isBefore(ignoreUntil)) {
+      return;
+    }
+    _lastHexFeatureTapAt = DateTime.now();
+    final zone = _zoneById(id) ?? _hitZoneHex(coordinates, _latestZones)?.zone;
+    if (zone == null) return;
+    final hex = _hitZoneHex(coordinates, _latestZones)?.hexCenter ?? coordinates;
+    _handleZoneTap(
+      zone,
+      hexCenter: hex,
+      screen: Offset(point.x, point.y),
+    );
+  }
+
+  ZoneModel? _zoneById(String id) {
+    for (final zone in _latestZones) {
+      if (zone.zoneId == id || zone.h3Index == id) return zone;
+    }
+    return null;
+  }
+
+  String? _zoneIdFromRenderedFeature(Object? raw) {
+    if (raw is! Map) return null;
+    final props = raw['properties'];
+    if (props is Map) {
+      final zoneId = props['zone_id'] ?? props['h3_index'];
+      if (zoneId != null) return zoneId.toString();
+    }
+    final id = raw['id'] ?? raw['zone_id'];
+    return id?.toString();
+  }
+
+  Future<void> _handleMapClick(Point<double> point, LatLng latLng) async {
+    final ignoreUntil = _ignoreMapClicksUntil;
+    if (ignoreUntil != null && DateTime.now().isBefore(ignoreUntil)) {
+      return;
+    }
+    final lastFeature = _lastHexFeatureTapAt;
+    if (lastFeature != null &&
+        DateTime.now().difference(lastFeature) <
+            const Duration(milliseconds: 280)) {
+      return;
+    }
+    final tap = LatLng(latLng.latitude, latLng.longitude);
+    final screen = Offset(point.x.toDouble(), point.y.toDouble());
+    final controller = _controller;
+    final zones = _latestZones;
+    if (controller != null && zones.isNotEmpty) {
+      try {
+        final hits = await controller.queryRenderedFeatures(
+          Point<double>(point.x.toDouble(), point.y.toDouble()),
+          [_zonesFillLayerId, _zonesLineLayerId],
+          null,
+        );
+        for (final raw in hits) {
+          final zoneId = _zoneIdFromRenderedFeature(raw);
+          if (zoneId == null) continue;
+          final zone = _zoneById(zoneId);
+          if (zone == null) continue;
+          final hex = _hitZoneHex(tap, zones)?.hexCenter ?? tap;
+          _handleZoneTap(zone, hexCenter: hex, screen: screen);
+          return;
+        }
+      } catch (_) {}
+    }
+    if (zones.isNotEmpty) {
+      final hit = _hitZoneHex(tap, zones);
+      if (hit != null) {
+        _handleZoneTap(hit.zone, hexCenter: hit.hexCenter, screen: screen);
+        return;
+      }
+    }
+    if (ref.read(selectedZoneProvider) != null) {
+      _clearSelectedZone();
+      return;
+    }
+    if (zones.isNotEmpty) return;
+    final cells = _latestCells;
+    if (cells.isNotEmpty) {
+      final cell = _findCellAt(tap, cells);
+      if (cell != null) _handleCellTap(cell);
     }
   }
 
@@ -1596,6 +1702,7 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
                     doubleClickZoomEnabled: false,
                     onMapCreated: (controller) {
                       _controller = controller;
+                      _ensureHexFeatureTaps(controller);
                       unawaited(_flushPendingCamera());
                     },
                     onStyleLoadedCallback: () async {
@@ -1620,41 +1727,7 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
                     },
                     onCameraIdle: _scheduleViewportRefresh,
                     onMapClick: (point, latLng) {
-                      final ignoreUntil = _ignoreMapClicksUntil;
-                      if (ignoreUntil != null &&
-                          DateTime.now().isBefore(ignoreUntil)) {
-                        return;
-                      }
-                      final tap = LatLng(latLng.latitude, latLng.longitude);
-                      final zones = _latestZones;
-                      if (zones.isNotEmpty) {
-                        final hit = _hitZoneHex(tap, zones);
-                        if (hit != null) {
-                          _handleZoneTap(
-                            hit.zone,
-                            hexCenter: hit.hexCenter,
-                            screen: Offset(
-                              point.x.toDouble(),
-                              point.y.toDouble(),
-                            ),
-                          );
-                          return;
-                        }
-                      }
-                      if (ref.read(selectedZoneProvider) != null) {
-                        _clearSelectedZone();
-                        return;
-                      }
-                      // Zone hexes are the public layer. Do not snap empty-map
-                      // taps onto a nearby H3 cell (that reopened the card).
-                      if (zones.isNotEmpty) {
-                        return;
-                      }
-                      final cells = _latestCells;
-                      if (cells.isNotEmpty) {
-                        final cell = _findCellAt(tap, cells);
-                        if (cell != null) _handleCellTap(cell);
-                      }
+                      unawaited(_handleMapClick(point, latLng));
                     },
                   ),
                 ),
