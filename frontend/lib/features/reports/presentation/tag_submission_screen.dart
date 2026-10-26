@@ -9,6 +9,7 @@ import 'package:go_router/go_router.dart';
 import 'package:maplibre_gl/maplibre_gl.dart';
 
 import '../../../app/theme/colors.dart';
+import '../../../core/constants/api_constants.dart';
 import '../../../shared/location/cebu_place_geocode.dart';
 import '../../../shared/models/report.dart';
 import '../../../shared/models/zone.dart';
@@ -374,8 +375,10 @@ class _TagSubmissionScreenState extends ConsumerState<TagSubmissionScreen> {
             : 'This tag could not be accepted (duplicate or cooldown).';
       }
       if (error.type == DioExceptionType.connectionError ||
-          error.type == DioExceptionType.connectionTimeout) {
-        return 'Backend is unreachable. Start the API or check API_URL.';
+          error.type == DioExceptionType.connectionTimeout ||
+          error.type == DioExceptionType.sendTimeout ||
+          error.type == DioExceptionType.receiveTimeout) {
+        return ApiConstants.unreachableMessage();
       }
       final detail = error.response?.data;
       if (detail is Map && detail['detail'] != null) {

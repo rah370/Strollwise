@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../../app/theme/brand.dart';
 import '../../../app/theme/colors.dart';
+import '../../../core/constants/api_constants.dart';
 import '../../../core/constants/feature_flags.dart';
 import '../../../shared/data/origin_locations.dart';
 import '../../../shared/providers/app_providers.dart';
@@ -125,9 +126,10 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
   String _authErrorMessage(Object error, {required AuthMode mode}) {
     if (error is DioException) {
       if (error.type == DioExceptionType.connectionError ||
-          error.type == DioExceptionType.connectionTimeout) {
-        return 'Cannot reach the server. Start the backend and run the app with '
-            '--dart-define=API_URL=http://127.0.0.1:8000';
+          error.type == DioExceptionType.connectionTimeout ||
+          error.type == DioExceptionType.sendTimeout ||
+          error.type == DioExceptionType.receiveTimeout) {
+        return ApiConstants.unreachableMessage();
       }
       final status = error.response?.statusCode;
       final detail = error.response?.data;

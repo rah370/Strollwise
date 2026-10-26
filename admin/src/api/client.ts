@@ -1,6 +1,19 @@
 /** Empty = same-origin; Vite dev server proxies /api to the backend. */
 export const API_URL = (import.meta.env.VITE_API_URL ?? '').replace(/\/$/, '')
+/** Render free-tier cold starts commonly take 30–60s. */
+export const API_TIMEOUT_MS = 60_000
 const TOKEN_KEY = 'strollwise_admin_token'
+
+export function isLocalApiUrl(url = API_URL): boolean {
+  return !url || url.includes('localhost') || url.includes('127.0.0.1')
+}
+
+export function unreachableApiMessage(url = API_URL): string {
+  if (isLocalApiUrl(url)) {
+    return 'Cannot reach the backend API. Start it with: cd backend && ./scripts/dev.sh'
+  }
+  return `Cannot reach the StrollWise API at ${url}. The hosted server may be waking up — wait about a minute and try again.`
+}
 
 export function getToken(): string | null {
   return sessionStorage.getItem(TOKEN_KEY)
@@ -31,7 +44,7 @@ export async function api<T>(
   if (token) headers.Authorization = `Bearer ${token}`
 
   const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), 15_000)
+  const timeout = setTimeout(() => controller.abort(), API_TIMEOUT_MS)
   let res: Response
   try {
     res = await fetch(`${API_URL}/api/v1${path}`, {
@@ -41,7 +54,7 @@ export async function api<T>(
     })
   } catch (err) {
     if (err instanceof DOMException && err.name === 'AbortError') {
-      throw new ApiError(408, 'Request timed out — is the backend running?')
+      throw new ApiError(408, unreachableApiMessage())
     }
     throw err
   } finally {
@@ -68,8 +81,10 @@ export async function api<T>(
 }
 
 export async function checkApiHealth(): Promise<boolean> {
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), API_TIMEOUT_MS)
   try {
-    const res = await fetch(`${API_URL}/health`)
+    const res = await fetch(`${API_URL}/health`, { signal: controller.signal })
     if (!res.ok) return false
     const contentType = res.headers.get('content-type') ?? ''
     if (!contentType.includes('application/json')) return false
@@ -77,6 +92,8 @@ export async function checkApiHealth(): Promise<boolean> {
     return body.status === 'ok' && body.database === 'ok'
   } catch {
     return false
+  } finally {
+    clearTimeout(timeout)
   }
 }
 

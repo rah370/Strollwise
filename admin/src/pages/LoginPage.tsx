@@ -1,6 +1,15 @@
 import { useEffect, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
-import { ApiError, checkApiHealth, fetchMe, getToken, login, setToken } from '../api/client'
+import {
+  ApiError,
+  checkApiHealth,
+  fetchMe,
+  getToken,
+  isLocalApiUrl,
+  login,
+  setToken,
+  unreachableApiMessage,
+} from '../api/client'
 import { BrandLogo } from '../components/BrandLogo'
 import { Button } from '../components/Button'
 import { colors } from '../theme/colors'
@@ -51,9 +60,7 @@ export function LoginPage() {
       if (err instanceof ApiError) {
         setError(err.message)
       } else if (err instanceof TypeError) {
-        setError(
-          'Cannot reach the backend API. Start it with: cd backend && ./scripts/dev.sh',
-        )
+        setError(unreachableApiMessage())
       } else {
         setError(err instanceof Error ? err.message : 'Login failed')
       }
@@ -90,8 +97,16 @@ export function LoginPage() {
 
         {apiOk === false ? (
           <div className="mb-4 text-sm text-amber-900 bg-amber-50 border border-amber-200 p-3 rounded-xl">
-            Backend API is not reachable. Run{' '}
-            <code className="text-xs bg-white px-1 py-0.5 rounded">cd backend && ./scripts/dev.sh</code>
+            {isLocalApiUrl() ? (
+              <>
+                Backend API is not reachable. Run{' '}
+                <code className="text-xs bg-white px-1 py-0.5 rounded">
+                  cd backend && ./scripts/dev.sh
+                </code>
+              </>
+            ) : (
+              <>{unreachableApiMessage()}</>
+            )}
           </div>
         ) : null}
 
