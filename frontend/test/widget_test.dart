@@ -18,6 +18,7 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 50));
     expect(find.text('Welcome back'), findsOneWidget);
+    expect(find.text('Forgot password?'), findsOneWidget);
     expect(find.text('StrollWise'), findsWidgets);
   });
 }

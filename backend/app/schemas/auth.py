@@ -52,3 +52,31 @@ class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
     user: UserPublic
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+
+class ForgotPasswordResponse(BaseModel):
+    message: str
+    delivery: str
+    reset_code: str | None = None
+
+
+class ResetPasswordRequest(BaseModel):
+    email: EmailStr
+    code: str = Field(min_length=6, max_length=8)
+    new_password: str = Field(min_length=8, max_length=128)
+
+    @field_validator("code")
+    @classmethod
+    def digits_only(cls, v: str) -> str:
+        raw = v.strip()
+        if not raw.isdigit():
+            raise ValueError("Reset code must be the 6-digit number from your email")
+        return raw
+
+
+class ResetPasswordResponse(BaseModel):
+    message: str

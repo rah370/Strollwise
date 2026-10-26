@@ -45,7 +45,12 @@ def _client_ip(request: Request) -> str:
 
 
 def _limit_for_request(method: str, path: str) -> int | None:
-    if method == "POST" and path in {"/api/v1/auth/register", "/api/v1/auth/login"}:
+    if method == "POST" and path in {
+        "/api/v1/auth/register",
+        "/api/v1/auth/login",
+        "/api/v1/auth/forgot-password",
+        "/api/v1/auth/reset-password",
+    }:
         return settings.rate_limit_auth_per_minute
     if method == "POST" and path.rstrip("/") == "/api/v1/reports":
         return settings.rate_limit_reports_per_minute

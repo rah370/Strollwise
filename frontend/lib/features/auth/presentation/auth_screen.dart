@@ -288,6 +288,16 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
                             ),
                           ),
                         ),
+                        if (!isRegister)
+                          Align(
+                            alignment: Alignment.centerRight,
+                            child: TextButton(
+                              onPressed: isLoading
+                                  ? null
+                                  : () => context.push('/auth/forgot'),
+                              child: const Text('Forgot password?'),
+                            ),
+                          ),
                         if (isRegister) ...[
                           const SizedBox(height: 10),
                           OriginLocationPicker(

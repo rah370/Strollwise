@@ -97,6 +97,30 @@ export async function checkApiHealth(): Promise<boolean> {
   }
 }
 
+export type ForgotPasswordResponse = {
+  message: string
+  delivery: string
+  reset_code?: string | null
+}
+
+export async function forgotPassword(email: string) {
+  return api<ForgotPasswordResponse>('/auth/forgot-password', {
+    method: 'POST',
+    body: JSON.stringify({ email }),
+  })
+}
+
+export async function resetPassword(email: string, code: string, newPassword: string) {
+  return api<{ message: string }>('/auth/reset-password', {
+    method: 'POST',
+    body: JSON.stringify({
+      email,
+      code,
+      new_password: newPassword,
+    }),
+  })
+}
+
 export async function login(email: string, password: string) {
   const data = await api<{ access_token: string; user: { is_admin: boolean } }>(
     '/auth/login',

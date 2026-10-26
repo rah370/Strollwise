@@ -31,7 +31,9 @@ final dioProvider = Provider<Dio>((ref) {
         final path = error.requestOptions.path;
         final hadAuth = error.requestOptions.headers['Authorization'] != null;
         final isAuthRoute = path.contains('/auth/login') ||
-            path.contains('/auth/register');
+            path.contains('/auth/register') ||
+            path.contains('/auth/forgot-password') ||
+            path.contains('/auth/reset-password');
         if (status == 401 && hadAuth && !isAuthRoute) {
           final token = ref.read(authTokenProvider);
           if (isUsableAccessToken(token)) {

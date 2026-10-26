@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { useLocation, useNavigate } from 'react-router-dom'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import {
   ApiError,
   checkApiHealth,
@@ -17,7 +17,9 @@ import { colors } from '../theme/colors'
 export function LoginPage() {
   const navigate = useNavigate()
   const location = useLocation()
-  const adminRequired = (location.state as { reason?: string } | null)?.reason === 'admin_required'
+  const locationState = location.state as { reason?: string; reset?: boolean } | null
+  const adminRequired = locationState?.reason === 'admin_required'
+  const passwordReset = locationState?.reset === true
   const [email, setEmail] = useState(import.meta.env.DEV ? 'admin@strollwise.dev' : '')
   const [password, setPassword] = useState(import.meta.env.DEV ? 'admin123456' : '')
   const [error, setError] = useState('')
@@ -110,6 +112,12 @@ export function LoginPage() {
           </div>
         ) : null}
 
+        {passwordReset ? (
+          <div className="mb-4 text-sm text-emerald-900 bg-emerald-50 border border-emerald-200 p-3 rounded-xl">
+            Password updated. Sign in with your new password.
+          </div>
+        ) : null}
+
         {adminRequired ? (
           <div className="mb-4 text-sm text-amber-900 bg-amber-50 border border-amber-200 p-3 rounded-xl">
             Your session does not have admin access. Sign in with an admin account.
@@ -149,12 +157,21 @@ export function LoginPage() {
 
         <label className="block text-sm font-bold text-sw-ink mb-1">Password</label>
         <input
-          className="w-full border border-sw-border rounded-xl px-3 py-2.5 mb-6 focus:outline-none focus:ring-2 focus:ring-sw-primary/40"
+          className="w-full border border-sw-border rounded-xl px-3 py-2.5 mb-2 focus:outline-none focus:ring-2 focus:ring-sw-primary/40"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
           type="password"
           required
         />
+
+        <div className="mb-6 text-right">
+          <Link
+            to="/forgot-password"
+            className="text-sm font-bold text-sw-primary hover:underline"
+          >
+            Forgot password?
+          </Link>
+        </div>
 
         <Button type="submit" disabled={loading} className="w-full py-3">
           {loading ? 'Signing in…' : 'Sign in'}

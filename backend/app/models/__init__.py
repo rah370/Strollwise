@@ -15,6 +15,7 @@ from app.models.place import Place
 from app.models.report import Report
 from app.models.saved_zone import SavedZone
 from app.models.system_setting import SystemSetting
+from app.models.password_reset import PasswordResetToken
 from app.models.user import User
 from app.models.user_visit_pin import UserVisitPin
 from app.models.zone_catalog_entry import ZoneCatalogEntryModel
@@ -28,6 +29,7 @@ __all__ = [
     "LiveStatus",
     "Media",
     "MergedZone",
+    "PasswordResetToken",
     "Place",
     "Report",
     "ReportCategory",

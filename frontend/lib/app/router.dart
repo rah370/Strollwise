@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../features/auth/presentation/auth_screen.dart';
+import '../features/auth/presentation/forgot_password_screen.dart';
 import '../features/explore/presentation/explore_screen.dart';
 import '../features/feed/presentation/feed_screen.dart';
 import '../features/layers/presentation/layers_screen.dart';
@@ -36,7 +37,7 @@ final GoRouter appRouter = GoRouter(
     final token = container.read(authTokenProvider);
     final loc = state.matchedLocation;
     final loggedIn = token != null && token.isNotEmpty;
-    final onAuth = loc == '/auth';
+    final onAuth = loc == '/auth' || loc == '/auth/forgot';
     final onLegal = loc == '/privacy' || loc == '/terms';
     if (!loggedIn && _isShellLocation(loc)) {
       return '/auth';
@@ -52,6 +53,10 @@ final GoRouter appRouter = GoRouter(
   routes: [
     GoRoute(path: '/', redirect: (context, state) => '/auth'),
     GoRoute(path: '/auth', builder: (context, state) => const AuthScreen()),
+    GoRoute(
+      path: '/auth/forgot',
+      builder: (context, state) => const ForgotPasswordScreen(),
+    ),
     GoRoute(
       path: '/privacy',
       builder: (context, state) => const PrivacyPolicyScreen(),

@@ -77,6 +77,17 @@ class Settings(BaseSettings):
     rate_limit_reports_per_minute: int = Field(default=20)
     rate_limit_geocode_per_minute: int = Field(default=30)
 
+    smtp_host: str | None = Field(default=None)
+    smtp_port: int = Field(default=587)
+    smtp_user: str | None = Field(default=None)
+    smtp_password: str | None = Field(default=None)
+    smtp_from: str | None = Field(default=None)
+    resend_api_key: str | None = Field(default=None)
+    password_reset_minutes: int = Field(default=15)
+    # When true, forgot-password JSON includes the code so local tests work
+    # without a mailbox. Production with SMTP/Resend leaves this false.
+    password_reset_echo_code: bool = Field(default=False)
+
     @property
     def is_production(self) -> bool:
         return self.env.lower() in {"production", "prod"}

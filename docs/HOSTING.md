@@ -97,6 +97,14 @@ DATABASE_URL=postgresql+psycopg2://postgres.<ref>:<url-encoded-password>@aws-0-<
 CORS_ORIGINS=https://<service>.onrender.com,https://<admin-host>
 TRUSTED_HOSTS=localhost,127.0.0.1,.onrender.com,*
 PUBLIC_BASE_URL=https://<service>.onrender.com
+# Optional password-reset mail. Without SMTP or Resend, traveler and admin
+# screens show the 6-digit code so people can still recover the account.
+SMTP_HOST=
+SMTP_PORT=587
+SMTP_USER=
+SMTP_PASSWORD=
+SMTP_FROM=StrollWise <noreply@strollwise.app>
+RESEND_API_KEY=
 ```
 
 Use the **session** pooler (`:5432`), not transaction mode (`:6543`). Direct `db.<ref>.supabase.co` is IPv6-only and fails from some hosts.
