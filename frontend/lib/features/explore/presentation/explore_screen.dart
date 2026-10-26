@@ -104,6 +104,8 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
   Timer? _zoneLookupDebounce;
   DateTime? _lastFollowCameraAt;
   DateTime? _ignoreMapClicksUntil;
+  LatLng? _hexLabelAt;
+  Offset? _hexLabelScreen;
   LatLng? _lastFollowCameraTarget;
   LatLng? _lastZoneLookupLocation;
   LatLng? _pendingCameraTarget;
@@ -380,8 +382,22 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
     _viewportIdleDebounce?.cancel();
     _viewportIdleDebounce = Timer(const Duration(milliseconds: 380), () {
       if (!mounted) return;
+      unawaited(_syncHexLabelScreenOffset());
       unawaited(_refreshViewportZones());
     });
+  }
+
+  Future<void> _syncHexLabelScreenOffset() async {
+    final geo = _hexLabelAt;
+    final controller = _controller;
+    if (geo == null || controller == null || !mounted) return;
+    try {
+      final point = await controller.toScreenLocation(geo);
+      if (!mounted) return;
+      setState(() {
+        _hexLabelScreen = Offset(point.x.toDouble(), point.y.toDouble());
+      });
+    } catch (_) {}
   }
 
   Future<void> _ensureDefaultCebuViewport() async {
@@ -547,6 +563,26 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
         await controller.setGeoJsonSource(_zonesSourceId, geoJson);
       }
 
+      if (hasCellLayer && selectedCell != null) {
+        final cell = selectedCell;
+        final place = (cell.placeName ?? '').trim();
+        await controller.addSymbol(
+          SymbolOptions(
+            geometry: LatLng(cell.centroidLat, cell.centroidLng),
+            textField:
+                '${place.isEmpty ? 'This hex' : place} · ${zoneSignalCountLabel(cell.reportCount)}',
+            textSize: 12.5,
+            textColor: '#1F2937',
+            textHaloColor: '#FFFFFF',
+            textHaloWidth: 2.0,
+            textOpacity: 1,
+            textAnchor: 'bottom',
+            textOffset: const Offset(0, -0.55),
+            textMaxWidth: 12,
+            zIndex: 8,
+          ),
+        );
+      }
 
       final labelZones = [...zones]
         ..sort((a, b) {
@@ -572,24 +608,30 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
         if (!layerVisible && !isSelected) {
           continue;
         }
-        final center = _zoneCenter(zone);
+        final center = isSelected && _hexLabelAt != null
+            ? _hexLabelAt!
+            : _zoneCenter(zone);
         final shouldLabel =
             isSelected || labeledZoneIds.contains(zone.h3Index);
         if (shouldLabel) {
           await controller.addSymbol(
             SymbolOptions(
               geometry: center,
-              textField: '${_zoneTitle(zone)}\n${_zoneIdentity(zone)}',
+              textField: isSelected
+                  ? zoneHexagonTapLabel(zone)
+                  : _zoneTitle(zone),
               textSize: isSelected
-                  ? (currentZoom >= 12.5 ? 13 : 12)
+                  ? (currentZoom >= 12.5 ? 13.5 : 12.5)
                   : (currentZoom >= 12.5 ? 11.4 : 10.2),
               textColor: isSelected ? '#1F2937' : '#374151',
               textHaloColor: '#FFFFFF',
-              textHaloWidth: 1.6,
+              textHaloWidth: isSelected ? 2.0 : 1.6,
               textOpacity: isSelected ? 1 : 0.90,
-              textAnchor: 'center',
-              textMaxWidth: 9,
-              zIndex: isSelected ? 4 : 2,
+              textAnchor: isSelected ? 'bottom' : 'center',
+              textOffset:
+                  isSelected ? const Offset(0, -0.55) : Offset.zero,
+              textMaxWidth: isSelected ? 12 : 9,
+              zIndex: isSelected ? 8 : 2,
             ),
           );
         }
@@ -793,10 +835,67 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
   }
 
   ZoneModel? _findZoneContaining(LatLng tap, List<ZoneModel> zones) {
-    for (final zone in zones.reversed) {
-      if (_tapInsideZone(tap, zone)) return zone;
+    return _hitZoneHex(tap, zones)?.zone;
+  }
+
+  LatLng _ringCenter(List<List<double>> ring) {
+    if (ring.isEmpty) return const LatLng(0, 0);
+    var lng = 0.0;
+    var lat = 0.0;
+    var n = 0;
+    for (final point in ring) {
+      if (point.length < 2) continue;
+      lng += point[0];
+      lat += point[1];
+      n += 1;
     }
-    return null;
+    if (n == 0) return const LatLng(0, 0);
+    return LatLng(lat / n, lng / n);
+  }
+
+  /// Hex under the pointer, or the nearest hex center within one H3 cell.
+  ({ZoneModel zone, LatLng hexCenter})? _hitZoneHex(
+    LatLng tap,
+    List<ZoneModel> zones,
+  ) {
+    final point = [tap.longitude, tap.latitude];
+    for (final zone in zones.reversed) {
+      for (final ring in zone.sourceH3Rings) {
+        if (_pointInRing(point, ring)) {
+          return (zone: zone, hexCenter: _ringCenter(ring));
+        }
+      }
+      if (_tapInsideZone(tap, zone)) {
+        return (zone: zone, hexCenter: _zoneCenter(zone));
+      }
+    }
+    ZoneModel? bestZone;
+    LatLng? bestCenter;
+    var bestMeters = double.infinity;
+    for (final zone in zones) {
+      final rings = zone.sourceH3Rings.isNotEmpty
+          ? zone.sourceH3Rings
+          : (zone.boundary.isEmpty ? const <List<List<double>>>[] : [zone.boundary]);
+      for (final ring in rings) {
+        if (ring.length < 3) continue;
+        final center = _ringCenter(ring);
+        final meters = Geolocator.distanceBetween(
+          tap.latitude,
+          tap.longitude,
+          center.latitude,
+          center.longitude,
+        );
+        if (meters < bestMeters) {
+          bestMeters = meters;
+          bestZone = zone;
+          bestCenter = center;
+        }
+      }
+    }
+    if (bestZone == null || bestCenter == null || bestMeters > 450) {
+      return null;
+    }
+    return (zone: bestZone, hexCenter: bestCenter);
   }
 
   ZoneModel? _findNearestZone(LatLng tap, List<ZoneModel> zones) {
@@ -896,16 +995,32 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
     }
   }
 
-  void _selectZone(ZoneModel zone) {
+  void _selectZone(
+    ZoneModel zone, {
+    LatLng? hexCenter,
+    Offset? screen,
+  }) {
     ref.read(zoneValidationLiveProvider.notifier).state = null;
     ref.read(selectedCellProvider.notifier).state = null;
     ref.read(mapSearchPlaceTitleProvider.notifier).state = null;
     ref.read(selectedZoneProvider.notifier).state =
         enrichZoneForAreaCard(zone);
+    _hexLabelAt = hexCenter ?? _zoneCenter(zone);
+    if (screen != null) {
+      _hexLabelScreen = screen;
+    }
     setState(() => _mapMode = ExploreMapMode.zoneSelected);
+    unawaited(_drawZones(_latestZones));
+    if (screen == null) {
+      unawaited(_syncHexLabelScreenOffset());
+    }
   }
 
-  void _handleZoneTap(ZoneModel zone) {
+  void _handleZoneTap(
+    ZoneModel zone, {
+    LatLng? hexCenter,
+    Offset? screen,
+  }) {
     final now = DateTime.now();
     final openDetails = isSameZoneDoubleTap(
       previousZoneId: _lastTappedZoneId,
@@ -915,7 +1030,7 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
     );
     _lastTappedZoneId = zone.zoneId;
     _lastZoneTapAt = now;
-    _selectZone(zone);
+    _selectZone(zone, hexCenter: hexCenter, screen: screen);
     if (openDetails) {
       _lastZoneTapAt = null;
       _showZoneInformation();
@@ -958,7 +1073,10 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
       _mapMode = ExploreMapMode.discovery;
       _lastTappedZoneId = null;
       _lastZoneTapAt = null;
+      _hexLabelAt = null;
+      _hexLabelScreen = null;
     });
+    unawaited(_drawZones(_latestZones));
   }
 
   CellModel? _findCellAt(LatLng tap, List<CellModel> cells) {
@@ -1270,7 +1388,7 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
       }
     }
     if (zone != null) {
-      _selectZone(zone);
+      _selectZone(zone, hexCenter: location);
       return;
     }
     ref.read(mapSearchPlaceTitleProvider.notifier).state = null;
@@ -1510,9 +1628,16 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
                       final tap = LatLng(latLng.latitude, latLng.longitude);
                       final zones = _latestZones;
                       if (zones.isNotEmpty) {
-                        final selected = _findZoneContaining(tap, zones);
-                        if (selected != null) {
-                          _handleZoneTap(selected);
+                        final hit = _hitZoneHex(tap, zones);
+                        if (hit != null) {
+                          _handleZoneTap(
+                            hit.zone,
+                            hexCenter: hit.hexCenter,
+                            screen: Offset(
+                              point.x.toDouble(),
+                              point.y.toDouble(),
+                            ),
+                          );
                           return;
                         }
                       }
@@ -1670,6 +1795,28 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
                     onClose: _clearSearchInsight,
                   ),
                 ),
+              if (selectedZone != null && _hexLabelScreen != null)
+                Positioned(
+                  left: (_hexLabelScreen!.dx - 92).clamp(
+                    8.0,
+                    constraints.maxWidth > 192
+                        ? constraints.maxWidth - 184
+                        : 8.0,
+                  ),
+                  top: (_hexLabelScreen!.dy - 76).clamp(
+                    12.0,
+                    constraints.maxHeight > 180
+                        ? constraints.maxHeight - 168
+                        : 12.0,
+                  ),
+                  child: IgnorePointer(
+                    child: HexagonTapLabel(
+                      placeLine: zoneHexagonPlaceLine(selectedZone),
+                      signalLine: zoneSignalCountLabel(selectedZone.reportCount),
+                      accent: _streetZoneColor(selectedZone),
+                    ),
+                  ),
+                ),
               if (selectedZone != null)
                 Positioned(
                   left: 16,
@@ -1821,12 +1968,6 @@ Set<String> _zoneLayerKeys(ZoneModel zone) {
 }
 
 Color _streetZoneColor(ZoneModel zone) => TravelerGradient.colorForZone(zone);
-
-String _zoneSubtitle(ZoneModel zone) {
-  if (zone.reportCount >= 45) return 'Busy now';
-  if (zone.confidenceScore >= 70) return 'Popular';
-  return zoneMapSubtitle(zone);
-}
 
 String _zoneIdentity(ZoneModel zone) => zoneMapSubtitle(zone);
 
@@ -2324,6 +2465,69 @@ class _SearchResultsCard extends StatelessWidget {
   }
 }
 
+class HexagonTapLabel extends StatelessWidget {
+  const HexagonTapLabel({
+    super.key,
+    required this.placeLine,
+    required this.signalLine,
+    required this.accent,
+  });
+
+  final String placeLine;
+  final String signalLine;
+  final Color accent;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: Container(
+        constraints: const BoxConstraints(maxWidth: 176, minWidth: 112),
+        padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
+        decoration: BoxDecoration(
+          color: Colors.white.withValues(alpha: 0.96),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: accent.withValues(alpha: 0.45)),
+          boxShadow: [
+            BoxShadow(
+              color: const Color(0x330F172A),
+              blurRadius: 16,
+              offset: const Offset(0, 8),
+            ),
+          ],
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              placeLine,
+              textAlign: TextAlign.center,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: AppColors.primaryText,
+                fontSize: 12,
+                fontWeight: FontWeight.w900,
+                height: 1.15,
+              ),
+            ),
+            const SizedBox(height: 3),
+            Text(
+              signalLine,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: accent,
+                fontSize: 11,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _SelectedZoneCard extends StatelessWidget {
   const _SelectedZoneCard({
     required this.zone,
@@ -2454,20 +2658,20 @@ class _SelectedZoneCard extends StatelessWidget {
                       ),
                       const SizedBox(height: 4),
                       Text(
-                        _zoneSummary(zone),
-                        style: const TextStyle(
-                          color: AppColors.mutedText,
-                          fontWeight: FontWeight.w700,
+                        zoneHexagonTapLabel(zone),
+                        style: TextStyle(
+                          color: palette.accent,
+                          fontWeight: FontWeight.w900,
                           fontSize: 12,
                         ),
                       ),
                       const SizedBox(height: 3),
                       Text(
-                        'Live update: ${_zoneSubtitle(zone)}',
-                        style: TextStyle(
-                          color: palette.accent,
-                          fontWeight: FontWeight.w900,
-                          fontSize: 11,
+                        _zoneSummary(zone),
+                        style: const TextStyle(
+                          color: AppColors.mutedText,
+                          fontWeight: FontWeight.w700,
+                          fontSize: 12,
                         ),
                       ),
                     ],

@@ -167,3 +167,36 @@ String zoneMapSubtitle(ZoneModel zone) {
   }
   return who;
 }
+
+String zoneSignalCountLabel(int count) {
+  if (count <= 0) return 'No signals yet';
+  if (count == 1) return '1 signal';
+  return '$count signals';
+}
+
+/// Place names shown on a tapped hexagon.
+String zoneHexagonPlaceLine(ZoneModel zone) {
+  final named = <String>[];
+  void addName(String? raw) {
+    final name = raw?.trim() ?? '';
+    if (name.isEmpty || name.toLowerCase() == 'area') return;
+    if (named.any((existing) => existing.toLowerCase() == name.toLowerCase())) {
+      return;
+    }
+    named.add(name);
+  }
+
+  addName(zoneDisplayTitle(zone));
+  for (final place in zone.places) {
+    addName(place.displayName);
+  }
+  if (named.isEmpty) return 'This area';
+  if (named.length == 1) return named.first;
+  if (named.length == 2) return '${named[0]} · ${named[1]}';
+  return '${named.first} + ${named.length - 1} places';
+}
+
+/// Single-line map label: place(s) and how many tags validated the hex.
+String zoneHexagonTapLabel(ZoneModel zone) {
+  return '${zoneHexagonPlaceLine(zone)} · ${zoneSignalCountLabel(zone.reportCount)}';
+}
