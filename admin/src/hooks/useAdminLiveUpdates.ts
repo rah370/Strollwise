@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
+import { createContext, createElement, useContext, useEffect, useState, type ReactNode } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { API_URL, getToken } from '../api/client'
 
@@ -72,7 +72,7 @@ export function useAdminLiveUpdates() {
 
 export function AdminLiveProvider({ children }: { children: ReactNode }) {
   const { connected } = useAdminLiveUpdates()
-  return <AdminLiveContext.Provider value={connected}>{children}</AdminLiveContext.Provider>
+  return createElement(AdminLiveContext.Provider, { value: connected }, children)
 }
 
 export function useAdminLiveConnected() {
