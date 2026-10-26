@@ -180,6 +180,8 @@ export function ZonesPage() {
               <dl className="grid grid-cols-2 gap-3">
                 <ValidationTile label="Tags sent here" value={validation.total_signals} />
                 <ValidationTile label="Tags that agree" value={validation.matching_signals} />
+                <ValidationTile label="On the map" value={validation.visible_signals ?? 0} />
+                <ValidationTile label="Waiting" value={validation.pending_signals ?? 0} />
                 <ValidationTile label="How sure we are" value={`${validation.confidence.toFixed(0)}%`} />
                 <ValidationTile
                   label="Last update"

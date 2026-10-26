@@ -49,6 +49,9 @@ export type AdminZoneValidation = {
   live_status?: string
   matching_ratio?: number
   plain_summary?: string
+  visible_signals?: number
+  pending_signals?: number
+  flagged_signals?: number
 }
 
 export type AdminDashboardStats = {

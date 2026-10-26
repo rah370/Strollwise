@@ -233,6 +233,52 @@ def test_admin_export_reports_csv_is_readable(client, db_session):
     assert "email" not in text
 
 
+def test_admin_zone_validation_counts_waiting_tags(client, db_session):
+    from uuid import uuid4
+
+    from app.models.merged_zone import MergedZone
+
+    admin = _make_admin(db_session, "admin-validation@test.com")
+    h3_index = "8828308281fffff"
+    _pending_report(db_session, admin.id, h3_index=h3_index)
+    zone = MergedZone(
+        zone_id=uuid4(),
+        display_name="IT Park Business Zone",
+        slug=f"it-park-{uuid4().hex[:8]}",
+        behavior_type="mixed",
+        function_type="food",
+        traveler_mix="mixed",
+        live_status="active_now",
+        polygon_geojson={"type": "Polygon", "coordinates": []},
+        centroid_lat=10.331,
+        centroid_lng=123.905,
+        source_h3_indexes_json=[h3_index],
+        confidence_score=82.0,
+        report_count=12,
+        is_active=True,
+    )
+    db_session.add(zone)
+    db_session.commit()
+    headers = _admin_headers(client, db_session, admin.email)
+    resp = client.get(f"/api/v1/admin/zones/{zone.zone_id}/validation", headers=headers)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["pending_signals"] >= 1
+    assert body["total_signals"] >= 1
+    assert "waiting for review" in body["plain_summary"]
+
+
+def test_admin_dashboard_plain_summary(client, db_session):
+    admin = _make_admin(db_session, "admin-summary@test.com")
+    _pending_report(db_session, admin.id)
+    headers = _admin_headers(client, db_session, admin.email)
+    resp = client.get("/api/v1/admin/dashboard/stats", headers=headers)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert "plain_summary" in body
+    assert "waiting" in body["plain_summary"].lower()
+
+
 def test_admin_catalog_list(client, db_session):
     headers = _admin_headers(client, db_session)
     resp = client.get("/api/v1/admin/catalog/zones", headers=headers)

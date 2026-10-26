@@ -60,25 +60,43 @@ def _zone_lifecycle(zone: MergedZone) -> str:
 
 
 def _zone_plain_summary(
-    name: str, total: int, matching: int, top: str | None, lifecycle: str
+    name: str,
+    total: int,
+    matching: int,
+    top: str | None,
+    lifecycle: str,
+    pending: int = 0,
+    flagged: int = 0,
+    visible: int = 0,
 ) -> str:
     kind = _category_label(top) if top else "the same kind of place"
     if lifecycle == "defined":
-        return (
+        body = (
             f"{name} is established on the map. {total} tags were sent here"
             + (f", and {matching} of them agree it is mainly {kind}." if top else ".")
         )
-    if lifecycle == "emerging":
+    elif lifecycle == "emerging":
         extra = f" Most people tagged it as {kind}." if top else ""
-        return (
+        body = (
             f"{name} is still growing, with {total} tags so far.{extra} "
             "A few more matching tags would make this more certain."
         )
-    noun = "tag" if total == 1 else "tags"
-    return (
-        f"{name} is just getting started, with {total} {noun}. "
-        "It will show more clearly once more people tag the same thing."
-    )
+    else:
+        noun = "tag" if total == 1 else "tags"
+        body = (
+            f"{name} is just getting started, with {total} {noun}. "
+            "It will show more clearly once more people tag the same thing."
+        )
+    extras = []
+    if visible:
+        extras.append(f"{visible} already on the map")
+    if pending:
+        extras.append(f"{pending} waiting for review")
+    if flagged:
+        extras.append(f"{flagged} flagged")
+    if not extras:
+        return body
+    return f"{body.rstrip('.')}. {'; '.join(extras)}."
 
 
 def _category_label(value: str | None) -> str:
@@ -212,10 +230,19 @@ class AdminService:
         if zone is None:
             return None
         h3_indexes = list(zone.source_h3_indexes_json or [])
-        reports = self.reports.list_by_h3_indexes(h3_indexes) if h3_indexes else []
+        reports = (
+            self.reports.list_by_h3_indexes_for_admin(h3_indexes) if h3_indexes else []
+        )
         categories: dict[str, int] = {}
+        visible = pending = flagged = 0
         for r in reports:
             categories[r.category] = categories.get(r.category, 0) + 1
+            if r.visibility_status == "visible":
+                visible += 1
+            elif r.visibility_status == "pending":
+                pending += 1
+            elif r.visibility_status == "flagged":
+                flagged += 1
         top = max(categories, key=categories.get) if categories else None
         matching = categories.get(top, 0) if top else 0
         total = len(reports)
@@ -235,8 +262,18 @@ class AdminService:
             live_status=zone.live_status,
             matching_ratio=round(ratio, 3),
             plain_summary=_zone_plain_summary(
-                zone.display_name, total, matching, top, lifecycle
+                zone.display_name,
+                total,
+                matching,
+                top,
+                lifecycle,
+                pending=pending,
+                flagged=flagged,
+                visible=visible,
             ),
+            visible_signals=visible,
+            pending_signals=pending,
+            flagged_signals=flagged,
         )
 
     def update_zone(self, zone_id: UUID, payload: AdminZoneUpdate) -> AdminZoneSummary | None:

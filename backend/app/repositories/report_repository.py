@@ -126,6 +126,21 @@ class ReportRepository:
         )
         return list(self.db.execute(stmt).scalars())
 
+    def list_by_h3_indexes_for_admin(self, h3_indexes: Iterable[str]) -> list[Report]:
+        """All tags in these cells except ones already taken off the map."""
+        h3_list = list(h3_indexes)
+        if not h3_list:
+            return []
+        stmt = (
+            select(Report)
+            .where(
+                Report.h3_index.in_(h3_list),
+                Report.visibility_status != "removed",
+            )
+            .order_by(desc(Report.created_at))
+        )
+        return list(self.db.execute(stmt).scalars())
+
     def list_pending_by_h3_index(self, h3_index: str) -> list[Report]:
         stmt = (
             select(Report)

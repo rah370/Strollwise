@@ -105,6 +105,9 @@ class AdminZoneValidation(BaseModel):
     live_status: str = "quiet_now"
     matching_ratio: float = 0.0
     plain_summary: str = ""
+    visible_signals: int = 0
+    pending_signals: int = 0
+    flagged_signals: int = 0
 
 
 class AdminZoneUpdate(BaseModel):
