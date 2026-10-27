@@ -157,26 +157,31 @@ export function LoginPage() {
 
         <label className="block text-sm font-bold text-sw-ink mb-1">Password</label>
         <input
-          className="w-full border border-sw-border rounded-xl px-3 py-2.5 mb-2 focus:outline-none focus:ring-2 focus:ring-sw-primary/40"
+          className="w-full border border-sw-border rounded-xl px-3 py-2.5 mb-6 focus:outline-none focus:ring-2 focus:ring-sw-primary/40"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
           type="password"
           required
         />
 
-        <div className="mb-6 text-right">
-          <Link
-            to="/forgot-password"
-            className="text-sm font-bold text-sw-primary hover:underline"
-          >
-            Forgot password?
-          </Link>
-        </div>
-
         <Button type="submit" disabled={loading} className="w-full py-3">
           {loading ? 'Signing in…' : 'Sign in'}
         </Button>
+
+        <Link
+          to={forgotPasswordPath(email)}
+          className="mt-4 flex w-full items-center justify-center rounded-xl border border-sw-border bg-white py-3 text-sm font-bold text-sw-ink hover:bg-sw-bg-alt"
+        >
+          Forgot password?
+        </Link>
       </form>
     </div>
   )
+}
+
+function forgotPasswordPath(email: string) {
+  const trimmed = email.trim()
+  return trimmed
+    ? `/forgot-password?email=${encodeURIComponent(trimmed)}`
+    : '/forgot-password'
 }

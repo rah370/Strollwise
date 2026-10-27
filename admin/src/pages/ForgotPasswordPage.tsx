@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import {
   ApiError,
   checkApiHealth,
@@ -14,7 +14,8 @@ import { colors } from '../theme/colors'
 
 export function ForgotPasswordPage() {
   const navigate = useNavigate()
-  const [email, setEmail] = useState('')
+  const [params] = useSearchParams()
+  const [email, setEmail] = useState(() => params.get('email')?.trim() ?? '')
   const [code, setCode] = useState('')
   const [password, setPassword] = useState('')
   const [confirm, setConfirm] = useState('')
@@ -112,8 +113,8 @@ export function ForgotPasswordPage() {
         <h1 className="text-xl font-black text-sw-ink">Forgot password</h1>
         <p className="text-sm text-sw-muted mt-1 mb-6">
           {codeStep
-            ? 'Enter the 6-digit code and choose a new password.'
-            : 'We will send a 6-digit code to your admin email so you can set a new password.'}
+            ? 'Enter the 6-digit code and choose a new password for this researcher account.'
+            : 'Reset the password for this researcher account. We send a 6-digit code to the email you use to sign in.'}
         </p>
 
         {apiOk === false ? (

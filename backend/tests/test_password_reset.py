@@ -107,6 +107,33 @@ def test_reset_rejects_expired_code(client, db_session, monkeypatch):
     assert resp.status_code == 400
 
 
+def test_default_researcher_admin_email_can_reset(client, db_session, monkeypatch):
+    from app.services.admin_bootstrap import ADMIN_EMAIL, ensure_admin_user
+
+    monkeypatch.setattr(
+        "app.services.auth_service.send_password_reset_code",
+        lambda email, code: False,
+    )
+    ensure_admin_user(db_session, reset_password=True)
+
+    forgot = client.post("/api/v1/auth/forgot-password", json={"email": ADMIN_EMAIL})
+    assert forgot.status_code == 200, forgot.text
+    code = forgot.json()["reset_code"]
+    assert code and len(code) == 6
+
+    reset = client.post(
+        "/api/v1/auth/reset-password",
+        json={"email": ADMIN_EMAIL, "code": code, "new_password": "console-new-pass"},
+    )
+    assert reset.status_code == 200, reset.text
+    login = client.post(
+        "/api/v1/auth/login",
+        json={"email": ADMIN_EMAIL, "password": "console-new-pass"},
+    )
+    assert login.status_code == 200, login.text
+    assert login.json()["user"]["is_admin"] is True
+
+
 def test_admin_can_reset_and_keep_admin_flag(client, db_session, monkeypatch):
     monkeypatch.setattr(
         "app.services.auth_service.send_password_reset_code",

@@ -92,6 +92,8 @@ Sensitive buildings (hospital, city hall, police station): tag the **street or c
 
 ## Admin console
 
+Researchers sign in at `/login` with the same `POST /auth/login` as travelers. **Forgot password?** on that screen uses `POST /auth/forgot-password` and `POST /auth/reset-password`; the account keeps `is_admin`.
+
 All under `/api/v1/admin/...`. Requires JWT **and** `is_admin`.
 
 ### Review tags

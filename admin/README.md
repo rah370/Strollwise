@@ -52,7 +52,8 @@ Production `VITE_API_URL` must be the public API origin (see [`docs/HOSTING.md`]
 
 | Route | Purpose |
 | --- | --- |
-| `/login` | Admin JWT login |
+| `/login` | Admin JWT login, including **Forgot password?** |
+| `/forgot-password` | Reset a researcher/admin password with the same 6-digit code as the traveler app |
 | `/` | Dashboard stats |
 | `/moderation` | Pending/flagged report queue |
 | `/zones` | Zone validation list |
