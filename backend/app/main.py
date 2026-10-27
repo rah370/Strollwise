@@ -21,6 +21,7 @@ from app.api.routers import (
     users,
     zones,
 )
+from app.api.admin_docs import install_admin_docs
 from app.api.routers.admin import router as admin_router
 from app.core.config import settings
 from app.core.health import health_payload
@@ -56,6 +57,11 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title=settings.app_name,
         version="0.1.0",
+        description=(
+            "Traveler and admin API for StrollWise in Metro Cebu. "
+            "Public /docs is off in production. Signed-in admins: /api/v1/admin/docs. "
+            "Written guide: backend/API.md."
+        ),
         docs_url=docs_url,
         redoc_url=redoc_url,
         openapi_url=None if settings.is_production else "/openapi.json",
@@ -88,6 +94,7 @@ def create_app() -> FastAPI:
     app.include_router(uploads.router, prefix=prefix)
     app.include_router(geocode.router, prefix=prefix)
     app.include_router(admin_router, prefix=prefix)
+    install_admin_docs(app)
 
     local_media = Path(settings.upload_local_dir)
     local_media.mkdir(parents=True, exist_ok=True)
@@ -104,6 +111,9 @@ def create_app() -> FastAPI:
     <h1>StrollWise API</h1>
     <p>This URL is the backend, not the website.</p>
     <p><a href="{admin}">Open the admin dashboard</a></p>
+    <p>This is not a public developer portal. Live <code>/docs</code> is off.
+    The written reference is <code>backend/API.md</code> in the StrollWise repo.
+    Signed-in admins can open <a href="/api/v1/admin/docs">API docs</a> (JWT required).</p>
     <p><a href="/health">Health</a> · <a href="/privacy">Privacy</a> · <a href="/terms">Terms</a></p>
   </body>
 </html>

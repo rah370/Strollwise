@@ -48,6 +48,8 @@ def test_root_explains_this_is_the_api(client):
     assert resp.status_code == 200
     assert "admin dashboard" in resp.text.lower()
     assert "strollwise.onrender.com" in resp.text
+    assert "backend/API.md" in resp.text
+    assert "/api/v1/admin/docs" in resp.text
 
 
 def test_health_includes_database(client):
@@ -107,6 +109,10 @@ def test_docs_disabled_in_production(monkeypatch):
         assert prod_client.get("/docs").status_code == 404
         assert prod_client.get("/redoc").status_code == 404
         assert prod_client.get("/openapi.json").status_code == 404
+        private = prod_client.get("/api/v1/admin/docs")
+        assert private.status_code == 401
+        schema = prod_client.get("/api/v1/admin/openapi.json")
+        assert schema.status_code == 401
 
 
 def test_auth_rate_limit(client, monkeypatch):

@@ -58,7 +58,8 @@ chmod +x backend/scripts/dev.sh
 ```
 
 - API: [http://localhost:8000](http://localhost:8000)
-- OpenAPI: [http://localhost:8000/docs](http://localhost:8000/docs)
+- Local OpenAPI: [http://localhost:8000/docs](http://localhost:8000/docs)
+- Written API guide: [`backend/API.md`](backend/API.md) (production `/docs` is off; admins use `/api/v1/admin/docs`)
 - Health: `GET http://localhost:8000/health`
 
 ### 3) Flutter app

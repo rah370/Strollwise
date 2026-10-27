@@ -52,7 +52,7 @@ uvicorn app.main:app --reload
 
 Or: `./scripts/dev.sh`
 
-API: `http://localhost:8000` — docs at `/docs`.
+API: `http://localhost:8000` — local Swagger at `/docs`. Product routes are documented in [`API.md`](API.md). Production `/docs` stays 404; signed-in admins use `/api/v1/admin/docs`.
 
 ## Environment variables
 
@@ -90,7 +90,11 @@ pytest -q
 
 No live Postgres needed for the test suite.
 
-## API overview (`/api/v1/...`)
+## API overview
+
+See **[`API.md`](API.md)** for traveler vs admin routes, privacy rules, and how to open admin-only Swagger.
+
+Short map (all under `/api/v1`):
 
 | Method | Path | Description |
 | --- | --- | --- |
@@ -98,12 +102,10 @@ No live Postgres needed for the test suite.
 | GET | `/auth/me`, `/users/me` | Profile |
 | POST | `/reports` | Submit tag |
 | GET | `/zones` | Map viewport zones |
-| GET | `/zones/{zone_id}` | Zone detail |
 | GET | `/places` | Catalog places in viewport |
-| GET | `/places/resolve` | Place at lat/lng |
-| GET | `/analytics/city-pulse` | City summary |
+| GET | `/admin/docs` | Swagger for signed-in admins |
 
-Admin routes (`/admin/*`, requires `is_admin`): moderation queue, zones, users, analytics export, catalog CRUD, pipeline rebuild, runtime config, audit log. See [`admin/README.md`](../admin/README.md).
+Admin routes (`/admin/*`, requires `is_admin`): Review tags, Users, Activity, Settings. Console: [`admin/README.md`](../admin/README.md).
 
 ## Caching
 

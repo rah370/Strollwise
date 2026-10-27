@@ -144,9 +144,13 @@ export function exportUrl(path: string, fmt: 'json' | 'csv') {
 }
 
 export function apiDocsUrl(): string | null {
-  if (import.meta.env.PROD) return null
-  const base = API_URL || 'http://127.0.0.1:8000'
-  return `${base.replace(/\/$/, '')}/docs`
+  const token = getToken()
+  if (!token) return null
+  const base = (API_URL || (import.meta.env.DEV ? 'http://127.0.0.1:8000' : '')).replace(/\/$/, '')
+  if (!base && import.meta.env.PROD) {
+    return `/api/v1/admin/docs?token=${encodeURIComponent(token)}`
+  }
+  return `${base}/api/v1/admin/docs?token=${encodeURIComponent(token)}`
 }
 
 export function legalUrl(path: '/privacy' | '/terms'): string {

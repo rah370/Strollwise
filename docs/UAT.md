@@ -291,7 +291,7 @@ Use the operator account. Browser desktop.
 | A-AUD-01 | Audit | After A-MOD-03, open Audit Log. | A row for the moderation action appears (allow a short poll delay). |
 | A-PIP-01 | Cache invalidate | Pipeline → **Invalidate cache** only. | Success result. Do **not** run Full pipeline / rebuild-all during UAT unless the facilitator announces a rebuild window. |
 | A-SET-01 | Settings read | Open Settings. Record current thresholds. | Fields load. **Do not save** unless a scheduled settings case exists. Saving changes live tag rules for everyone. |
-| A-NAV-01 | Legal / API docs | Footer Privacy and Terms. API docs link. | Privacy/terms open. API docs may be **disabled in production** — N/A if `/docs` is 404. |
+| A-NAV-01 | Legal / API docs | Footer Privacy and Terms. Sidebar **API docs**. | Privacy/terms open. API docs requires an admin JWT (`/api/v1/admin/docs`). Public `/docs` stays 404 in production. |
 
 ### 8.9 End-to-end and privacy
 

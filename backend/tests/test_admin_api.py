@@ -93,6 +93,23 @@ def test_non_admin_forbidden(client, db_session):
     assert resp.status_code == 403
 
 
+def test_admin_openapi_schema_requires_admin(client, db_session):
+    denied = client.get("/api/v1/admin/openapi.json")
+    assert denied.status_code == 401
+    traveler = _user_headers(client, "docs-traveler@test.com")
+    forbidden = client.get("/api/v1/admin/openapi.json", headers=traveler)
+    assert forbidden.status_code == 403
+    headers = _admin_headers(client, db_session, "docs-admin@test.com")
+    schema = client.get("/api/v1/admin/openapi.json", headers=headers)
+    assert schema.status_code == 200
+    body = schema.json()
+    assert body["info"]["title"]
+    assert "/api/v1/reports" in body["paths"]
+    ui = client.get("/api/v1/admin/docs", headers=headers)
+    assert ui.status_code == 200
+    assert "swagger" in ui.text.lower()
+
+
 def test_admin_lists_pending_reports(client, db_session):
     admin = _make_admin(db_session)
     _pending_report(db_session, admin.id)

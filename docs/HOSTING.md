@@ -196,7 +196,7 @@ SPA fallback files: `admin/public/_redirects` and `frontend/web/_redirects`.
 - Registration requires `accepted_research_consent: true`
 - API Sentry: `SENTRY_DSN`
 - Flutter Sentry: `--dart-define=SENTRY_DSN=...`
-- OpenAPI (`/docs`) is **off** when `ENV=production`
+- Public OpenAPI (`/docs`) is **off** when `ENV=production`. Written guide: [`backend/API.md`](../backend/API.md). Signed-in admins: `/api/v1/admin/docs`
 
 ## 7. Mobile stores (phase 2)
 
