@@ -45,9 +45,9 @@ def update_user(
     user_id: UUID,
     payload: AdminUserUpdate,
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_admin),
+    admin: User = Depends(get_current_admin),
 ) -> AdminUserSummary:
-    result = AdminService(db).update_user(user_id, payload)
+    result = AdminService(db).update_user(user_id, payload, admin)
     if result is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
     return result

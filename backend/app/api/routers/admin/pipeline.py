@@ -21,39 +21,39 @@ class RebuildCellsRequest(BaseModel):
 def rebuild_cells(
     payload: RebuildCellsRequest | None = None,
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_admin),
+    admin: User = Depends(get_current_admin),
 ) -> AdminPipelineResult:
     indexes = payload.h3_indexes if payload else None
-    return AdminService(db).rebuild_cells(indexes)
+    return AdminService(db).rebuild_cells(indexes, admin=admin)
 
 
 @router.post("/rebuild-places", response_model=AdminPipelineResult)
 def rebuild_places(
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_admin),
+    admin: User = Depends(get_current_admin),
 ) -> AdminPipelineResult:
-    return AdminService(db).rebuild_places()
+    return AdminService(db).rebuild_places(admin=admin)
 
 
 @router.post("/rebuild-zones", response_model=AdminPipelineResult)
 def rebuild_zones(
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_admin),
+    admin: User = Depends(get_current_admin),
 ) -> AdminPipelineResult:
-    return AdminService(db).rebuild_zones()
+    return AdminService(db).rebuild_zones(admin=admin)
 
 
 @router.post("/rebuild-all", response_model=AdminPipelineResult)
 def rebuild_all(
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_admin),
+    admin: User = Depends(get_current_admin),
 ) -> AdminPipelineResult:
-    return AdminService(db).rebuild_all()
+    return AdminService(db).rebuild_all(admin=admin)
 
 
 @router.post("/invalidate-cache", response_model=AdminPipelineResult)
 def invalidate_cache(
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_admin),
+    admin: User = Depends(get_current_admin),
 ) -> AdminPipelineResult:
-    return AdminService(db).invalidate_cache()
+    return AdminService(db).invalidate_cache(admin=admin)

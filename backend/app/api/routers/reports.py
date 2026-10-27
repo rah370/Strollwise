@@ -16,7 +16,9 @@ from app.schemas.report import (
     ReportCreate,
     ReportPublic,
     ReportSubmissionResponse,
+    SensitiveSitePublic,
 )
+from app.services.sensitive_sites import public_sites
 from app.schemas.visit_pin import VisitPinCreate, VisitPinPublic
 from app.services import h3_service
 from app.services.report_service import ReportService, ReportValidationError
@@ -61,6 +63,14 @@ def create_my_visit_pin(
     """Drop a private visit pin — only you can see it on the map."""
     pin = VisitPinService(db).create_from_payload(current_user, payload)
     return VisitPinPublic.model_validate(pin)
+
+
+@router.get("/sensitive-sites", response_model=list[SensitiveSitePublic])
+def list_sensitive_sites(
+    _: User = Depends(get_current_user),
+) -> list[SensitiveSitePublic]:
+    """Muted building footprints for Add Tag / Explore. Authenticated, no compound names."""
+    return [SensitiveSitePublic.model_validate(site) for site in public_sites()]
 
 
 @router.get("/my-visit-pins", response_model=list[VisitPinPublic])

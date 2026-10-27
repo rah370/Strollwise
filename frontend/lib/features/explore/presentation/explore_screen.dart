@@ -16,6 +16,7 @@ import '../../../shared/models/cell.dart';
 import '../../../shared/models/current_zone_overview.dart';
 import '../../../shared/models/layer_settings.dart';
 import '../../../shared/models/place_list_item.dart';
+import '../../../shared/models/sensitive_site.dart';
 import '../../../shared/models/zone.dart';
 import '../../../shared/maps/google_maps_launcher.dart';
 import '../../../shared/network/api_client.dart';
@@ -121,6 +122,10 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
   static const _zonesSourceId = 'zones-source';
   static const _zonesFillLayerId = 'zones-fill';
   static const _zonesLineLayerId = 'zones-line';
+  static const _sensitiveSourceId = 'sensitive-sites-source';
+  static const _sensitiveFillLayerId = 'sensitive-sites-fill';
+  static const _sensitiveLineLayerId = 'sensitive-sites-line';
+  bool _sensitiveLayersAdded = false;
   @override
   void initState() {
     super.initState();
@@ -567,6 +572,7 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
       } else {
         await controller.setGeoJsonSource(_zonesSourceId, geoJson);
       }
+      await _drawSensitiveSites();
 
       if (hasCellLayer && selectedCell != null) {
         final cell = selectedCell;
@@ -795,6 +801,38 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
         line,
       );
     }
+  }
+
+  Future<void> _drawSensitiveSites() async {
+    final controller = _controller;
+    if (controller == null || !_mapStyleLoaded) return;
+    final sites = ref.read(sensitiveSitesProvider).valueOrNull ?? const [];
+    final geoJson = sensitiveSitesGeoJson(sites);
+    try {
+      if (!_sensitiveLayersAdded) {
+        await controller.addGeoJsonSource(_sensitiveSourceId, geoJson);
+        await controller.addFillLayer(
+          _sensitiveSourceId,
+          _sensitiveFillLayerId,
+          const FillLayerProperties(
+            fillColor: '#64748B',
+            fillOpacity: 0.16,
+          ),
+        );
+        await controller.addLineLayer(
+          _sensitiveSourceId,
+          _sensitiveLineLayerId,
+          const LineLayerProperties(
+            lineColor: '#64748B',
+            lineWidth: 1.2,
+            lineOpacity: 0.45,
+          ),
+        );
+        _sensitiveLayersAdded = true;
+      } else {
+        await controller.setGeoJsonSource(_sensitiveSourceId, geoJson);
+      }
+    } catch (_) {}
   }
 
   Future<void> _applyBaseMapVisualTuning(
@@ -1586,6 +1624,9 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
         unawaited(_bootstrapCurrentLocation(force: true));
       });
     });
+    ref.listen(sensitiveSitesProvider, (prev, next) {
+      unawaited(_drawSensitiveSites());
+    });
     ref.listen(ownPendingTagPinsProvider, (prev, next) {
       if (next.isLoading) return;
       next.whenData((_) {
@@ -1708,6 +1749,7 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
                     onStyleLoadedCallback: () async {
                       _mapStyleLoaded = true;
                       _zoneLayersAdded = false;
+                      _sensitiveLayersAdded = false;
                       final controller = _controller;
                       if (controller == null) return;
                       await _applyBaseMapVisualTuning(controller);

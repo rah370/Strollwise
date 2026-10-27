@@ -271,8 +271,39 @@ def test_rejects_hourly_rate_limit(client, monkeypatch):
     assert "last hour" in blocked.json()["detail"].lower()
 
 
-def test_report_rejects_sensitive_area(client):
+def test_report_rejects_pin_on_hospital_building(client):
     token = _register(client)
+    resp = client.post(
+        "/api/v1/reports",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "latitude": 10.2970,
+            "longitude": 123.8915,
+            "category": "food",
+            "tags": ["canteen"],
+        },
+    )
+    assert resp.status_code == 422
+    assert "not the hospital itself" in resp.json()["detail"].lower()
+
+
+def test_report_accepts_food_tag_forty_meters_off_hospital(client):
+    token = _register(client, "off-hospital@example.com")
+    resp = client.post(
+        "/api/v1/reports",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "latitude": 10.29755,
+            "longitude": 123.8915,
+            "category": "food",
+            "tags": ["food", "cafe"],
+        },
+    )
+    assert resp.status_code == 201, resp.text
+
+
+def test_report_accepts_former_hospital_bbox_canteen(client):
+    token = _register(client, "canteen-street@example.com")
     resp = client.post(
         "/api/v1/reports",
         headers={"Authorization": f"Bearer {token}"},
@@ -283,8 +314,45 @@ def test_report_rejects_sensitive_area(client):
             "tags": ["canteen"],
         },
     )
-    assert resp.status_code == 422
-    assert "sensitive" in resp.json()["detail"]
+    assert resp.status_code == 201, resp.text
+
+
+def test_report_accepts_identity_tags_off_police_building(client):
+    token = _register(client, "police-cafe@example.com")
+    resp = client.post(
+        "/api/v1/reports",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "latitude": 10.3124,
+            "longitude": 123.8918,
+            "category": "food",
+            "tags": ["cafe", "police station"],
+            "note_text": "Cafe across from the station",
+        },
+    )
+    assert resp.status_code == 201, resp.text
+
+
+def test_sensitive_sites_requires_auth(client):
+    resp = client.get("/api/v1/reports/sensitive-sites")
+    assert resp.status_code == 401
+
+
+def test_sensitive_sites_returns_building_footprints(client):
+    token = _register(client, "sites@example.com")
+    resp = client.get(
+        "/api/v1/reports/sensitive-sites",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200, resp.text
+    items = resp.json()
+    assert len(items) == 3
+    kinds = {row["kind"] for row in items}
+    assert kinds == {"hospital", "government", "police"}
+    for row in items:
+        assert row["radius_m"] == 40
+        assert "name" not in row
+        assert "lat" in row and "lng" in row
 
 
 def test_report_feed_only_includes_approved_reports(client):
@@ -305,7 +373,7 @@ def test_report_feed_only_includes_approved_reports(client):
     assert feed.json() == []
 
 
-def test_uspf_tag_triggers_single_report_approval(client):
+def test_uspf_tag_uses_same_crowd_threshold(client):
     token = _register(client)
     lat, lng = 10.3380, 123.9010
     resp = client.post(
@@ -319,26 +387,33 @@ def test_uspf_tag_triggers_single_report_approval(client):
         },
     )
     assert resp.status_code == 201, resp.text
-    assert resp.json()["aggregation"]["threshold_met"] is True
+    aggregation = resp.json()["aggregation"]
+    assert aggregation["threshold_met"] is False
+    assert aggregation["threshold"] == 3
 
 
 def test_place_markers_returns_uspf_pins(client):
     from app.services import h3_service
 
-    token = _register(client)
     lat, lng = 10.3380, 123.9010
-    created = client.post(
-        "/api/v1/reports",
-        headers={"Authorization": f"Bearer {token}"},
-        json={
-            "latitude": lat,
-            "longitude": lng,
-            "category": "school",
-            "tags": ["uspf campus", "school", "public", "exact_road_spot"],
-        },
-    )
-    assert created.status_code == 201, created.text
-    h3_index = created.json()["h3_index"]
+    last = None
+    for i in range(3):
+        token = _register(client, f"uspf-marker-{i}@example.com")
+        created = client.post(
+            "/api/v1/reports",
+            headers={"Authorization": f"Bearer {token}"},
+            json={
+                "latitude": lat,
+                "longitude": lng,
+                "category": "school",
+                "tags": ["uspf campus", "school", "public", "exact_road_spot"],
+            },
+        )
+        assert created.status_code == 201, created.text
+        last = created.json()
+    assert last is not None
+    assert last["aggregation"]["threshold_met"] is True
+    h3_index = last["h3_index"]
     cell_lat, cell_lng = h3_service.cell_centroid(h3_index)
     mr = client.get(
         "/api/v1/reports/place-markers",
@@ -385,6 +460,28 @@ def test_place_markers_omit_pending_and_raw_gps(client):
     )
     assert mr.status_code == 200
     assert mr.json() == []
+
+
+def test_split_agreement_does_not_auto_publish(client):
+    lat, lng = 10.3201, 123.9021
+    last = None
+    for i, category in enumerate(("food", "transport", "crowd")):
+        token = _register(client, f"split-{i}@example.com")
+        resp = client.post(
+            "/api/v1/reports",
+            headers={"Authorization": f"Bearer {token}"},
+            json={
+                "latitude": lat,
+                "longitude": lng,
+                "category": category,
+                "tags": [category],
+            },
+        )
+        assert resp.status_code == 201, resp.text
+        last = resp.json()
+    assert last is not None
+    assert last["aggregation"]["threshold_met"] is False
+    assert last["visibility_status"] == "pending"
 
 
 def test_create_report_rejects_outside_cebu(client):

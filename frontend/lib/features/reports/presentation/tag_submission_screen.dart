@@ -15,9 +15,11 @@ import '../../../shared/models/report.dart';
 import '../../../shared/models/zone.dart';
 import '../../../shared/network/api_client.dart';
 import '../../../shared/notifications/app_notifications.dart';
+import '../../../shared/models/sensitive_site.dart';
 import '../../../shared/open_area_on_explore.dart';
 import '../../../shared/providers/app_providers.dart';
 import '../../../shared/zone_place_ui.dart';
+import 'sensitive_site_preview.dart';
 
 Future<LatLng?> _tagPickerTryCurrentGps() async {
   try {
@@ -291,6 +293,18 @@ class _TagSubmissionScreenState extends ConsumerState<TagSubmissionScreen> {
     }
     if (!_canSubmit) return;
 
+    final sites = ref.read(sensitiveSitesProvider).valueOrNull ?? const [];
+    final blocked = siteContaining(
+      sites,
+      _pickedLocation!.latitude,
+      _pickedLocation!.longitude,
+    );
+    if (blocked != null) {
+      setState(() => _submitError = pinOnBuildingCopy(blocked.kind));
+      _scrollTo(_locationKey);
+      return;
+    }
+
     final submitLocation = _pickedLocation!;
     final selected = _selectedType!;
     final tags = <String>[
@@ -563,6 +577,22 @@ class _TagSubmissionScreenState extends ConsumerState<TagSubmissionScreen> {
     final selectedType = _selectedType;
     final nearbyOwnTag =
         hasLocation && _hasNearbyOwnTag(_pickedLocation!);
+    final sites = ref.watch(sensitiveSitesProvider).valueOrNull ?? const [];
+    final blockedSite = hasLocation
+        ? siteContaining(
+            sites,
+            _pickedLocation!.latitude,
+            _pickedLocation!.longitude,
+          )
+        : null;
+    final identityHint = tagsNameFacility(
+      [
+        ..._selectedDetails,
+        if (_selectedTypeLabel != null) _selectedTypeLabel!,
+        noteController.text,
+      ],
+      null,
+    );
     final resolvedPlace = _pickedLocation == null
         ? null
         : ref
@@ -651,6 +681,31 @@ class _TagSubmissionScreenState extends ConsumerState<TagSubmissionScreen> {
                   placeSearchController.clear();
                 },
               ),
+            if (hasLocation) ...[
+              const SizedBox(height: 10),
+              SensitiveSitePreview(pin: _pickedLocation!, sites: sites),
+            ],
+            if (blockedSite != null) ...[
+              const SizedBox(height: 8),
+              Text(
+                pinOnBuildingCopy(blockedSite.kind),
+                style: const TextStyle(
+                  color: Color(0xFF991B1B),
+                  fontWeight: FontWeight.w700,
+                  fontSize: 13,
+                ),
+              ),
+            ] else if (identityHint) ...[
+              const SizedBox(height: 8),
+              const Text(
+                'This stays a street or cafe tag. It will not name the public place after a nearby station, hospital, or city hall.',
+                style: TextStyle(
+                  color: Color(0xFFB45309),
+                  fontWeight: FontWeight.w700,
+                  fontSize: 12,
+                ),
+              ),
+            ],
             if (nearbyOwnTag) ...[
               const SizedBox(height: 8),
               const Text(
@@ -807,7 +862,9 @@ class _TagSubmissionScreenState extends ConsumerState<TagSubmissionScreen> {
               12 + (keyboard > 0 ? keyboard : bottom),
             ),
             child: FilledButton.icon(
-              onPressed: submissionState.isLoading ? null : _submit,
+              onPressed: submissionState.isLoading || blockedSite != null
+                  ? null
+                  : _submit,
               icon: submissionState.isLoading
                   ? const SizedBox(
                       width: 20,
@@ -823,7 +880,11 @@ class _TagSubmissionScreenState extends ConsumerState<TagSubmissionScreen> {
                           : Icons.place_outlined,
                     ),
               label: Text(
-                submissionState.isLoading ? 'Submitting…' : _actionLabel,
+                submissionState.isLoading
+                    ? 'Submitting…'
+                    : blockedSite != null
+                        ? 'Move the pin'
+                        : _actionLabel,
               ),
               style: FilledButton.styleFrom(
                 minimumSize: const Size.fromHeight(52),

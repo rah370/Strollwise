@@ -11,7 +11,9 @@ from uuid import UUID
 from sqlalchemy.orm import Session
 
 from app.core.cache import cache_delete_pattern
+from app.models.audit_log import AuditLog
 from app.models.merged_zone import MergedZone
+from app.models.user import User
 from app.models.zone_catalog_entry import ZoneCatalogEntryModel
 from app.repositories.audit_repository import AuditRepository
 from app.repositories.catalog_repository import CatalogRepository
@@ -49,6 +51,41 @@ from app.services.zone_catalog import invalidate_catalog_cache
 from app.services.zone_merge_service import ZoneMergeService
 
 log = logging.getLogger(__name__)
+
+_AUDIT_ADMIN_ACTIONS = (
+    "report.admin_approve",
+    "report.admin_reject",
+    "report.admin_flag",
+    "report.admin_keep_pending",
+    "user.make_admin",
+    "user.remove_admin",
+    "user.pause",
+    "user.resume",
+    "config.update",
+    "pipeline.rebuild",
+)
+_AUDIT_TRAVELER_ACTIONS = ("report.create",)
+_AUDIT_RESULTS = {
+    "report.create": "Waiting",
+    "report.admin_approve": "Published",
+    "report.admin_reject": "Wrong",
+    "report.admin_flag": "Hold",
+    "report.admin_keep_pending": "Waiting",
+    "user.make_admin": "Made admin",
+    "user.remove_admin": "Removed admin",
+    "user.pause": "Paused",
+    "user.resume": "Resumed",
+    "config.update": "Saved tag rules",
+    "pipeline.rebuild": "Map refreshed",
+}
+
+
+def _audit_action_types_for_scope(scope: str | None) -> list[str] | None:
+    if scope == "admin":
+        return list(_AUDIT_ADMIN_ACTIONS)
+    if scope == "travelers":
+        return list(_AUDIT_TRAVELER_ACTIONS)
+    return None
 
 
 def _zone_lifecycle(zone: MergedZone) -> str:
@@ -354,14 +391,34 @@ class AdminService:
             ),
         )
 
-    def update_user(self, user_id: UUID, payload: AdminUserUpdate) -> AdminUserSummary | None:
+    def update_user(
+        self,
+        user_id: UUID,
+        payload: AdminUserUpdate,
+        admin: User | None = None,
+    ) -> AdminUserSummary | None:
         user = self.users.get_by_id(user_id)
         if user is None:
             return None
-        if payload.is_active is not None:
+        actor_id = admin.id if admin is not None else None
+        if payload.is_active is not None and payload.is_active != user.is_active:
             user.is_active = payload.is_active
-        if payload.is_admin is not None:
+            self.audit.record(
+                actor_user_id=actor_id,
+                action_type="user.resume" if user.is_active else "user.pause",
+                entity_type="user",
+                entity_id=user.id,
+                payload={"is_active": user.is_active},
+            )
+        if payload.is_admin is not None and payload.is_admin != user.is_admin:
             user.is_admin = payload.is_admin
+            self.audit.record(
+                actor_user_id=actor_id,
+                action_type="user.make_admin" if user.is_admin else "user.remove_admin",
+                entity_type="user",
+                entity_id=user.id,
+                payload={"is_admin": user.is_admin},
+            )
         self.users.save(user)
         self.db.commit()
         self.db.refresh(user)
@@ -530,25 +587,24 @@ class AdminService:
         page_size: int = 50,
         action_type: str | None = None,
         entity_type: str | None = None,
+        scope: str | None = None,
+        q: str | None = None,
+        since: datetime | None = None,
+        until: datetime | None = None,
     ) -> AdminAuditListResponse:
+        action_types = _audit_action_types_for_scope(scope)
         rows, total = self.audit_repo.list_paginated(
             page=page,
             page_size=page_size,
             action_type=action_type,
             entity_type=entity_type,
+            action_types=action_types,
+            q=q,
+            since=since,
+            until=until,
         )
-        items = [
-            AdminAuditEntry(
-                id=r.id,
-                actor_user_id=r.actor_user_id,
-                action_type=r.action_type,
-                entity_type=r.entity_type,
-                entity_id=r.entity_id,
-                payload_json=r.payload_json,
-                created_at=r.created_at,
-            )
-            for r in rows
-        ]
+        area_names = self._h3_area_names()
+        items = [self._audit_entry(r, area_names) for r in rows]
         return AdminAuditListResponse(items=items, total=total, page=page, page_size=page_size)
 
     # --- Catalog -----------------------------------------------------------
@@ -619,7 +675,9 @@ class AdminService:
 
     # --- Pipeline ----------------------------------------------------------
 
-    def rebuild_cells(self, h3_indexes: list[str] | None = None) -> AdminPipelineResult:
+    def rebuild_cells(
+        self, h3_indexes: list[str] | None = None, admin: User | None = None
+    ) -> AdminPipelineResult:
         started = datetime.now(timezone.utc)
         if h3_indexes:
             AggregationService(self.db).recompute_cells(h3_indexes)
@@ -630,37 +688,59 @@ class AdminService:
             AggregationService(self.db).recompute_cells(indexes)
             count = len(indexes)
         self.db.commit()
-        return AdminPipelineResult(
-            job="rebuild-cells",
-            started_at=started,
-            affected_counts={"h3_cells": count},
-            message=f"Recomputed {count} H3 cell aggregates.",
+        return self._finish_pipeline(
+            AdminPipelineResult(
+                job="rebuild-cells",
+                started_at=started,
+                affected_counts={"h3_cells": count},
+                message=f"Recomputed {count} H3 cell aggregates.",
+            ),
+            admin,
         )
 
-    def rebuild_places(self) -> AdminPipelineResult:
+    def _finish_pipeline(
+        self, result: AdminPipelineResult, admin: User | None
+    ) -> AdminPipelineResult:
+        if admin is not None:
+            self.audit.record(
+                actor_user_id=admin.id,
+                action_type="pipeline.rebuild",
+                entity_type="pipeline",
+                payload={"job": result.job},
+            )
+            self.db.commit()
+        return result
+
+    def rebuild_places(self, admin: User | None = None) -> AdminPipelineResult:
         started = datetime.now(timezone.utc)
         places = PlaceService(self.db).rebuild_all()
         self.db.commit()
-        return AdminPipelineResult(
-            job="rebuild-places",
-            started_at=started,
-            affected_counts={"places": len(places)},
-            message=f"Rebuilt {len(places)} places.",
+        return self._finish_pipeline(
+            AdminPipelineResult(
+                job="rebuild-places",
+                started_at=started,
+                affected_counts={"places": len(places)},
+                message=f"Rebuilt {len(places)} places.",
+            ),
+            admin,
         )
 
-    def rebuild_zones(self) -> AdminPipelineResult:
+    def rebuild_zones(self, admin: User | None = None) -> AdminPipelineResult:
         started = datetime.now(timezone.utc)
         zones = ZoneMergeService(self.db).rebuild_all()
         self.db.commit()
         publish_zones_updated(source="rebuild-zones")
-        return AdminPipelineResult(
-            job="rebuild-zones",
-            started_at=started,
-            affected_counts={"zones": len(zones)},
-            message=f"Rebuilt {len(zones)} merged zones.",
+        return self._finish_pipeline(
+            AdminPipelineResult(
+                job="rebuild-zones",
+                started_at=started,
+                affected_counts={"zones": len(zones)},
+                message=f"Rebuilt {len(zones)} merged zones.",
+            ),
+            admin,
         )
 
-    def rebuild_all(self) -> AdminPipelineResult:
+    def rebuild_all(self, admin: User | None = None) -> AdminPipelineResult:
         started = datetime.now(timezone.utc)
         rows, _ = self.reports.list_admin(page=1, page_size=5000)
         indexes = {r.h3_index for r in rows}
@@ -671,30 +751,76 @@ class AdminService:
         self.db.commit()
         publish_zones_updated(source="rebuild-all")
         publish_dashboard_refresh(source="rebuild-all")
-        return AdminPipelineResult(
-            job="rebuild-all",
-            started_at=started,
-            affected_counts={
-                "h3_cells": len(indexes),
-                "places": len(places),
-                "zones": len(zones),
-            },
-            message="Full pipeline rebuild completed.",
+        return self._finish_pipeline(
+            AdminPipelineResult(
+                job="rebuild-all",
+                started_at=started,
+                affected_counts={
+                    "h3_cells": len(indexes),
+                    "places": len(places),
+                    "zones": len(zones),
+                },
+                message="Full pipeline rebuild completed.",
+            ),
+            admin,
         )
 
-    def invalidate_cache(self) -> AdminPipelineResult:
+    def invalidate_cache(self, admin: User | None = None) -> AdminPipelineResult:
         started = datetime.now(timezone.utc)
         cache_delete_pattern("zones:*")
         cache_delete_pattern("city:pulse:*")
         cache_delete_pattern("reports:pending:*")
-        return AdminPipelineResult(
-            job="invalidate-cache",
-            started_at=started,
-            affected_counts={},
-            message="Cache invalidation requested.",
+        return self._finish_pipeline(
+            AdminPipelineResult(
+                job="invalidate-cache",
+                started_at=started,
+                affected_counts={},
+                message="Cache invalidation requested.",
+            ),
+            admin,
         )
 
     # --- Helpers -----------------------------------------------------------
+
+    def _audit_entry(self, row: AuditLog, area_names: dict[str, str]) -> AdminAuditEntry:
+        payload = row.payload_json or {}
+        h3_index = str(payload.get("h3_index") or "")
+        tags = payload.get("tags") or []
+        if not isinstance(tags, list):
+            tags = []
+        actor = self.users.get_by_id(row.actor_user_id) if row.actor_user_id else None
+        name = (actor.display_name or "").strip() if actor else ""
+        if row.action_type == "report.create":
+            who = name or "Traveler"
+        else:
+            who = name or "Admin"
+        area_name = area_names.get(h3_index)
+        if not area_name and h3_index:
+            try:
+                from app.services import h3_service
+                from app.services.landmark_service import landmark_for_centroid
+                from app.services.sensitive_sites import public_place_name
+
+                lat, lng = h3_service.cell_centroid(h3_index)
+                landmark, _ = landmark_for_centroid(lat, lng)
+                area_name = public_place_name(landmark, lat, lng)
+            except Exception:
+                area_name = None
+        return AdminAuditEntry(
+            id=row.id,
+            actor_user_id=row.actor_user_id,
+            action_type=row.action_type,
+            entity_type=row.entity_type,
+            entity_id=row.entity_id,
+            payload_json=payload or None,
+            created_at=row.created_at,
+            actor_label=who,
+            area_name=area_name,
+            category=str(payload["category"]) if payload.get("category") else None,
+            tags=[str(t) for t in tags],
+            result=_AUDIT_RESULTS.get(row.action_type),
+            reason=str(payload["reason"]) if payload.get("reason") else None,
+        )
 
     def _all_zones(self) -> list[MergedZone]:
         from sqlalchemy import select

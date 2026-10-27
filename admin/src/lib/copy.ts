@@ -90,16 +90,57 @@ export function liveStatusLabel(value?: string | null): string {
 
 export function auditLabel(value?: string | null): string {
   const labels: Record<string, string> = {
-    'report.admin_approve': 'Approved a tag',
-    'report.admin_reject': 'Rejected a tag',
-    'report.admin_flag': 'Flagged a tag',
+    'report.admin_approve': 'Published a tag',
+    'report.admin_reject': 'Marked a tag as wrong',
+    'report.admin_flag': 'Put a tag on hold',
+    'report.create': 'Someone sent a tag',
     'report.created': 'Someone sent a tag',
-    'report.approved': 'A tag was approved',
-    'report.rejected': 'A tag was rejected',
-    'report.flagged': 'A tag was flagged',
+    'report.approved': 'A tag was published',
+    'report.rejected': 'A tag was marked wrong',
+    'report.flagged': 'A tag was put on hold',
+    'user.make_admin': 'Made someone an admin',
+    'user.remove_admin': 'Removed admin access',
+    'user.pause': 'Paused an account',
+    'user.resume': 'Resumed an account',
+    'config.update': 'Saved tag rules',
+    'pipeline.rebuild': 'Refreshed the map',
   }
   if (!value) return 'Activity'
   return labels[value] ?? value.replace(/[._]/g, ' ')
+}
+
+export function moderationReasonLabel(value?: string | null): string {
+  switch (value) {
+    case 'wrong_location':
+      return 'Wrong location'
+    case 'wrong_kind':
+      return 'Wrong kind of place'
+    case 'spam':
+      return 'Spam'
+    case 'sensitive':
+      return 'Sensitive building'
+    case 'other':
+      return 'Other'
+    default:
+      return value ? value.replace(/_/g, ' ') : 'Choose a reason'
+  }
+}
+
+export const MODERATION_REASONS = [
+  'wrong_location',
+  'wrong_kind',
+  'spam',
+  'sensitive',
+  'other',
+] as const
+
+export function manilaWhen(iso?: string | null): string {
+  if (!iso) return '—'
+  return new Date(iso).toLocaleString('en-PH', {
+    timeZone: 'Asia/Manila',
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  })
 }
 
 export const REPORT_CATEGORIES = [

@@ -24,6 +24,7 @@ from app.services.aggregation_service import AggregationService
 from app.services.audit_service import AuditService
 from app.services.place_service import PlaceService
 from app.services.system_settings_service import effective_settings
+from app.services.sensitive_sites import pin_on_building_message, site_at
 from app.services.visit_pin_service import VisitPinService
 from app.services.zone_merge_service import ZoneMergeService
 from app.utils.geo_utils import within_cebu_service_area
@@ -56,55 +57,6 @@ class AggregationFeedback:
 class ReportSubmissionResult:
     report: Report
     aggregation: AggregationFeedback
-
-
-@dataclass(frozen=True)
-class _RestrictedArea:
-    name: str
-    kind: str
-    min_lat: float
-    max_lat: float
-    min_lng: float
-    max_lng: float
-
-    def contains(self, lat: float, lng: float) -> bool:
-        return self.min_lat <= lat <= self.max_lat and self.min_lng <= lng <= self.max_lng
-
-
-_RESTRICTED_AREAS = (
-    _RestrictedArea(
-        "Cebu City Medical Center",
-        "hospital",
-        10.2950,
-        10.3010,
-        123.8910,
-        123.8985,
-    ),
-    _RestrictedArea(
-        "Cebu City Hall and government center",
-        "government",
-        10.2915,
-        10.2950,
-        123.8995,
-        123.9040,
-    ),
-    _RestrictedArea(
-        "Camp Sergio Osmena police area",
-        "police",
-        10.3090,
-        10.3145,
-        123.8900,
-        123.8960,
-    ),
-    _RestrictedArea(
-        "private residential cluster",
-        "private residential",
-        10.3320,
-        10.3385,
-        123.8880,
-        123.8965,
-    ),
-)
 
 
 def _tags_refer_to_uspf(tags: list[str] | None) -> bool:
@@ -181,6 +133,8 @@ class ReportService:
                 "category": report.category,
                 "tags": report.tags_json,
                 "has_image": bool(payload.image_url),
+                "lat": payload.latitude,
+                "lng": payload.longitude,
             },
         )
 
@@ -244,12 +198,9 @@ class ReportService:
 
     @staticmethod
     def _validate_not_restricted(latitude: float, longitude: float) -> None:
-        for area in _RESTRICTED_AREAS:
-            if area.contains(latitude, longitude):
-                raise ReportValidationError(
-                    "This location is inside a sensitive "
-                    f"{area.kind} area. Choose a nearby public area instead."
-                )
+        site = site_at(latitude, longitude)
+        if site is not None:
+            raise ReportValidationError(pin_on_building_message(site))
 
     def _validate_submission_limits(self, user: User, h3_index: str) -> None:
         """Block duplicate pending tags, per-cell cooldown, and hourly floods."""
@@ -350,39 +301,35 @@ class ReportService:
         self, h3_index: str, category: str
     ) -> AggregationFeedback:
         pending_reports = self.reports.list_pending_by_h3_index(h3_index)
-        has_uspf = any(_tags_refer_to_uspf(r.tags_json) for r in pending_reports)
-        min_reports = (
-            1
-            if has_uspf
-            else max(self._cfg.pending_min_reports_per_cell, 1)
-        )
+        min_reports = max(self._cfg.pending_min_reports_per_cell, 1)
         people_in_cell = _distinct_contributors(pending_reports)
         matching_count = people_in_cell
         remaining = max(min_reports - people_in_cell, 0)
+        category_counts = Counter((r.category or "").lower() for r in pending_reports)
+        top_count = max(category_counts.values(), default=0)
+        agreement = (top_count / len(pending_reports)) if pending_reports else 0.0
+        people_ready = remaining == 0
+        agreed = agreement >= self._cfg.pending_agreement_ratio
+        threshold_met = people_ready and agreed
+        if not people_ready:
+            zone_update = "Zone will update after the threshold is reached."
+        elif not agreed:
+            zone_update = "People tagged this area differently, so it stays in review."
+        else:
+            zone_update = "Zone will update after approval finishes."
         return AggregationFeedback(
             h3_index=h3_index,
             pending_count=len(pending_reports),
             matching_count=matching_count,
             threshold=min_reports,
             remaining_to_threshold=remaining,
-            threshold_met=remaining == 0,
-            public_zone_update=(
-                "Zone will update after the threshold is reached."
-                if remaining
-                else "Zone will update after approval finishes."
-            ),
+            threshold_met=threshold_met,
+            public_zone_update=zone_update,
         )
 
     def _approve_if_threshold_met(self, h3_index: str) -> bool:
         pending_reports = self.reports.list_pending_by_h3_index(h3_index)
-        has_uspf = any(_tags_refer_to_uspf(r.tags_json) for r in pending_reports)
-        # Campus "USPF" tags: one submission in the cell is enough to validate and
-        # publish the zone (per-user cooldown / duplicate pending still apply on submit).
-        min_reports = (
-            1
-            if has_uspf
-            else max(self._cfg.pending_min_reports_per_cell, 1)
-        )
+        min_reports = max(self._cfg.pending_min_reports_per_cell, 1)
         if _distinct_contributors(pending_reports) < min_reports:
             return False
 

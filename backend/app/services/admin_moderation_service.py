@@ -14,6 +14,7 @@ from app.models.report import Report
 from app.models.user import User
 from app.repositories.report_repository import ReportRepository
 from app.schemas.admin import (
+    MODERATION_REASONS,
     AdminCellContext,
     AdminReportDetail,
     AdminReportListResponse,
@@ -29,11 +30,17 @@ from app.services.admin_events import publish_report_event, publish_zones_update
 from app.services.aggregation_service import AggregationService
 from app.services.audit_service import AuditService
 from app.services.place_service import PlaceService
-from app.services.report_service import _distinct_contributors, _tags_refer_to_uspf
+from app.services.report_service import _distinct_contributors
 from app.services.system_settings_service import SystemSettingsService
 from app.services.zone_merge_service import ZoneMergeService
 
 log = logging.getLogger(__name__)
+
+_ACTIONS_NEEDING_REASON = {ModerationAction.REJECT, ModerationAction.FLAG}
+
+
+class ModerationValidationError(Exception):
+    pass
 
 
 class AdminModerationService:
@@ -52,6 +59,7 @@ class AdminModerationService:
         search: str | None = None,
         category: str | None = None,
         tag: str | None = None,
+        contributor_id: UUID | None = None,
     ) -> AdminReportListResponse:
         location_h3s = self._h3_indexes_for_place_search(search)
         if queue == ModerationQueueFilter.DUPLICATES:
@@ -60,6 +68,7 @@ class AdminModerationService:
                 search=search,
                 category=category,
                 tag=tag,
+                contributor_id=contributor_id,
             )
             start = max(page - 1, 0) * page_size
             return AdminReportListResponse(
@@ -74,6 +83,22 @@ class AdminModerationService:
                 search=search,
                 category=category,
                 tag=tag,
+                contributor_id=contributor_id,
+            )
+            start = max(page - 1, 0) * page_size
+            return AdminReportListResponse(
+                items=items[start : start + page_size],
+                total=len(items),
+                page=page,
+                page_size=page_size,
+            )
+        if queue == ModerationQueueFilter.MIXED_AGREEMENT:
+            items = self._filter_summaries(
+                self._list_mixed_agreement(page=1, page_size=500),
+                search=search,
+                category=category,
+                tag=tag,
+                contributor_id=contributor_id,
             )
             start = max(page - 1, 0) * page_size
             return AdminReportListResponse(
@@ -92,6 +117,7 @@ class AdminModerationService:
             category=category,
             tag=tag,
             location_h3_indexes=location_h3s,
+            user_id=contributor_id,
         )
         return AdminReportListResponse(
             items=[self._to_summary(r) for r in rows],
@@ -113,13 +139,28 @@ class AdminModerationService:
         report_id: UUID,
         action: ModerationAction,
         admin: User,
+        *,
+        reason: str | None = None,
+        require_high_agreement: bool = False,
     ) -> ModerationActionResult | None:
         report = self.reports.get_by_id(report_id)
         if report is None:
             return None
 
+        if action in _ACTIONS_NEEDING_REASON:
+            if reason not in MODERATION_REASONS:
+                raise ModerationValidationError(
+                    "Choose a reason: wrong location, wrong kind, spam, sensitive, or other."
+                )
+
         pipeline_triggered = False
         if action == ModerationAction.APPROVE:
+            if require_high_agreement:
+                ctx = self._cell_context(report.h3_index)
+                if ctx.category_agreement < self.cfg.pending_agreement_ratio:
+                    raise ModerationValidationError(
+                        "Bulk publish is only for areas where people already agree."
+                    )
             report.visibility_status = VisibilityStatus.VISIBLE.value
             audit_action = "report.admin_approve"
         elif action == ModerationAction.REJECT:
@@ -143,7 +184,9 @@ class AdminModerationService:
             payload={
                 "h3_index": report.h3_index,
                 "category": report.category,
+                "tags": list(report.tags_json or []),
                 "visibility_status": report.visibility_status,
+                "reason": reason,
             },
         )
         self.db.commit()
@@ -170,7 +213,17 @@ class AdminModerationService:
         updated = 0
         failed: list[UUID] = []
         for report_id in payload.report_ids:
-            result = self.apply_action(report_id, payload.action, admin)
+            try:
+                result = self.apply_action(
+                    report_id,
+                    payload.action,
+                    admin,
+                    reason=payload.reason,
+                    require_high_agreement=payload.action == ModerationAction.APPROVE,
+                )
+            except ModerationValidationError:
+                failed.append(report_id)
+                continue
             if result is None:
                 failed.append(report_id)
             else:
@@ -201,6 +254,8 @@ class AdminModerationService:
             created_at=report.created_at,
             image_url=report.image_url,
             area_name=self._area_name(report.h3_index),
+            contributor_id=report.user_id,
+            contributor_label=self._contributor_label(report.user_id),
         )
 
     def _cell_context(self, h3_index: str) -> AdminCellContext:
@@ -211,12 +266,7 @@ class AdminModerationService:
         flagged_stmt_count = sum(
             1 for r in pending if r.visibility_status == VisibilityStatus.FLAGGED.value
         )
-        has_uspf = any(_tags_refer_to_uspf(r.tags_json) for r in pending)
-        threshold = (
-            1
-            if has_uspf
-            else max(self.cfg.pending_min_reports_per_cell, 1)
-        )
+        threshold = max(self.cfg.pending_min_reports_per_cell, 1)
         contributors = _distinct_contributors(pending)
         category_counts = Counter((r.category or "").lower() for r in pending)
         top_category = category_counts.most_common(1)[0][0] if category_counts else None
@@ -265,6 +315,37 @@ class AdminModerationService:
         start = max(page - 1, 0) * page_size
         return out[start : start + page_size]
 
+    def _list_mixed_agreement(self, *, page: int, page_size: int) -> list[AdminReportSummary]:
+        rows, _ = self.reports.list_admin(
+            visibility_status=VisibilityStatus.PENDING.value,
+            page=1,
+            page_size=500,
+        )
+        out: list[AdminReportSummary] = []
+        for report in rows:
+            ctx = self._cell_context(report.h3_index)
+            if ctx.category_agreement < self.cfg.pending_agreement_ratio:
+                out.append(self._to_summary(report))
+        start = max(page - 1, 0) * page_size
+        return out[start : start + page_size]
+
+    def _contributor_label(self, user_id: UUID | None) -> str:
+        if user_id is None:
+            return "Traveler"
+        cached = getattr(self, "_contributor_label_cache", None)
+        if cached is None:
+            cached = {}
+            self._contributor_label_cache = cached
+        if user_id in cached:
+            return cached[user_id]
+        from app.repositories.user_repository import UserRepository
+
+        user = UserRepository(self.db).get_by_id(user_id)
+        name = (user.display_name or "").strip() if user else ""
+        label = name or "Traveler"
+        cached[user_id] = label
+        return label
+
     def _area_names(self) -> dict[str, str]:
         cached = getattr(self, "_area_name_cache", None)
         if cached is not None:
@@ -304,8 +385,11 @@ class AdminModerationService:
         search: str | None,
         category: str | None,
         tag: str | None,
+        contributor_id: UUID | None = None,
     ) -> list[AdminReportSummary]:
         rows = items
+        if contributor_id:
+            rows = [r for r in rows if r.contributor_id == contributor_id]
         if category:
             rows = [r for r in rows if r.category == category.lower()]
         if tag:

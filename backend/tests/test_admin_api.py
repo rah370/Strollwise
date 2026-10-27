@@ -129,9 +129,16 @@ def test_admin_reject_and_flag(client, db_session):
     report = _pending_report(db_session, admin.id, h3_index="8828308283fffff")
     headers = _admin_headers(client, db_session, admin.email)
 
+    missing = client.post(
+        f"/api/v1/admin/moderation/reports/{report.id}/reject",
+        headers=headers,
+    )
+    assert missing.status_code == 422
+
     reject = client.post(
         f"/api/v1/admin/moderation/reports/{report.id}/reject",
         headers=headers,
+        json={"reason": "wrong_location"},
     )
     assert reject.status_code == 200
     assert reject.json()["report"]["visibility_status"] == "removed"
@@ -140,9 +147,92 @@ def test_admin_reject_and_flag(client, db_session):
     flag = client.post(
         f"/api/v1/admin/moderation/reports/{report2.id}/flag",
         headers=headers,
+        json={"reason": "sensitive"},
     )
     assert flag.status_code == 200
     assert flag.json()["report"]["visibility_status"] == "flagged"
+
+
+def test_admin_queue_has_contributor_label_not_email(client, db_session):
+    admin = _make_admin(db_session, "admin-queue@test.com")
+    _pending_report(db_session, admin.id)
+    headers = _admin_headers(client, db_session, admin.email)
+    resp = client.get("/api/v1/admin/moderation/reports?queue=pending", headers=headers)
+    assert resp.status_code == 200
+    item = resp.json()["items"][0]
+    assert "email" not in item
+    assert "user_id" not in item
+    assert item["contributor_id"] == str(admin.id)
+    assert item["contributor_label"] == "Admin"
+
+
+def test_admin_pause_account_writes_audit(client, db_session):
+    admin = _make_admin(db_session, "admin-pause@test.com")
+    traveler = User(
+        email="paused@test.com",
+        password_hash=hash_password("supersecret123"),
+        display_name="Traveler One",
+        traveler_type="local",
+        user_type="local_resident",
+        is_admin=False,
+        accepted_research_consent=True,
+    )
+    apply_user_type_to_user(traveler)
+    db_session.add(traveler)
+    db_session.commit()
+    db_session.refresh(traveler)
+    headers = _admin_headers(client, db_session, admin.email)
+    resp = client.patch(
+        f"/api/v1/admin/users/{traveler.id}",
+        headers=headers,
+        json={"is_active": False},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["is_active"] is False
+    audit = client.get("/api/v1/admin/audit?scope=admin", headers=headers)
+    actions = [e["action_type"] for e in audit.json()["items"]]
+    assert "user.pause" in actions
+
+
+def test_admin_audit_tabs_and_dates(client, db_session):
+    from datetime import date
+
+    admin = _make_admin(db_session, "admin-audit-tab@test.com")
+    headers = _admin_headers(client, db_session, admin.email)
+    report = _pending_report(db_session, admin.id)
+    client.post(
+        f"/api/v1/admin/moderation/reports/{report.id}/approve",
+        headers=headers,
+    )
+    today = date.today().isoformat()
+    travelers = client.get(
+        f"/api/v1/admin/audit?scope=travelers&since={today}&until={today}",
+        headers=headers,
+    )
+    assert travelers.status_code == 200
+    decisions = client.get(
+        f"/api/v1/admin/audit?scope=admin&since={today}&until={today}",
+        headers=headers,
+    )
+    assert decisions.status_code == 200
+    actions = [e["action_type"] for e in decisions.json()["items"]]
+    assert "report.admin_approve" in actions
+    item = next(e for e in decisions.json()["items"] if e["action_type"] == "report.admin_approve")
+    assert item["result"] == "Published"
+    assert item["actor_label"]
+    assert "id" in item
+
+
+def test_config_update_writes_audit(client, db_session):
+    headers = _admin_headers(client, db_session, "admin-config-audit@test.com")
+    patch = client.patch(
+        "/api/v1/admin/config",
+        headers=headers,
+        json={"pending_min_reports_per_cell": 3},
+    )
+    assert patch.status_code == 200
+    audit = client.get("/api/v1/admin/audit?scope=admin", headers=headers)
+    assert "config.update" in [e["action_type"] for e in audit.json()["items"]]
 
 
 def test_admin_config_get_and_patch(client, db_session):

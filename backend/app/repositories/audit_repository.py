@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import desc, func, select
+from sqlalchemy import desc, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.models.audit_log import AuditLog
@@ -19,6 +19,8 @@ class AuditRepository:
         page_size: int = 50,
         action_type: str | None = None,
         entity_type: str | None = None,
+        action_types: list[str] | None = None,
+        q: str | None = None,
         since: datetime | None = None,
         until: datetime | None = None,
     ) -> tuple[list[AuditLog], int]:
@@ -27,9 +29,20 @@ class AuditRepository:
         if action_type:
             stmt = stmt.where(AuditLog.action_type == action_type)
             count_stmt = count_stmt.where(AuditLog.action_type == action_type)
+        if action_types:
+            stmt = stmt.where(AuditLog.action_type.in_(action_types))
+            count_stmt = count_stmt.where(AuditLog.action_type.in_(action_types))
         if entity_type:
             stmt = stmt.where(AuditLog.entity_type == entity_type)
             count_stmt = count_stmt.where(AuditLog.entity_type == entity_type)
+        if q:
+            pattern = f"%{q.strip()}%"
+            clause = or_(
+                AuditLog.action_type.ilike(pattern),
+                AuditLog.entity_type.ilike(pattern),
+            )
+            stmt = stmt.where(clause)
+            count_stmt = count_stmt.where(clause)
         if since:
             stmt = stmt.where(AuditLog.created_at >= since)
             count_stmt = count_stmt.where(AuditLog.created_at >= since)

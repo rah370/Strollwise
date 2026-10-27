@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useMemo, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { api } from '../api/client'
 import type { AdminReportDetail, AdminReportList } from '../api/types'
 import { Badge } from '../components/Badge'
@@ -9,28 +10,43 @@ import { PageHeader } from '../components/PageHeader'
 import { Pagination } from '../components/Pagination'
 import { colors } from '../theme/colors'
 import { LIVE_POLL_MS, useAdminPollInterval } from '../hooks/useAdminLiveUpdates'
-import { REPORT_CATEGORIES, categoryLabel, statusLabel } from '../lib/copy'
+import {
+  MODERATION_REASONS,
+  REPORT_CATEGORIES,
+  categoryLabel,
+  moderationReasonLabel,
+  statusLabel,
+} from '../lib/copy'
 
 const PAGE_SIZE = 20
 
 const queues = [
-  { id: 'pending', label: 'Waiting', hint: 'Need a yes or no' },
-  { id: 'flagged', label: 'Flagged', hint: 'Someone asked for a closer look' },
-  { id: 'duplicates', label: 'Repeats', hint: 'Similar tags in the same area' },
+  { id: 'flagged', label: 'Hold', hint: 'Needs a reason before it can go on the map' },
   { id: 'near_threshold', label: 'Almost ready', hint: 'A few more matching tags would publish this' },
+  { id: 'mixed_agreement', label: 'Mixed', hint: 'People described this area differently' },
+  { id: 'pending', label: 'Waiting', hint: 'Need a yes or no' },
+  { id: 'duplicates', label: 'Repeats', hint: 'Similar tags in the same area' },
+  { id: 'all', label: 'All', hint: 'Every tag, including published ones' },
 ] as const
+
+type QueueId = (typeof queues)[number]['id']
+type ActionKind = 'approve' | 'reject' | 'flag'
 
 export function ModerationPage() {
   const qc = useQueryClient()
-  const [queue, setQueue] = useState<(typeof queues)[number]['id']>('pending')
+  const [params] = useSearchParams()
+  const [queue, setQueue] = useState<QueueId>('flagged')
   const [selected, setSelected] = useState<string[]>([])
   const [focusedId, setFocusedId] = useState<string | null>(null)
   const [search, setSearch] = useState('')
   const [debounced, setDebounced] = useState('')
   const [category, setCategory] = useState('')
   const [tag, setTag] = useState('')
+  const [contributorId, setContributorId] = useState('')
   const [page, setPage] = useState(1)
   const [actionError, setActionError] = useState('')
+  const [pendingAction, setPendingAction] = useState<{ kind: ActionKind; ids: string[] } | null>(null)
+  const [reason, setReason] = useState<(typeof MODERATION_REASONS)[number]>('wrong_location')
 
   useEffect(() => {
     const t = window.setTimeout(() => setDebounced(search.trim()), 250)
@@ -40,21 +56,32 @@ export function ModerationPage() {
   useEffect(() => {
     setPage(1)
     setSelected([])
-  }, [queue, debounced, category, tag])
+  }, [queue, debounced, category, tag, contributorId])
+
+  useEffect(() => {
+    const focus = params.get('focus')
+    const person = params.get('contributor')
+    if (focus) {
+      setFocusedId(focus)
+      setQueue('all')
+    }
+    if (person) setContributorId(person)
+  }, [params])
 
   const poll = useAdminPollInterval(LIVE_POLL_MS.moderation)
-  const params = new URLSearchParams({
+  const query = new URLSearchParams({
     queue,
     page: String(page),
     page_size: String(PAGE_SIZE),
   })
-  if (debounced) params.set('search', debounced)
-  if (category) params.set('category', category)
-  if (tag.trim()) params.set('tag', tag.trim())
+  if (debounced) query.set('search', debounced)
+  if (category) query.set('category', category)
+  if (tag.trim()) query.set('tag', tag.trim())
+  if (contributorId) query.set('contributor_id', contributorId)
 
   const { data, isLoading } = useQuery({
-    queryKey: ['moderation', params.toString()],
-    queryFn: () => api<AdminReportList>(`/admin/moderation/reports?${params}`),
+    queryKey: ['moderation', query.toString()],
+    queryFn: () => api<AdminReportList>(`/admin/moderation/reports?${query}`),
     refetchInterval: poll,
   })
 
@@ -67,35 +94,52 @@ export function ModerationPage() {
   const items = data?.items ?? []
   const visibleIds = useMemo(() => items.map((r) => r.id), [items])
   const allSelected = visibleIds.length > 0 && visibleIds.every((id) => selected.includes(id))
+  const selectedRows = items.filter((r) => selected.includes(r.id))
+  const canBulkPublish =
+    selectedRows.length > 0 && selectedRows.every((r) => r.confidence_score >= 60)
 
   const action = useMutation({
     mutationFn: async ({
       id,
       kind,
+      reasonCode,
     }: {
       id: string
-      kind: 'approve' | 'reject' | 'flag'
-    }) => api(`/admin/moderation/reports/${id}/${kind}`, { method: 'POST' }),
+      kind: ActionKind
+      reasonCode?: string
+    }) =>
+      api(`/admin/moderation/reports/${id}/${kind}`, {
+        method: 'POST',
+        body: JSON.stringify(reasonCode ? { reason: reasonCode } : {}),
+      }),
     onSuccess: () => {
       setActionError('')
+      setPendingAction(null)
       qc.invalidateQueries({ queryKey: ['moderation'] })
       qc.invalidateQueries({ queryKey: ['dashboard'] })
       qc.invalidateQueries({ queryKey: ['zones'] })
+      qc.invalidateQueries({ queryKey: ['audit'] })
       setSelected([])
     },
     onError: (err: Error) => setActionError(err.message),
   })
 
   const bulk = useMutation({
-    mutationFn: (kind: 'approve' | 'reject' | 'flag') =>
+    mutationFn: ({ kind, reasonCode }: { kind: ActionKind; reasonCode?: string }) =>
       api('/admin/moderation/reports/bulk', {
         method: 'POST',
-        body: JSON.stringify({ report_ids: selected, action: kind }),
+        body: JSON.stringify({
+          report_ids: selected,
+          action: kind,
+          reason: reasonCode,
+        }),
       }),
     onSuccess: () => {
       setActionError('')
+      setPendingAction(null)
       qc.invalidateQueries({ queryKey: ['moderation'] })
       qc.invalidateQueries({ queryKey: ['dashboard'] })
+      qc.invalidateQueries({ queryKey: ['audit'] })
       setSelected([])
     },
     onError: (err: Error) => setActionError(err.message),
@@ -105,17 +149,63 @@ export function ModerationPage() {
     setSelected(checked ? visibleIds : [])
   }
 
+  function requestAction(kind: ActionKind, ids: string[]) {
+    if (kind === 'approve') {
+      if (ids.length === 1) action.mutate({ id: ids[0], kind })
+      else bulk.mutate({ kind })
+      return
+    }
+    setReason('wrong_location')
+    setPendingAction({ kind, ids })
+  }
+
+  function confirmReasonedAction() {
+    if (!pendingAction) return
+    if (pendingAction.ids.length === 1) {
+      action.mutate({ id: pendingAction.ids[0], kind: pendingAction.kind, reasonCode: reason })
+    } else {
+      bulk.mutate({ kind: pendingAction.kind, reasonCode: reason })
+    }
+  }
+
   return (
     <div className="space-y-4">
       <PageHeader
         title="Review tags"
-        description="Decide which traveler tags should appear on the public map. Search a place or tag so you are not scrolling through everything at once."
+        description="Publish what belongs on the map, mark wrong tags, or hold anything that still needs a look. Hold comes first."
       />
 
       {actionError ? (
         <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
           {actionError}
         </div>
+      ) : null}
+
+      {pendingAction ? (
+        <Card className="p-4 space-y-3 border-amber-200 bg-amber-50">
+          <p className="text-sm font-bold text-sw-ink">
+            {pendingAction.kind === 'reject' ? 'Why is this wrong?' : 'Why is this on hold?'}
+          </p>
+          <select
+            value={reason}
+            onChange={(e) => setReason(e.target.value as typeof reason)}
+            className="border border-sw-border rounded-xl px-3 py-2 text-sm bg-white w-full md:w-80"
+          >
+            {MODERATION_REASONS.map((code) => (
+              <option key={code} value={code}>
+                {moderationReasonLabel(code)}
+              </option>
+            ))}
+          </select>
+          <div className="flex gap-2">
+            <Button onClick={confirmReasonedAction}>
+              {pendingAction.kind === 'reject' ? 'Mark wrong' : 'Hold'}
+            </Button>
+            <Button variant="ghost" onClick={() => setPendingAction(null)}>
+              Cancel
+            </Button>
+          </div>
+        </Card>
       ) : null}
 
       <div className="flex flex-col lg:flex-row gap-2">
@@ -165,27 +255,36 @@ export function ModerationPage() {
             className="border border-sw-border rounded-xl px-3 py-2 text-sm bg-sw-surface"
           />
         </div>
-        <p className="text-xs text-sw-muted mt-2">
-          Example: type “IT Park” or “lahug” to only see tags from that area.
-        </p>
+        {contributorId ? (
+          <p className="text-xs text-sw-muted mt-2">
+            Showing tags from this person.{' '}
+            <button type="button" className="font-bold text-sw-primary-dark" onClick={() => setContributorId('')}>
+              Clear
+            </button>
+          </p>
+        ) : (
+          <p className="text-xs text-sw-muted mt-2">
+            Example: type “IT Park” or “lahug” to only see tags from that area.
+          </p>
+        )}
       </Card>
 
       {selected.length > 0 ? (
         <div className="flex gap-2 flex-wrap items-center">
-          <Button onClick={() => bulk.mutate('approve')}>
-            Approve selected ({selected.length})
-          </Button>
-          <Button variant="warning" onClick={() => bulk.mutate('flag')}>
-            Flag selected
-          </Button>
-          <Button variant="danger" onClick={() => bulk.mutate('reject')}>
-            Reject selected
-          </Button>
-          <button
-            type="button"
-            className="text-sm font-bold text-sw-muted"
-            onClick={() => setSelected([])}
+          <Button
+            onClick={() => requestAction('approve', selected)}
+            disabled={!canBulkPublish}
+            title={canBulkPublish ? undefined : 'Bulk publish is only for areas where people already agree'}
           >
+            Publish selected ({selected.length})
+          </Button>
+          <Button variant="warning" onClick={() => requestAction('flag', selected)}>
+            Hold selected
+          </Button>
+          <Button variant="danger" onClick={() => requestAction('reject', selected)}>
+            Mark wrong
+          </Button>
+          <button type="button" className="text-sm font-bold text-sw-muted" onClick={() => setSelected([])}>
             Clear selection
           </button>
         </div>
@@ -208,6 +307,7 @@ export function ModerationPage() {
                   <th className="p-3 font-bold text-sw-muted text-[11px] uppercase">Place or area</th>
                   <th className="p-3 font-bold text-sw-muted text-[11px] uppercase">Kind</th>
                   <th className="p-3 font-bold text-sw-muted text-[11px] uppercase">Tags</th>
+                  <th className="p-3 font-bold text-sw-muted text-[11px] uppercase">Who</th>
                   <th className="p-3 font-bold text-sw-muted text-[11px] uppercase">Agreement</th>
                   <th className="p-3 font-bold text-sw-muted text-[11px] uppercase">Status</th>
                   <th className="p-3 font-bold text-sw-muted text-[11px] uppercase">Actions</th>
@@ -215,9 +315,9 @@ export function ModerationPage() {
               </thead>
               <tbody>
                 {isLoading ? (
-                  <tr><td colSpan={7} className="p-6 text-sw-muted">Loading tags…</td></tr>
+                  <tr><td colSpan={8} className="p-6 text-sw-muted">Loading tags…</td></tr>
                 ) : items.length === 0 ? (
-                  <tr><td colSpan={7} className="p-6 text-sw-muted">Nothing in this list. Try another filter.</td></tr>
+                  <tr><td colSpan={8} className="p-6 text-sw-muted">Nothing in this list. Try another filter.</td></tr>
                 ) : (
                   items.map((r) => (
                     <tr
@@ -233,9 +333,7 @@ export function ModerationPage() {
                           checked={selected.includes(r.id)}
                           onChange={(e) =>
                             setSelected((prev) =>
-                              e.target.checked
-                                ? [...prev, r.id]
-                                : prev.filter((x) => x !== r.id),
+                              e.target.checked ? [...prev, r.id] : prev.filter((x) => x !== r.id),
                             )
                           }
                         />
@@ -248,14 +346,15 @@ export function ModerationPage() {
                       </td>
                       <td className="p-3 font-semibold">{categoryLabel(r.category)}</td>
                       <td className="p-3 text-sw-muted max-w-[160px] truncate">{r.tags.join(', ') || '—'}</td>
+                      <td className="p-3 text-sw-muted">{r.contributor_label || 'Traveler'}</td>
                       <td className="p-3">{Math.round(r.confidence_score)}%</td>
                       <td className="p-3">
                         <Badge variant="status" value={r.visibility_status} label={statusLabel(r.visibility_status)} />
                       </td>
                       <td className="p-3 space-x-1" onClick={(e) => e.stopPropagation()}>
-                        <button type="button" className="text-sw-primary-dark font-bold text-xs" onClick={() => action.mutate({ id: r.id, kind: 'approve' })}>Approve</button>
-                        <button type="button" className="text-amber-700 font-bold text-xs" onClick={() => action.mutate({ id: r.id, kind: 'flag' })}>Flag</button>
-                        <button type="button" className="text-sw-alert font-bold text-xs" onClick={() => action.mutate({ id: r.id, kind: 'reject' })}>Reject</button>
+                        <button type="button" className="text-sw-primary-dark font-bold text-xs" onClick={() => requestAction('approve', [r.id])}>Publish</button>
+                        <button type="button" className="text-amber-700 font-bold text-xs" onClick={() => requestAction('flag', [r.id])}>Hold</button>
+                        <button type="button" className="text-sw-alert font-bold text-xs" onClick={() => requestAction('reject', [r.id])}>Wrong</button>
                       </td>
                     </tr>
                   ))
@@ -285,7 +384,7 @@ export function ModerationPage() {
                 <strong>{categoryLabel(detail.category)}</strong>
                 {detail.tags.length ? ` (${detail.tags.join(', ')})` : ''}.{' '}
                 {detail.cell_context.threshold_met
-                  ? 'Enough people already agree, so approving it will publish it to the traveler map.'
+                  ? 'Enough people already agree, so publishing it will show it on the traveler map.'
                   : `${Math.max(detail.cell_context.threshold - detail.cell_context.distinct_contributors, 0)} more person(s) tagging the same thing would auto-publish this area.`}
               </p>
               {detail.note_text ? (
@@ -301,8 +400,20 @@ export function ModerationPage() {
                 <Metric label="How much they agree" value={`${Math.round(detail.cell_context.category_agreement * 100)}%`} />
               </div>
               <div>
-                <div className="text-[11px] font-bold uppercase text-sw-muted">Most common tag here</div>
-                <div className="font-semibold mt-1">{categoryLabel(detail.cell_context.top_category)}</div>
+                <div className="text-[11px] font-bold uppercase text-sw-muted">Sent by</div>
+                <div className="font-semibold mt-1">{detail.contributor_label || 'Traveler'}</div>
+                {detail.contributor_id ? (
+                  <button
+                    type="button"
+                    className="text-xs font-bold text-sw-primary-dark mt-1"
+                    onClick={() => {
+                      setContributorId(detail.contributor_id!)
+                      setQueue('all')
+                    }}
+                  >
+                    Other tags from this person
+                  </button>
+                ) : null}
               </div>
               <div
                 className="rounded-xl p-3 text-xs font-semibold"
@@ -312,13 +423,13 @@ export function ModerationPage() {
                 }}
               >
                 {detail.cell_context.threshold_met
-                  ? 'Ready for the map — approve if this looks right.'
-                  : 'Not enough matching tags yet. Approve only if you personally know this place.'}
+                  ? 'Ready for the map — publish if this looks right.'
+                  : 'Not enough matching tags yet. Publish only if you personally know this place.'}
               </div>
               <div className="flex gap-2 pt-2 flex-wrap">
-                <Button className="flex-1 min-w-[6rem]" onClick={() => action.mutate({ id: detail.id, kind: 'approve' })}>Approve</Button>
-                <Button variant="warning" onClick={() => action.mutate({ id: detail.id, kind: 'flag' })}>Flag</Button>
-                <Button variant="danger" onClick={() => action.mutate({ id: detail.id, kind: 'reject' })}>Reject</Button>
+                <Button className="flex-1 min-w-[6rem]" onClick={() => requestAction('approve', [detail.id])}>Publish</Button>
+                <Button variant="warning" onClick={() => requestAction('flag', [detail.id])}>Hold</Button>
+                <Button variant="danger" onClick={() => requestAction('reject', [detail.id])}>Wrong</Button>
               </div>
             </div>
           )}

@@ -50,6 +50,15 @@ class ReportSubmissionResponse(ReportPublic):
     aggregation: AggregationFeedback
 
 
+class SensitiveSitePublic(ORMModel):
+    """Authenticated map overlay: building footprint only, no operational names."""
+
+    kind: str
+    lat: float
+    lng: float
+    radius_m: float
+
+
 class PlaceTagMarker(ORMModel):
     """Map pin for a tagged report (e.g. USPF campus tags)."""
 

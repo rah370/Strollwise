@@ -20,6 +20,7 @@ import '../../shared/models/place.dart';
 import '../../shared/models/place_list_item.dart';
 import '../../shared/models/place_tag_marker.dart';
 import '../../shared/models/report.dart';
+import '../../shared/models/sensitive_site.dart';
 import '../../shared/models/user_contributions.dart';
 import '../../shared/models/visit_pin.dart';
 import '../../shared/models/user_me.dart';
@@ -358,6 +359,29 @@ final ownPendingTagPinsProvider =
     if (list is! List) return const [];
     return list
         .map((e) => PlaceTagMarker.fromJson(e as Map<String, dynamic>))
+        .toList();
+  } on DioException {
+    return const [];
+  } on FormatException {
+    return const [];
+  } on TypeError {
+    return const [];
+  }
+});
+
+final sensitiveSitesProvider = FutureProvider<List<SensitiveSite>>((ref) async {
+  final dio = ref.watch(dioProvider);
+  final token = ref.watch(authTokenProvider);
+  if (!isUsableAccessToken(token)) return const [];
+  try {
+    final response = await dio.get(
+      '/reports/sensitive-sites',
+      options: Options(headers: {'Authorization': 'Bearer $token'}),
+    );
+    final list = response.data;
+    if (list is! List) return const [];
+    return list
+        .map((e) => SensitiveSite.fromJson(e as Map<String, dynamic>))
         .toList();
   } on DioException {
     return const [];

@@ -10,6 +10,8 @@ export type AdminReport = {
   duplicate_count: number
   created_at: string
   area_name?: string | null
+  contributor_id?: string | null
+  contributor_label?: string | null
 }
 
 export type AdminReportList = {
@@ -156,6 +158,13 @@ export type AdminAuditEntry = {
   entity_type: string
   entity_id?: string | null
   created_at: string
+  actor_label?: string | null
+  area_name?: string | null
+  category?: string | null
+  tags?: string[]
+  result?: string | null
+  reason?: string | null
+  payload_json?: Record<string, unknown> | null
 }
 
 export type AdminAnalyticsOverview = {

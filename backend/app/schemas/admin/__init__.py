@@ -14,6 +14,7 @@ class ModerationQueueFilter(str, Enum):
     REMOVED = "removed"
     DUPLICATES = "duplicates"
     NEAR_THRESHOLD = "near_threshold"
+    MIXED_AGREEMENT = "mixed_agreement"
     ALL = "all"
 
 
@@ -22,6 +23,19 @@ class ModerationAction(str, Enum):
     REJECT = "reject"
     FLAG = "flag"
     KEEP_PENDING = "keep_pending"
+
+
+MODERATION_REASONS = (
+    "wrong_location",
+    "wrong_kind",
+    "spam",
+    "sensitive",
+    "other",
+)
+
+
+class ModerationActionRequest(BaseModel):
+    reason: str | None = None
 
 
 class AdminReportSummary(BaseModel):
@@ -37,6 +51,8 @@ class AdminReportSummary(BaseModel):
     created_at: datetime
     image_url: str | None = None
     area_name: str | None = None
+    contributor_id: UUID | None = None
+    contributor_label: str = "Traveler"
 
 
 class AdminCellContext(BaseModel):
@@ -65,6 +81,7 @@ class AdminReportListResponse(BaseModel):
 class ModerationBulkRequest(BaseModel):
     report_ids: list[UUID]
     action: ModerationAction
+    reason: str | None = None
 
 
 class ModerationBulkResult(BaseModel):
@@ -174,6 +191,12 @@ class AdminAuditEntry(BaseModel):
     entity_id: str | None = None
     payload_json: dict | None = None
     created_at: datetime
+    actor_label: str | None = None
+    area_name: str | None = None
+    category: str | None = None
+    tags: list[str] = Field(default_factory=list)
+    result: str | None = None
+    reason: str | None = None
 
 
 class AdminAuditListResponse(BaseModel):

@@ -7,6 +7,7 @@ from app.api.deps import get_current_admin
 from app.core.database import get_db
 from app.models.user import User
 from app.schemas.admin import AdminSystemConfig, AdminSystemConfigUpdate
+from app.services.audit_service import AuditService
 from app.services.system_settings_service import SystemSettingsService
 
 router = APIRouter(prefix="/config", tags=["admin"])
@@ -25,9 +26,15 @@ def get_config(
 def update_config(
     payload: AdminSystemConfigUpdate,
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_admin),
+    admin: User = Depends(get_current_admin),
 ) -> AdminSystemConfig:
     updates = payload.model_dump(exclude_none=True)
     data = SystemSettingsService(db).update_config(updates)
+    AuditService(db).record(
+        actor_user_id=admin.id,
+        action_type="config.update",
+        entity_type="config",
+        payload={"updates": updates},
+    )
     db.commit()
     return AdminSystemConfig(**data)

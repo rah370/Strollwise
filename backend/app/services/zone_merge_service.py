@@ -381,8 +381,12 @@ class ZoneMergeService:
             peak_label = "4PM-9PM"
             top_activities = list(catalog_entry.characteristics[:4]) if catalog_entry else []
 
+        from app.services.sensitive_sites import public_place_name
+
         landmark_name, _ = landmark_for_centroid(centroid_lat, centroid_lng)
-        display_name = place.display_name
+        display_name = public_place_name(
+            place.display_name, float(centroid_lat), float(centroid_lng)
+        )
 
         slug_base = slugify(f"{place.slug}-{traveler_mix}")
         slug = slug_base
@@ -394,7 +398,7 @@ class ZoneMergeService:
 
         live_status = self._live_status(behavior, None, crowd_level)
         summary = self._traveler_summary(
-            place.display_name,
+            display_name,
             traveler_mix,
             report_count,
             local_presence,

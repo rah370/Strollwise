@@ -68,6 +68,21 @@ export function UsersPage() {
     onSuccess: () => {
       setToggleError('')
       qc.invalidateQueries({ queryKey: ['users'] })
+      qc.invalidateQueries({ queryKey: ['audit'] })
+    },
+    onError: (err: Error) => setToggleError(err.message),
+  })
+
+  const pause = useMutation({
+    mutationFn: ({ id, is_active }: { id: string; is_active: boolean }) =>
+      api(`/admin/users/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ is_active }),
+      }),
+    onSuccess: () => {
+      setToggleError('')
+      qc.invalidateQueries({ queryKey: ['users'] })
+      qc.invalidateQueries({ queryKey: ['audit'] })
     },
     onError: (err: Error) => setToggleError(err.message),
   })
@@ -221,6 +236,16 @@ export function UsersPage() {
               user={selected}
               contributions={contributions}
               onToggleAdmin={() => toggle.mutate({ id: selected.id, is_admin: !selected.is_admin })}
+              onPause={() => {
+                const next = !selected.is_active
+                const ok = window.confirm(
+                  next
+                    ? `Resume ${selected.display_name || selected.email}? They will be able to sign in again.`
+                    : `Pause ${selected.display_name || selected.email}? They will not be able to sign in until you resume the account.`,
+                )
+                if (!ok) return
+                pause.mutate({ id: selected.id, is_active: next })
+              }}
             />
           )}
         </Card>
@@ -233,10 +258,12 @@ function UserSummary({
   user,
   contributions,
   onToggleAdmin,
+  onPause,
 }: {
   user: AdminUser
   contributions?: AdminUserContributions
   onToggleAdmin: () => void
+  onPause: () => void
 }) {
   const hometown = [user.city_of_origin, user.country_of_origin].filter(Boolean).join(', ')
   const visible = contributions?.visible_reports ?? user.visible_reports ?? 0
@@ -265,6 +292,9 @@ function UserSummary({
       </dl>
       <Button variant="ghost" className="w-full" onClick={onToggleAdmin}>
         {user.is_admin ? 'Remove admin access' : 'Make this person an admin'}
+      </Button>
+      <Button variant={user.is_active ? 'warning' : 'secondary'} className="w-full" onClick={onPause}>
+        {user.is_active ? 'Pause account' : 'Resume account'}
       </Button>
     </div>
   )

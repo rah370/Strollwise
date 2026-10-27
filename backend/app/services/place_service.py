@@ -165,6 +165,12 @@ class PlaceService:
         )
         place.centroid_lat = float(lat)
         place.centroid_lng = float(lng)
+        from app.services.sensitive_sites import public_place_name, text_names_facility
+
+        if text_names_facility(place.display_name):
+            place.display_name = public_place_name(
+                place.display_name, place.centroid_lat, place.centroid_lng
+            )
         active_cells = [c for c in scoped_cells if c.h3_index in h3_indexes]
         place.report_count = sum(c.report_count for c in active_cells)
         place.confidence_score = round(

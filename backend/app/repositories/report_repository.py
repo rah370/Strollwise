@@ -253,6 +253,7 @@ class ReportRepository:
         category: str | None = None,
         tag: str | None = None,
         location_h3_indexes: list[str] | None = None,
+        user_id: UUID | None = None,
         page: int = 1,
         page_size: int = 50,
     ) -> tuple[list[Report], int]:
@@ -266,6 +267,9 @@ class ReportRepository:
         if h3_index:
             stmt = stmt.where(Report.h3_index == h3_index)
             count_stmt = count_stmt.where(Report.h3_index == h3_index)
+        if user_id:
+            stmt = stmt.where(Report.user_id == user_id)
+            count_stmt = count_stmt.where(Report.user_id == user_id)
         if category:
             stmt = stmt.where(Report.category == category.lower())
             count_stmt = count_stmt.where(Report.category == category.lower())
