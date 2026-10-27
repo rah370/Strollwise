@@ -87,6 +87,13 @@ def engine():
     return _build_engine()
 
 
+@pytest.fixture(autouse=True)
+def clear_settings_cache():
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
+
+
 @pytest.fixture()
 def db_session(engine):
     TestSession = sessionmaker(

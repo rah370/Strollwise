@@ -588,7 +588,7 @@ class _TagSubmissionScreenState extends ConsumerState<TagSubmissionScreen> {
     final identityHint = tagsNameFacility(
       [
         ..._selectedDetails,
-        if (_selectedTypeLabel != null) _selectedTypeLabel!,
+        ?_selectedTypeLabel,
         noteController.text,
       ],
       null,
