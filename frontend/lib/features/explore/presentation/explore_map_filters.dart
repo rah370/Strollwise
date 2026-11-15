@@ -493,6 +493,3 @@ class _FilterChipWrap extends StatelessWidget {
     );
   }
 }
-
-/// Kept for imports that still reference the old name.
-typedef ExploreMapFilters = ExploreMapFilterBar;

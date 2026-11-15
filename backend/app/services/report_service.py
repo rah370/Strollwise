@@ -59,13 +59,6 @@ class ReportSubmissionResult:
     aggregation: AggregationFeedback
 
 
-def _tags_refer_to_uspf(tags: list[str] | None) -> bool:
-    """True when any tag mentions USPF (e.g. Flutter sends 'uspf campus' as one token)."""
-    if not tags:
-        return False
-    return any("uspf" in str(t).lower() for t in tags)
-
-
 class ReportService:
     def __init__(self, db: Session) -> None:
         self.db = db
@@ -238,9 +231,6 @@ class ReportService:
 
     def reports_in_zone(self, zone_h3_indexes: list[str]) -> list[Report]:
         return self.reports.list_by_h3_indexes(zone_h3_indexes)
-
-    def report_by_id(self, report_id: UUID) -> Report | None:
-        return self.reports.get_by_id(report_id)
 
     def list_place_markers(
         self,

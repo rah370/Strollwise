@@ -841,59 +841,6 @@ class _CachedZones {
   final DateTime savedAt;
 }
 
-class CityPulseSnapshot {
-  const CityPulseSnapshot({
-    required this.cityActivity,
-    required this.crowdLevelPercent,
-    required this.localPresencePercent,
-    required this.peakTimeWindow,
-    required this.topCategories,
-    required this.activeZoneCount,
-  });
-
-  final String cityActivity;
-  final double crowdLevelPercent;
-  final double localPresencePercent;
-  final String? peakTimeWindow;
-  final List<String> topCategories;
-  final int activeZoneCount;
-
-  factory CityPulseSnapshot.fromJson(Map<String, dynamic> json) {
-    return CityPulseSnapshot(
-      cityActivity: (json['city_activity'] ?? 'quiet').toString(),
-      crowdLevelPercent: _asDouble(json['crowd_level_percent']),
-      localPresencePercent: _asDouble(json['local_presence_percent']),
-      peakTimeWindow: json['peak_time_window'] as String?,
-      topCategories: ((json['top_active_categories'] as List?) ?? const [])
-          .map((e) => e.toString())
-          .toList(),
-      activeZoneCount: (json['active_zone_count'] is num)
-          ? (json['active_zone_count'] as num).toInt()
-          : 0,
-    );
-  }
-
-  static double _asDouble(Object? v) =>
-      v is num ? v.toDouble() : double.tryParse(v?.toString() ?? '') ?? 0.0;
-}
-
-final cityPulseProvider = FutureProvider<CityPulseSnapshot>((ref) async {
-  final dio = ref.watch(dioProvider);
-  try {
-    final response = await dio.get('/analytics/city-pulse');
-    return CityPulseSnapshot.fromJson(response.data as Map<String, dynamic>);
-  } on DioException {
-    return const CityPulseSnapshot(
-      cityActivity: 'active',
-      crowdLevelPercent: 64,
-      localPresencePercent: 52,
-      peakTimeWindow: '4PM-9PM',
-      topCategories: ['food', 'transport', 'cafes'],
-      activeZoneCount: 8,
-    );
-  }
-});
-
 /// Set when user picks a search result so area behavior loads for that point.
 final mapSearchFocusProvider = StateProvider<LatLng?>((ref) => null);
 
@@ -1698,7 +1645,6 @@ class TagSubmissionController
         ref.invalidate(ownVisitHistoryProvider);
         ref.invalidate(feedProvider);
         ref.invalidate(zoneFeedProvider);
-        ref.invalidate(cityPulseProvider);
         final feedback = _demoFeedback(payload);
         await _applyZoneValidationAfterTag(ref, payload, feedback);
         ref.read(userContributionsProvider.notifier).ingestSubmitted(
@@ -1756,7 +1702,6 @@ class TagSubmissionController
       ref.invalidate(ownVisitHistoryProvider);
       ref.invalidate(feedProvider);
       ref.invalidate(zoneFeedProvider);
-      ref.invalidate(cityPulseProvider);
       await _applyZoneValidationAfterTag(ref, payload, feedback);
       try {
         await ref.read(userContributionsProvider.notifier).refresh();

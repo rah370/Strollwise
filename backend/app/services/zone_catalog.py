@@ -1,7 +1,6 @@
 """Reference zone catalog for Cebu metro (behavioral defaults)."""
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass
 
 from app.core.config import settings
@@ -73,27 +72,6 @@ def cells_for_catalog_zone(
     within.sort(key=lambda pair: pair[0])
     cap = _max_cells_for_radius(entry.radius_km)
     return [cell for _, cell in within[:cap]]
-
-
-def ring_from_center_km(
-    lat: float,
-    lng: float,
-    radius_km: float,
-    *,
-    segments: int = 48,
-) -> list[list[float]]:
-    """Closed GeoJSON ring [lng, lat]: approximate circle with true km radius."""
-    m_per_deg_lat = 111_320.0
-    m_per_deg_lng = 111_320.0 * math.cos(math.radians(lat))
-    radius_m = radius_km * 1000.0
-    ring: list[list[float]] = []
-    for i in range(segments):
-        angle = 2.0 * math.pi * i / segments
-        d_lat = (radius_m * math.cos(angle)) / m_per_deg_lat
-        d_lng = (radius_m * math.sin(angle)) / m_per_deg_lng
-        ring.append([lng + d_lng, lat + d_lat])
-    ring.append(ring[0])
-    return ring
 
 
 CEBU_ZONE_CATALOG: tuple[ZoneCatalogEntry, ...] = (

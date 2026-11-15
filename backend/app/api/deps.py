@@ -89,17 +89,3 @@ def verify_admin_token(token: str, db: Session) -> User:
             detail="Admin access required",
         )
     return user
-
-
-def get_optional_user(
-    token: str | None = Depends(oauth2_scheme),
-    db: Session = Depends(get_db),
-) -> User | None:
-    if not token:
-        return None
-    try:
-        payload = decode_access_token(token)
-        user_id = UUID(payload.get("sub") or "")
-    except Exception:
-        return None
-    return UserRepository(db).get_by_id(user_id)

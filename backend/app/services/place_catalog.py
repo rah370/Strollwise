@@ -24,10 +24,6 @@ class CatalogPlace:
     tag_aliases: frozenset[str] = frozenset()
 
 
-def _polygon(ring: list[list[float]]) -> dict[str, Any]:
-    return {"type": "Polygon", "coordinates": [ring]}
-
-
 def _place_type_for_zone(entry: ZoneCatalogEntry) -> str:
     zt = entry.zone_type.upper()
     if zt == "LOCAL":

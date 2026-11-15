@@ -1,6 +1,6 @@
-import { statusStyles, lifecycleStyles, travelerMixStyles } from '../theme/colors'
+import { statusStyles, lifecycleStyles } from '../theme/colors'
 
-type BadgeVariant = 'status' | 'lifecycle' | 'mix' | 'default'
+type BadgeVariant = 'status' | 'lifecycle' | 'default'
 
 export function Badge({
   label,
@@ -16,7 +16,6 @@ export function Badge({
 
   if (variant === 'status' && statusStyles[key]) style = statusStyles[key]
   if (variant === 'lifecycle' && lifecycleStyles[key]) style = lifecycleStyles[key]
-  if (variant === 'mix' && travelerMixStyles[key]) style = travelerMixStyles[key]
 
   return (
     <span

@@ -487,26 +487,6 @@ String profileLocationLine(UserMeModel? user) {
   return bits.join(', ');
 }
 
-String userTypeLabel(String? userType, String travelerType) {
-  switch ((userType ?? '').toLowerCase()) {
-    case 'local_resident':
-      return 'Local resident';
-    case 'international_visitor':
-      return 'International visitor';
-    case 'domestic_traveler':
-      return 'Domestic traveler';
-    default:
-      switch (travelerType.toLowerCase()) {
-        case 'local':
-          return 'Local traveler';
-        case 'international':
-          return 'International visitor';
-        default:
-          return 'Mixed traveler';
-      }
-  }
-}
-
 bool showsVerifiedMark(UserMeModel? user) {
   if (user == null) return false;
   return user.isAdmin || user.acceptedResearchConsent;

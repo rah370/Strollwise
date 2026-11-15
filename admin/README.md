@@ -60,7 +60,7 @@ Production `VITE_API_URL` must be the public API origin (see [`docs/HOSTING.md`]
 | `/users` | User management |
 | `/catalog` | Cebu zone catalog |
 | `/analytics` | Charts + CSV/JSON export |
-| `/pipeline` | Rebuild aggregates/places/zones |
+| `/pipeline` | Redirects to Settings → Map refresh |
 | `/settings` | Runtime validation thresholds |
 | `/audit` | Audit log viewer |
 

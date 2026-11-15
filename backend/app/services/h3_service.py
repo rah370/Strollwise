@@ -29,11 +29,7 @@ def _compat(new_name: str, *old_names: str):
 _latlng_to_cell = _compat("latlng_to_cell", "geo_to_h3")
 _cell_to_boundary = _compat("cell_to_boundary", "h3_to_geo_boundary")
 _grid_disk = _compat("grid_disk", "k_ring")
-_are_neighbors = _compat("are_neighbor_cells", "h3_indexes_are_neighbors")
-_compact = _compat("compact_cells", "compact")
-_uncompact = _compat("uncompact_cells", "uncompact")
 _cell_to_latlng = _compat("cell_to_latlng", "h3_to_geo")
-_get_resolution = _compat("get_resolution", "h3_get_resolution")
 _cells_to_multi_polygon = getattr(h3, "cells_to_multi_polygon", None) or getattr(
     h3, "h3_set_to_multi_polygon", None
 )
@@ -108,26 +104,6 @@ def get_neighbors(h3_index: str, ring_size: int = 1) -> set[str]:
     disk = set(_grid_disk(h3_index, ring_size))
     disk.discard(h3_index)
     return disk
-
-
-def are_neighbors(a: str, b: str) -> bool:
-    try:
-        return bool(_are_neighbors(a, b))
-    except Exception:
-        return b in get_neighbors(a, 1)
-
-
-def compact_cells(cells: Iterable[str]) -> list[str]:
-    return list(_compact(list(cells)))
-
-
-def expand_cells(cells: Iterable[str], resolution: int | None = None) -> list[str]:
-    res = resolution or settings.h3_resolution
-    return list(_uncompact(list(cells), res))
-
-
-def cell_resolution(h3_index: str) -> int:
-    return int(_get_resolution(h3_index))
 
 
 def cells_to_multipolygon(cells: Iterable[str]) -> list[list[list[list[float]]]]:

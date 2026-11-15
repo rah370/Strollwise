@@ -9,11 +9,6 @@ from app.services import h3_service
 
 class PolygonService:
     @staticmethod
-    def cells_to_geojson_multipolygon(cells: Iterable[str]) -> dict[str, Any]:
-        coords = h3_service.cells_to_multipolygon(cells)
-        return {"type": "MultiPolygon", "coordinates": coords}
-
-    @staticmethod
     def cells_to_geojson_polygon(cells: Iterable[str]) -> dict[str, Any]:
         """If the merged shape is a single polygon, return a GeoJSON Polygon; otherwise MultiPolygon."""
         coords = h3_service.cells_to_multipolygon(cells)

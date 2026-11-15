@@ -137,12 +137,6 @@ export async function fetchMe() {
   return api<{ email: string; is_admin: boolean; display_name?: string }>('/auth/me')
 }
 
-export function exportUrl(path: string, fmt: 'json' | 'csv') {
-  const token = getToken()
-  const sep = path.includes('?') ? '&' : '?'
-  return `${API_URL}/api/v1${path}${sep}fmt=${fmt}&token=${token ?? ''}`
-}
-
 export function apiDocsUrl(): string | null {
   const token = getToken()
   if (!token) return null

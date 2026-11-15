@@ -20,12 +20,6 @@ class CatalogRepository:
     def get(self, zone_id: str) -> ZoneCatalogEntryModel | None:
         return self.db.get(ZoneCatalogEntryModel, zone_id)
 
-    def get_by_name(self, zone_name: str) -> ZoneCatalogEntryModel | None:
-        stmt = select(ZoneCatalogEntryModel).where(
-            ZoneCatalogEntryModel.zone_name == zone_name
-        )
-        return self.db.execute(stmt).scalar_one_or_none()
-
     def create(self, entry: ZoneCatalogEntryModel) -> ZoneCatalogEntryModel:
         self.db.add(entry)
         self.db.flush()

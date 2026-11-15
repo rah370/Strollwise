@@ -8,7 +8,6 @@ import { DashboardPage } from './pages/DashboardPage'
 import { ForgotPasswordPage } from './pages/ForgotPasswordPage'
 import { LoginPage } from './pages/LoginPage'
 import { ModerationPage } from './pages/ModerationPage'
-import { PipelinePage } from './pages/PipelinePage'
 import { SettingsPage } from './pages/SettingsPage'
 import { UsersPage } from './pages/UsersPage'
 import { ZonesPage } from './pages/ZonesPage'
@@ -36,7 +35,7 @@ export default function App() {
             <Route path="users" element={<UsersPage />} />
             <Route path="catalog" element={<CatalogPage />} />
             <Route path="analytics" element={<AnalyticsPage />} />
-            <Route path="pipeline" element={<PipelinePage />} />
+            <Route path="pipeline" element={<Navigate to="/settings?tab=map" replace />} />
             <Route path="settings" element={<SettingsPage />} />
             <Route path="audit" element={<AuditPage />} />
           </Route>

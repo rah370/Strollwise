@@ -22,32 +22,11 @@ from app.repositories.h3_repository import H3Repository
 from app.repositories.place_repository import PlaceRepository
 from app.repositories.zone_repository import ZoneRepository
 from app.services.place_catalog import catalog_by_slug
-from app.services.zone_catalog import catalog_entry_for_name
-from app.utils.traveler_mix_utils import traveler_mix_from_counts
-from app.services import h3_service
-from app.services.landmark_service import landmark_for_centroid
 from app.services.polygon_service import PolygonService
+from app.services.zone_catalog import catalog_entry_for_name
 from app.utils.enum_utils import slugify
 from app.utils.time_utils import label_for_peak_hours
-
-FUNCTION_GROUPS: dict[str, str] = {
-    FunctionType.FOOD_HOTSPOT.value: "food",
-    FunctionType.STUDENT_AREA.value: "education",
-    FunctionType.TRANSPORT_ZONE.value: "transport",
-    FunctionType.COMMERCIAL_ZONE.value: "commercial",
-    FunctionType.RESIDENTIAL_ZONE.value: "residential",
-    FunctionType.SAFETY_CONCERN.value: "safety",
-    FunctionType.BUSY_ZONE.value: "busy",
-    FunctionType.TOURIST_HOTSPOT.value: "tourist",
-    FunctionType.EMERGING_ZONE.value: "emerging",
-    FunctionType.UNKNOWN.value: "general",
-}
-
-BEHAVIOR_PREFIX = {
-    BehaviorType.LOCAL_AREA.value: "Local",
-    BehaviorType.TOURIST_AREA.value: "Tourist",
-    BehaviorType.MIXED_AREA.value: "Mixed",
-}
+from app.utils.traveler_mix_utils import traveler_mix_from_counts
 
 TRAVELER_MIX_LABEL = {
     "local": "Mostly local",
@@ -59,182 +38,6 @@ TRAVELER_MIX_TO_BEHAVIOR = {
     "local": BehaviorType.LOCAL_AREA.value,
     "mixed": BehaviorType.MIXED_AREA.value,
     "international": BehaviorType.TOURIST_AREA.value,
-}
-
-FUNCTION_DISPLAY_LABEL = {
-    FunctionType.FOOD_HOTSPOT.value: "Food Hotspot",
-    FunctionType.STUDENT_AREA.value: "Student Area",
-    FunctionType.TRANSPORT_ZONE.value: "Transport Zone",
-    FunctionType.COMMERCIAL_ZONE.value: "Commercial Zone",
-    FunctionType.RESIDENTIAL_ZONE.value: "Residential Zone",
-    FunctionType.SAFETY_CONCERN.value: "Safety Concern",
-    FunctionType.BUSY_ZONE.value: "Busy Zone",
-    FunctionType.TOURIST_HOTSPOT.value: "Tourist Hotspot",
-    FunctionType.EMERGING_ZONE.value: "Emerging Zone",
-    FunctionType.UNKNOWN.value: "Area",
-}
-
-LANDMARK_ZONE_INTELLIGENCE: dict[str, dict[str, object]] = {
-    "IT Park": {
-        "title": "IT Park Commercial + Food Zone",
-        "summary": (
-            "Mixed commercial food zone around Sugbo Mercado, cafes, coworking, "
-            "study spots, and nightlife. Strong evening and night activity."
-        ),
-        "activities": ["food crawl", "work", "nightlife", "study", "coworking"],
-    },
-    "Sugbo Mercado": {
-        "title": "IT Park Night Food + Social Zone",
-        "summary": (
-            "Mixed night-food cluster where office workers, students, and visitors "
-            "overlap for food crawl and social hangout behavior."
-        ),
-        "activities": ["food crawl", "nightlife", "social hangout", "cafes"],
-    },
-    "Colon Street": {
-        "title": "Colon Heritage + Local Food Zone",
-        "summary": (
-            "Local-heavy historical commercial corridor linking heritage walks, "
-            "Carbon market movement, street food, shopping, and daytime errands."
-        ),
-        "activities": ["heritage walk", "shopping", "local food", "street market"],
-    },
-    "Carbon Market": {
-        "title": "Carbon Market Local Food + Shopping Zone",
-        "summary": (
-            "Local-heavy wet-market and street-food behavior with practical shopping, "
-            "budget meals, and daytime crowd movement."
-        ),
-        "activities": ["wet market food", "shopping", "budget meals", "local errands"],
-    },
-    "Basilica Minore del Santo Niño": {
-        "title": "Basilica Heritage Walk Zone",
-        "summary": (
-            "Heritage and visitor movement zone connected to Basilica, Magellan's Cross, "
-            "Fort San Pedro, and nearby local food stops."
-        ),
-        "activities": ["heritage walk", "museum", "local food", "sightseeing"],
-    },
-    "Escario Street": {
-        "title": "Escario Capitol + Dining Zone",
-        "summary": (
-            "Mixed corridor between Fuente and Capitol with offices, restaurants, "
-            "clinics, and local errands — distinct from IT Park to the north."
-        ),
-        "activities": ["dining", "offices", "local errands", "capitol area"],
-    },
-    "Fuente Osmeña": {
-        "title": "Fuente Transit + Food Zone",
-        "summary": (
-            "Local-heavy transport and food node around Robinsons, Larsian, shopping, "
-            "commute routes, and evening movement."
-        ),
-        "activities": ["commute", "food", "shopping", "evening errands"],
-    },
-    "Larsian Fuente": {
-        "title": "Larsian Local BBQ Food Zone",
-        "summary": (
-            "Local food behavior zone for barbecue streets, budget meals, late snacks, "
-            "and practical group dining near Fuente."
-        ),
-        "activities": ["barbecue streets", "budget meals", "local food", "late night"],
-    },
-    "USC Main": {
-        "title": "USC Main Student Activity Zone",
-        "summary": (
-            "Student-centered area shaped by study hubs, budget meals, campus edges, "
-            "cafes, and after-class movement."
-        ),
-        "activities": ["study", "budget meals", "cafes", "student activity"],
-    },
-    "USC Talamban": {
-        "title": "USC Talamban Student + Cafe Zone",
-        "summary": (
-            "Local student route with campus movement, cheap food areas, study cafes, "
-            "and commute patterns."
-        ),
-        "activities": ["study", "budget meals", "coworking", "commute"],
-    },
-    "Busay / Tops": {
-        "title": "Busay Nature + Sunset Zone",
-        "summary": (
-            "Tourist-heavy nature escape zone for Tops, Temple of Leah, mountain cafes, "
-            "sightseeing, coffee, and sunset drives."
-        ),
-        "activities": ["sightseeing", "coffee", "mountain drive", "sunset"],
-    },
-    "Temple of Leah": {
-        "title": "Temple of Leah Sightseeing Zone",
-        "summary": (
-            "Tourist-heavy sightseeing cluster connected to Busay viewpoints, mountain "
-            "cafes, photo stops, and sunset activity."
-        ),
-        "activities": ["sightseeing", "photo spot", "coffee", "sunset"],
-    },
-    "Cebu Taoist Temple": {
-        "title": "Taoist Temple Cultural Viewpoint Zone",
-        "summary": (
-            "Tourist-heavy cultural viewpoint with city views, quiet walking, "
-            "photo stops, and daytime sightseeing movement."
-        ),
-        "activities": ["sightseeing", "photo spot", "quiet walk", "culture"],
-    },
-    "Sirao Flower Garden": {
-        "title": "Sirao Flower Garden Nature Zone",
-        "summary": (
-            "Highland tourist nature zone for flower garden visits, photo stops, "
-            "mountain drives, and weekend sightseeing."
-        ),
-        "activities": ["nature escape", "photo spot", "mountain drive", "weekend"],
-    },
-    "Mactan Resort Area": {
-        "title": "Mactan Resort + Beach Zone",
-        "summary": (
-            "Tourist-heavy resort and hotel behavior zone with beach clubs, diving, "
-            "seafood restaurants, buffets, and afternoon leisure."
-        ),
-        "activities": ["beach", "diving", "resorts", "seafood", "nightlife"],
-    },
-    "Magellan's Cross": {
-        "title": "Magellan's Cross Heritage Walk Zone",
-        "summary": (
-            "Heritage trail zone linked to Basilica, Fort San Pedro, museums, "
-            "walking tours, and downtown local food stops."
-        ),
-        "activities": ["heritage walk", "museum", "sightseeing", "local food"],
-    },
-    "Fort San Pedro": {
-        "title": "Fort San Pedro Heritage Zone",
-        "summary": (
-            "Historic fort and museum behavior zone near the downtown heritage "
-            "trail, waterfront movement, and local food stops."
-        ),
-        "activities": ["heritage walk", "museum", "waterfront", "local food"],
-    },
-    "South Bus Terminal": {
-        "title": "South Bus Terminal Backpacker Transit Zone",
-        "summary": (
-            "Budget traveler and local commute zone shaped by bus transfers, "
-            "cheap inns, local eateries, and early trip departures."
-        ),
-        "activities": ["budget travel", "commute", "local eateries", "transit"],
-    },
-    "Mango Avenue": {
-        "title": "Mango Avenue Nightlife + Food Zone",
-        "summary": (
-            "Evening activity corridor for nightlife, budget food, social hangouts, "
-            "and visible late-night movement."
-        ),
-        "activities": ["nightlife", "food crawl", "social hangout", "late night"],
-    },
-    "IL Corso / SRP": {
-        "title": "SRP Family + Seaside Walk Zone",
-        "summary": (
-            "Weekend family behavior zone around IL Corso, Ocean Park, seaside walking, "
-            "dining, and relaxed group activity."
-        ),
-        "activities": ["family bonding", "dining", "walking", "weekend local"],
-    },
 }
 
 
@@ -254,17 +57,6 @@ class ZoneMergeService:
         kept = {z.place_id for z in rebuilt}
         self._delete_zones_except_places(kept)
         return rebuilt
-
-    def recompute_near(self, seed_h3_indexes: Iterable[str]) -> list[MergedZone]:
-        expanded: set[str] = set()
-        for idx in seed_h3_indexes:
-            expanded.add(idx)
-            expanded.update(h3_service.get_neighbors(idx, ring_size=2))
-        cells = self.h3_repo.list_by_indexes(expanded)
-        if not cells:
-            return []
-        place_ids = {c.place_id for c in cells if c.place_id is not None}
-        return self.recompute_for_places(place_ids)
 
     def recompute_for_places(self, place_ids: Iterable) -> list[MergedZone]:
         ids = {pid for pid in place_ids if pid is not None}
@@ -321,16 +113,6 @@ class ZoneMergeService:
         for zone in stale:
             self.zone_repo.delete(zone)
         self.db.commit()
-
-    def _delete_zones_touching_h3_indexes(self, indexes: set[str]) -> None:
-        """Remove merged zones that used any of these cells so we never stack
-        stale geometry on top of fresh per-cell footprints."""
-        if not indexes:
-            return
-        for zone in list(self.zone_repo.list_active()):
-            existing = set(zone.source_h3_indexes_json or [])
-            if existing & indexes:
-                self.zone_repo.delete(zone)
 
     # ---------------------------------------------------------- zone assembly
 
@@ -397,7 +179,6 @@ class ZoneMergeService:
 
         from app.services.sensitive_sites import public_place_name
 
-        landmark_name, _ = landmark_for_centroid(centroid_lat, centroid_lng)
         display_name = public_place_name(
             place.display_name, float(centroid_lat), float(centroid_lng)
         )
@@ -527,50 +308,6 @@ class ZoneMergeService:
             for tag, count in (cell.tag_counts_json or {}).items():
                 tag_counts[tag] += int(count)
         return [tag for tag, _ in sorted(tag_counts.items(), key=lambda kv: kv[1], reverse=True)[:5]]
-
-    @staticmethod
-    def _landmark_profile(landmark: str) -> dict[str, object] | None:
-        return LANDMARK_ZONE_INTELLIGENCE.get(landmark)
-
-    @staticmethod
-    def _merge_profile_activities(
-        activities: list[str], profile: dict[str, object] | None
-    ) -> list[str]:
-        if not profile:
-            return activities
-        profile_activities = profile.get("activities")
-        if not isinstance(profile_activities, list):
-            return activities
-        merged: list[str] = []
-        for activity in [*profile_activities, *activities]:
-            if isinstance(activity, str) and activity not in merged:
-                merged.append(activity)
-        return merged[:6]
-
-    @staticmethod
-    def _summary(
-        behavior: str,
-        function_type: str,
-        report_count: int,
-        local_presence: float,
-        *,
-        profile: dict[str, object] | None = None,
-    ) -> str:
-        if profile and isinstance(profile.get("summary"), str):
-            return (
-                f"{profile['summary']} Confidence comes from {report_count} recent "
-                f"community tags with about {local_presence:.0f}% local presence."
-            )
-        function_label = FUNCTION_DISPLAY_LABEL.get(function_type, "Area")
-        behavior_label = {
-            BehaviorType.LOCAL_AREA.value: "locals",
-            BehaviorType.TOURIST_AREA.value: "visitors",
-            BehaviorType.MIXED_AREA.value: "locals and visitors",
-        }.get(behavior, "travelers")
-        return (
-            f"{function_label} with {report_count} recent community tags. "
-            f"Approximately {local_presence:.0f}% local presence, driven by {behavior_label}."
-        )
 
     @staticmethod
     def _live_status(behavior: str, function_type: str | None, crowd_level: float) -> str:

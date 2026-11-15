@@ -630,7 +630,7 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
               geometry: center,
               textField: isSelected
                   ? zoneHexagonTapLabel(zone)
-                  : _zoneTitle(zone),
+                  : zoneDisplayTitle(zone),
               textSize: isSelected
                   ? (currentZoom >= 12.5 ? 13.5 : 12.5)
                   : (currentZoom >= 12.5 ? 11.4 : 10.2),
@@ -1890,7 +1890,7 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
                         final zone = ref.read(selectedZoneProvider);
                         unawaited(
                           _markVisitedHere(
-                            label: zone == null ? null : _zoneTitle(zone),
+                            label: zone == null ? null : zoneDisplayTitle(zone),
                           ),
                         );
                       },
@@ -1994,8 +1994,6 @@ String _shortError(Object error) {
   if (msg.length <= 80) return msg;
   return '${msg.substring(0, 77)}...';
 }
-
-String _zoneTitle(ZoneModel zone) => zoneDisplayTitle(zone);
 
 double _zoneFillOpacity({
   required ExploreMapMode mode,
@@ -2740,7 +2738,7 @@ class _SelectedZoneCard extends StatelessWidget {
                         children: [
                           Flexible(
                             child: Text(
-                              _zoneTitle(zone),
+                              zoneDisplayTitle(zone),
                               overflow: TextOverflow.ellipsis,
                               style: const TextStyle(
                                 color: AppColors.primaryText,

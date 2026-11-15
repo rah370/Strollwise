@@ -35,17 +35,6 @@ def within_cebu_service_area(lat: float, lng: float) -> bool:
     )
 
 
-def bbox_contains(
-    lat: float,
-    lng: float,
-    min_lat: float,
-    min_lng: float,
-    max_lat: float,
-    max_lng: float,
-) -> bool:
-    return min_lat <= lat <= max_lat and min_lng <= lng <= max_lng
-
-
 def polygon_intersects_bbox(
     coords: list[list[list[float]]],
     min_lat: float,

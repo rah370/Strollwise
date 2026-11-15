@@ -58,13 +58,3 @@ def interpolate_rgb(local_ratio: float) -> tuple[int, int, int]:
 def map_color_hex(local_ratio: float) -> str:
     r, g, b = interpolate_rgb(local_ratio)
     return f"#{r:02X}{g:02X}{b:02X}"
-
-
-def fill_color_hex(local_ratio: float, *, alpha_blend: float = 0.72) -> str:
-    """Lighter fill for polygon interiors."""
-    r, g, b = interpolate_rgb(local_ratio)
-    blend = max(0.0, min(1.0, alpha_blend))
-    fr = round(255 * (1.0 - blend) + r * blend)
-    fg = round(255 * (1.0 - blend) + g * blend)
-    fb = round(255 * (1.0 - blend) + b * blend)
-    return f"#{fr:02X}{fg:02X}{fb:02X}"

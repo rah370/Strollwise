@@ -359,16 +359,6 @@ class ReportRepository:
         )
         return int(self.db.scalar(stmt) or 0)
 
-    def count_distinct_contributors_in_h3(
-        self, h3_index: str, *, visibility_status: str | None = None
-    ) -> int:
-        stmt = select(func.count(func.distinct(Report.user_id))).where(
-            Report.h3_index == h3_index
-        )
-        if visibility_status:
-            stmt = stmt.where(Report.visibility_status == visibility_status)
-        return int(self.db.scalar(stmt) or 0)
-
     def count_reports_per_day(self, days: int = 30) -> list[tuple[str, int]]:
         since = datetime.now(timezone.utc) - timedelta(days=days)
         dialect = self.db.get_bind().dialect.name
