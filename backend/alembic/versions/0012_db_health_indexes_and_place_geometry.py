@@ -7,6 +7,10 @@ Create Date: 2026-11-16
 Fixes:
 - Visibility / active / created_at sequential scans on map and admin queues.
 - places.polygon_geometry created as TEXT in 0005 while the ORM writes Geometry.
+
+Hosted rows are GeoAlchemy EWKB hex (starts with ``01``), not WKT. A strict
+``ST_GeomFromText`` convert aborted ``alembic upgrade head`` on Render and the
+new API never bound $PORT.
 """
 from __future__ import annotations
 
@@ -16,6 +20,64 @@ revision = "0012_db_health"
 down_revision = "0011_password_reset_tokens"
 branch_labels = None
 depends_on = None
+
+# Keep this in the revision so tests can lock the hosted-safe convert path.
+PLACE_POLYGON_PARSE_SQL = r"""
+CREATE OR REPLACE FUNCTION public._strollwise_parse_place_polygon(src text, geojson jsonb)
+RETURNS geometry
+LANGUAGE plpgsql
+AS $fn$
+DECLARE
+  t text;
+  g geometry;
+BEGIN
+  IF geojson IS NOT NULL THEN
+    BEGIN
+      g := ST_SetSRID(ST_GeomFromGeoJSON(geojson::text), 4326);
+    EXCEPTION WHEN OTHERS THEN
+      g := NULL;
+    END;
+  END IF;
+
+  IF g IS NULL AND src IS NOT NULL THEN
+    t := btrim(src);
+    IF t <> '' THEN
+      BEGIN
+        IF left(t, 1) = '{' THEN
+          g := ST_SetSRID(ST_GeomFromGeoJSON(t), 4326);
+        ELSIF upper(left(t, 5)) = 'SRID=' THEN
+          g := ST_SetSRID(ST_GeomFromEWKT(t), 4326);
+        ELSIF t ~ '^[0-9A-Fa-f]+$' AND (length(t) % 2) = 0 THEN
+          g := ST_SetSRID(ST_GeomFromEWKB(decode(t, 'hex')), 4326);
+        ELSE
+          g := ST_SetSRID(ST_GeomFromText(t), 4326);
+        END IF;
+      EXCEPTION WHEN OTHERS THEN
+        g := NULL;
+      END;
+    END IF;
+  END IF;
+
+  IF g IS NULL OR ST_IsEmpty(g) THEN
+    RETURN NULL;
+  END IF;
+
+  BEGIN
+    IF ST_SRID(g) = 0 THEN
+      g := ST_SetSRID(g, 4326);
+    END IF;
+    g := ST_MakeValid(g);
+    g := ST_CollectionExtract(g, 3);
+    IF g IS NULL OR ST_IsEmpty(g) THEN
+      RETURN NULL;
+    END IF;
+    RETURN ST_Multi(g);
+  EXCEPTION WHEN OTHERS THEN
+    RETURN NULL;
+  END;
+END;
+$fn$;
+"""
 
 
 def upgrade() -> None:
@@ -35,6 +97,7 @@ def upgrade() -> None:
             ON public.audit_logs (created_at DESC);
         """
     )
+    op.execute(PLACE_POLYGON_PARSE_SQL)
     op.execute(
         """
         DO $geom$
@@ -50,20 +113,17 @@ def upgrade() -> None:
             EXECUTE $sql$
               ALTER TABLE public.places
                 ALTER COLUMN polygon_geometry TYPE geometry(MultiPolygon, 4326)
-                USING (
-                  CASE
-                    WHEN polygon_geometry IS NULL
-                      OR btrim(polygon_geometry) = '' THEN NULL
-                    WHEN left(btrim(polygon_geometry), 2) = 'SR'
-                      THEN ST_Multi(ST_SetSRID(ST_GeomFromEWKT(polygon_geometry), 4326))
-                    ELSE ST_Multi(ST_SetSRID(ST_GeomFromText(polygon_geometry), 4326))
-                  END
+                USING public._strollwise_parse_place_polygon(
+                  polygon_geometry, polygon_geojson
                 )
             $sql$;
           END IF;
         END
         $geom$;
         """
+    )
+    op.execute(
+        "DROP FUNCTION IF EXISTS public._strollwise_parse_place_polygon(text, jsonb)"
     )
     op.execute(
         """
