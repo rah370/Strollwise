@@ -1,4 +1,8 @@
-"""Generates frontend-ready GeoJSON geometry from H3 cells."""
+"""H3 cell sets → GeoJSON polygons the Flutter map can paint.
+
+Also converts GeoJSON to PostGIS `MULTIPOLYGON` when the dialect is
+PostgreSQL. SQLite tests store geometry as text/null — no SpatiaLite.
+"""
 from __future__ import annotations
 
 from collections.abc import Iterable

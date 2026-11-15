@@ -1,3 +1,11 @@
+/// App-wide Riverpod providers: auth, Dio, viewport zones/cells, tag submit.
+///
+/// `visibleZonesProvider` / `visibleCellsProvider` are the Explore data
+/// plane. `submitTagProvider` POSTs /reports then invalidates those lists.
+/// Demo login (`FeatureFlags.enableDemoLogin`) uses a fake JWT and never
+/// hits the API — compile-time off in release builds.
+library;
+
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;

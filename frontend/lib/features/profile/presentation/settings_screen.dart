@@ -8,6 +8,7 @@ import '../profile_copy.dart';
 import 'profile_actions.dart';
 import 'profile_widgets.dart';
 
+/// Account settings, privacy links, and logout (not on the Profile header).
 class SettingsScreen extends ConsumerWidget {
   const SettingsScreen({super.key});
 

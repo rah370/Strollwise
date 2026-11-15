@@ -1,3 +1,9 @@
+/**
+ * Runtime validation knobs + map rebuild.
+ *
+ * `pending_min_reports_per_cell` counts distinct people, not rows.
+ * Map tab rebuilds aggregates/places/zones without a deploy.
+ */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'

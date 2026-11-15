@@ -1,4 +1,8 @@
-/** Empty = same-origin; Vite dev server proxies /api to the backend. */
+/**
+ * Admin HTTP client. JWT is stored in sessionStorage (cleared when the tab
+ * closes) — not localStorage — so a shared computer does not keep researcher
+ * access. Empty `VITE_API_URL` means same-origin (Vite proxies `/api`).
+ */
 export const API_URL = (import.meta.env.VITE_API_URL ?? '').replace(/\/$/, '')
 /** Render free-tier cold starts commonly take 30–60s. */
 export const API_TIMEOUT_MS = 60_000

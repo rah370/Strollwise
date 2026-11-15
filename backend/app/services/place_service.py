@@ -1,4 +1,10 @@
-"""Builds and updates Place rows from H3 cell aggregates and the place catalog."""
+"""Keep Place rows in sync with the Cebu catalog and live H3 cells.
+
+`sync_catalog_places` upserts the 14 named footprints. `assign_cells` points
+each active hex at a place (centroid-in-polygon, then tag aliases). Place
+type can shift with dominant tags, but the polygon stays the catalog shape
+so the map does not grow city-wide blobs.
+"""
 from __future__ import annotations
 
 from collections import defaultdict

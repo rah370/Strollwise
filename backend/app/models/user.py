@@ -12,6 +12,14 @@ from app.core.database import Base
 
 
 class User(Base):
+    """Traveler or researcher account.
+
+    `user_type` is the thesis field (local_resident / international_visitor /
+    domestic_traveler). `traveler_type` is the older local/international/mixed
+    bucket kept in sync by `user_type_utils`. `is_admin` gates the researcher
+    console; research consent is recorded separately from login.
+    """
+
     __tablename__ = "users"
 
     id: Mapped[uuid.UUID] = mapped_column(

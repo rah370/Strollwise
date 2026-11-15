@@ -17,6 +17,7 @@ const _kUserTypeChoices = <(String value, String label)>[
   ('domestic_traveler', 'Domestic traveler'),
 ];
 
+/// Sign in / register. `user_type` is the thesis local vs visitor field.
 class AuthScreen extends ConsumerStatefulWidget {
   const AuthScreen({super.key});
 

@@ -1,4 +1,8 @@
-"""Green–blue behavioral gradient for map zones and cells."""
+"""Server-side green↔blue mix color (must match Flutter `TravelerGradient`).
+
+local_ratio 1.0 = green (local), 0.0 = blue (international). Rounding
+matches Dart `num.round()` so hex codes stay identical on both clients.
+"""
 from __future__ import annotations
 
 import math

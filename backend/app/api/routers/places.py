@@ -1,3 +1,8 @@
+"""Named place read API (catalog footprints + live confidence).
+
+`/places/resolve` is read-only point-in-polygon lookup for the tag pin.
+Recommendations ("places to go") rank nearby catalog places.
+"""
 from __future__ import annotations
 
 import logging

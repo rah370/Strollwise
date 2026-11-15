@@ -1,4 +1,11 @@
-"""Recomputes H3 cell aggregates from raw reports."""
+"""Roll visible reports into one stats row per H3 cell.
+
+Only **visible** tags count. Pending tags wait in `reports` until the
+threshold. `_aggregate` counts local vs international from the snapshot on
+each report, then `ClassificationService` sets behavior + function labels.
+Scores (crowd, popularity, confidence) are derived here so the map does not
+recompute them on every viewport request.
+"""
 from __future__ import annotations
 
 from collections import Counter
@@ -74,6 +81,7 @@ class AggregationService:
         )
 
     def _aggregate(self, h3_index: str, reports: list[Report]) -> H3CellAggregate:
+        """Count categories, tags, and local vs visitor into one cell row."""
         category_counts = self.build_category_counts(reports)
         tag_counts = self.build_tag_counts(reports)
 

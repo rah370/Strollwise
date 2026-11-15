@@ -1,3 +1,11 @@
+/**
+ * Researcher / admin console.
+ *
+ * Same FastAPI + JWT as the traveler app, but every signed-in route requires
+ * `is_admin`. React Query holds server state; SSE (`useAdminLiveUpdates`)
+ * invalidates it when a traveler tags. `/pipeline` redirects to Settings →
+ * Map because rebuild controls live there.
+ */
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { AppLayout } from './components/AppLayout'

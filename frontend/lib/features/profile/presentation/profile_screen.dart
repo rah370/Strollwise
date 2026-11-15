@@ -13,6 +13,10 @@ import '../profile_copy.dart';
 import 'profile_actions.dart';
 import 'profile_widgets.dart';
 
+/// Profile: identity, own tags, saved places, visit history, settings.
+///
+/// Visit history and pending tags are private to this account. Logout
+/// lives in Settings, not on the compact identity header.
 class ProfileScreen extends ConsumerStatefulWidget {
   const ProfileScreen({super.key});
 

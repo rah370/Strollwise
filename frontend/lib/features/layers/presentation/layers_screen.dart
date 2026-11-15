@@ -4,6 +4,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../app/theme/colors.dart';
 import '../../../shared/providers/app_providers.dart';
 
+/// Map layer toggles (local / international mix, hex overlay, etc.).
+///
+/// Routed as `/layers` but Explore also exposes the same filters on-map.
 class LayersScreen extends ConsumerWidget {
   const LayersScreen({super.key});
 

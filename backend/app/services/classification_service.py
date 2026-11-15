@@ -1,4 +1,13 @@
-"""Classifies a single H3 cell aggregate by behavior + function."""
+"""Turn cell counts into two labels: who uses the area, and what it is.
+
+- Behavior (local_area / tourist_area / mixed_area): ≥70% local or ≥70%
+  international among counted reports; otherwise mixed. Needs no tags.
+- Function (food_hotspot, student_area, …): keyword buckets + category
+  weights. Fewer than 3 reports → emerging_zone so we do not over-claim.
+
+These cell labels feed places/zones; the map's green–blue color uses
+traveler mix, not function type.
+"""
 from __future__ import annotations
 
 from collections.abc import Mapping
@@ -81,6 +90,7 @@ class ClassificationService:
 
     @classmethod
     def apply(cls, cell: H3CellAggregate) -> H3CellAggregate:
+        """Write both labels onto the aggregate in place (behavior first)."""
         cell.behavior_type = cls.behavior_type(cell)
         cell.function_type = cls.function_type(cell)
         return cell

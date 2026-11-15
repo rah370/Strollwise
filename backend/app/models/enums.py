@@ -1,3 +1,13 @@
+"""Controlled vocabulary used across reports, cells, places, and zones.
+
+Defence talking points:
+
+- `TravelerType` / `user_type` classify *who tagged* (local vs visitor).
+- `BehaviorType` / `traveler_mix` classify *who uses the area*.
+- `FunctionType` / `place_type` classify *what the area is for* (food, school…).
+- `VisibilityStatus` is the privacy gate: pending tags stay off the public map
+  until enough distinct people agree.
+"""
 from __future__ import annotations
 
 from enum import Enum

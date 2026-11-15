@@ -1,7 +1,4 @@
-/// Mapbox access token and style for MapLibre basemaps.
-///
-/// Set at build/run time:
-/// `flutter run --dart-define=MAPBOX_ACCESS_TOKEN=pk....`
+/// MapLibre basemap. Mapbox token is optional; without it we use OpenFreeMap.
 class MapboxConfig {
   static const accessToken = String.fromEnvironment(
     'MAPBOX_ACCESS_TOKEN',

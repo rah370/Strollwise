@@ -36,7 +36,12 @@ function invalidateForEvent(qc: ReturnType<typeof useQueryClient>, type: string)
 
 const AdminLiveContext = createContext(false)
 
-/** Subscribe to backend SSE so admin refreshes when the mobile app submits tags. */
+/**
+ * Server-Sent Events from `/api/v1/admin/events?token=...`.
+ *
+ * EventSource cannot send Authorization headers, so the JWT is a query
+ * param (`verify_admin_token`). The stream must not hold a DB session.
+ */
 export function useAdminLiveUpdates() {
   const qc = useQueryClient()
   const [connected, setConnected] = useState(false)

@@ -13,7 +13,13 @@ from app.models.merged_zone import _PostGISMultiPolygon
 
 
 class Place(Base):
-    """Named geographic area built from many H3 cells (school, food corridor, etc.)."""
+    """Named Cebu footprint (IT Park, Colon, Fuente, …).
+
+    Places come from the curated catalog (`place_catalog.py`) and are filled by
+    live H3 cells whose centroids fall inside the polygon. `place_type` is
+    *what the area is* (food, school, commercial). Traveler mix lives on the
+    zone, not here — so the map can color "who uses it" independently of type.
+    """
 
     __tablename__ = "places"
 

@@ -1,3 +1,8 @@
+"""Read-only analytics: city pulse, category trends, optional zone history.
+
+Used by Trends in the traveler app and by the admin Export page. These
+endpoints return aggregates, never individual tag rows.
+"""
 from __future__ import annotations
 
 from uuid import UUID

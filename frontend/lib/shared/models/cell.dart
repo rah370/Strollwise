@@ -1,3 +1,4 @@
+/// One H3 hex for the Explore overlay (`GET /cells`). Mix color, not GPS.
 class CellModel {
   const CellModel({
     required this.h3Index,

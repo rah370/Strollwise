@@ -12,6 +12,7 @@ import { colors } from '../theme/colors'
 
 const PAGE_SIZE = 20
 
+/** Live merged zones: defined vs still collecting tags (unthreshold). */
 export function ZonesPage() {
   const [filter, setFilter] = useState<'all' | 'defined' | 'emerging' | 'unthreshold'>('all')
   const [selectedId, setSelectedId] = useState<string | null>(null)

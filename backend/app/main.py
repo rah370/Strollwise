@@ -1,3 +1,19 @@
+"""StrollWise API entry point (thesis / defence map).
+
+Three clients talk to this FastAPI app:
+
+- Flutter traveler app (`frontend/`) — Explore, Add Tag, Feed, Trends, Profile
+- React researcher console (`admin/`) — moderation, catalog, analytics
+- Optional public health/legal pages on this same process
+
+Data never goes traveler → traveler as GPS trails. A tag is stored as a
+**report**, snapped to an **H3 cell** (resolution 8), then rolled into a
+**place** (named Cebu footprint) and a **zone** (map polygon + traveler mix).
+Public list endpoints return those aggregates, not other people's paths.
+
+Pipeline after a tag is approved:
+  ReportService → AggregationService → PlaceService → ZoneMergeService
+"""
 from __future__ import annotations
 
 import logging

@@ -1,4 +1,9 @@
-"""Admin moderation: review pending/flagged reports with privacy-safe views."""
+"""Researcher review of pending/flagged tags.
+
+Approve/reject/flag changes `visibility_status` and can trigger the same
+aggregate rebuild as auto-threshold. List payloads are privacy-safe: cell
+context and counts, not a public trail of the tagger.
+"""
 from __future__ import annotations
 
 import logging

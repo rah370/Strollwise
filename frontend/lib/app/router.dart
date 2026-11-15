@@ -1,3 +1,10 @@
+/// App routes and auth gate.
+///
+/// Unauthenticated users can only reach /auth, forgot-password, and legal
+/// pages. A restored JWT sends them to /explore. Shell tabs match the
+/// thesis features: Explore (map), Add Tag, Feed, Trends, Profile.
+library;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';

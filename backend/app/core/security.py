@@ -1,3 +1,9 @@
+"""Password hashing (bcrypt) and JWT access tokens.
+
+Traveler and admin share the same token type. Admin is `users.is_admin`,
+not a separate JWT claim. Tokens expire (`access_token_expire_minutes`);
+the Flutter app stores them in secure storage, the admin app in sessionStorage.
+"""
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone

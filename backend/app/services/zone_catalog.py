@@ -1,4 +1,10 @@
-"""Reference zone catalog for Cebu metro (behavioral defaults)."""
+"""Seed catalog: named Cebu areas with radius, type, and default local ratio.
+
+Used to (1) generate H3 footprints, (2) give new zones a traveler-mix prior
+before enough tags exist, and (3) let researchers edit entries in admin.
+`cells_for_catalog_zone` expands a k-ring then clips by radius so a 1.5 km
+zone does not swallow the next landmark.
+"""
 from __future__ import annotations
 
 from dataclasses import dataclass

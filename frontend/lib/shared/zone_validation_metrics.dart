@@ -1,3 +1,9 @@
+/// How "validated" a place looks after tags (signal count + confidence).
+///
+/// Right after submit, [zoneValidationLiveProvider] holds the API
+/// aggregation payload so the card updates before the next zone refetch.
+library;
+
 import 'dart:math' as math;
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';

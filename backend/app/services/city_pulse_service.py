@@ -1,4 +1,8 @@
-"""Aggregates active zones into a city-level pulse summary."""
+"""City-level pulse for the admin dashboard (activity, mix, peak window).
+
+Built from active zones, not from scanning every report. Cached briefly
+because the dashboard polls it.
+"""
 from __future__ import annotations
 
 from collections import Counter

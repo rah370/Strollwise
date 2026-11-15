@@ -1,8 +1,14 @@
+"""Cebu service area and coarse polygon/bbox tests.
+
+The tagging radius is 120 km around Metro Cebu so Mactan is in and
+Dumaguete is out. Flutter uses the same center/radius constants.
+"""
 from __future__ import annotations
 
 import math
 
 # Same envelope the Flutter client uses (`cebuPlaceWithinServiceArea`).
+# Thesis study area: Metro Cebu + Mactan, not the whole Philippines.
 CEBU_SERVICE_CENTER_LAT = 10.3157
 CEBU_SERVICE_CENTER_LNG = 123.8854
 CEBU_SERVICE_RADIUS_KM = 120.0

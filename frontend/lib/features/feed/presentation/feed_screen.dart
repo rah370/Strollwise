@@ -17,6 +17,10 @@ import '../../../shared/zone_place_ui.dart';
 import '../../../shared/zone_validation_metrics.dart';
 import 'feed_zone_copy.dart';
 
+/// Feed: ranked list of the same zones Explore paints on the map.
+///
+/// Not a social timeline of people. Each card is a place with mix, signals,
+/// and validation copy. Opening a card jumps back to Explore at that area.
 class FeedScreen extends ConsumerStatefulWidget {
   const FeedScreen({super.key});
 

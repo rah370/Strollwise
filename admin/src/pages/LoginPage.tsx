@@ -14,6 +14,7 @@ import { BrandLogo } from '../components/BrandLogo'
 import { Button } from '../components/Button'
 import { colors } from '../theme/colors'
 
+/** Researcher sign-in. Same `/auth/login` as travelers; then `/auth/me` must be admin. */
 export function LoginPage() {
   const navigate = useNavigate()
   const location = useLocation()

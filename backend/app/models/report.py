@@ -12,6 +12,15 @@ from app.core.database import Base
 
 
 class Report(Base):
+    """One crowd-sourced tag from a signed-in traveler.
+
+    Raw lat/lng are kept for the owner's visit history and for H3 conversion.
+    Public APIs do not list other users' coordinates. `h3_index` is the spatial
+    key used for aggregation. `traveler_type_snapshot` / `user_type_snapshot`
+    freeze who the tagger was at submit time so later profile edits cannot
+    rewrite historical mix counts.
+    """
+
     __tablename__ = "reports"
 
     id: Mapped[uuid.UUID] = mapped_column(

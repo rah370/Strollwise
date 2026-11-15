@@ -41,6 +41,7 @@ const exports = [
   },
 ]
 
+/** Aggregate charts + CSV/JSON export. No individual tag rows. */
 export function AnalyticsPage() {
   const [exportError, setExportError] = useState('')
 

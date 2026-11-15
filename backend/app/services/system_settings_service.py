@@ -1,4 +1,8 @@
-"""Runtime system settings stored in DB, overlaying env defaults."""
+"""Admin-tunable validation knobs stored in `system_settings`.
+
+Researchers can raise/lower how many distinct people must agree before a
+cell goes public without a redeploy. Missing DB rows fall back to `.env`.
+"""
 from __future__ import annotations
 
 from sqlalchemy import select

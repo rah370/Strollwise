@@ -25,6 +25,7 @@ function navClass({ isActive }: { isActive: boolean }) {
   ].join(' ')
 }
 
+/** Shell: sidebar nav + JWT gate. Non-admins are sent back to login. */
 export function AppLayout() {
   const token = getToken()
   if (!token) return <Navigate to="/login" replace />

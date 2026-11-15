@@ -6,6 +6,10 @@ import '../../shared/providers/app_providers.dart';
 import '../theme/brand.dart';
 import '../theme/colors.dart';
 
+/// Bottom navigation for the five traveler features.
+///
+/// Add Tag hides the bar so the map pin UI stays full-screen. Explore hides
+/// the brand bar because the map needs the pixels.
 class MainShell extends ConsumerWidget {
   const MainShell({required this.child, super.key});
 

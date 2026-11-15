@@ -5,7 +5,7 @@ import '../../../app/theme/colors.dart';
 import '../../../shared/providers/app_providers.dart';
 import '../../../shared/traveler_gradient.dart';
 
-/// Compact filter entry on Explore; full controls open in a bottom sheet.
+/// Compact Explore chips (mix + place type). Full sheet has the same keys.
 class ExploreMapFilterBar extends ConsumerWidget {
   const ExploreMapFilterBar({
     super.key,

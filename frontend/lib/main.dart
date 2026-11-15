@@ -1,3 +1,12 @@
+/// StrollWise traveler app (Flutter).
+///
+/// Defence map: Riverpod for state, GoRouter for tabs, MapLibre for Explore.
+/// On launch we load the bundled Cebu zone catalog JSON, restore the JWT from
+/// secure storage, then paint the shell (Explore / Add Tag / Feed / Trends /
+/// Profile). The app never draws other people's GPS points — only zone
+/// polygons, H3 hexes, and the user's own pending pins.
+library;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:sentry_flutter/sentry_flutter.dart';

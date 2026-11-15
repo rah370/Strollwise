@@ -1,3 +1,9 @@
+"""Register, login, and password reset for travelers and researchers.
+
+Same user table for both apps. Forgot-password always returns a generic
+message so emails cannot be enumerated. The 6-digit code is hashed at rest;
+it is echoed in JSON only when `password_reset_echo_code` is on (local tests).
+"""
 from __future__ import annotations
 
 import hashlib

@@ -1,8 +1,7 @@
-"""Maps a lat/lng to the nearest known Cebu landmark name.
+"""Nearest named Cebu landmark for a centroid.
 
-The MVP name fallback from the spec is `<behavior> <function> near <landmark>`.
-We keep this list in code for now; later it can be promoted to a DB table
-populated from OSM / city administrative polygons.
+Used when composing display names. Catalog place names usually win; this
+list is the fallback so a zone is never just "Area".
 """
 from __future__ import annotations
 

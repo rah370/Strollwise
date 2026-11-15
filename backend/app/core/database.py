@@ -1,3 +1,9 @@
+"""SQLAlchemy engine and request-scoped sessions.
+
+PostgreSQL + PostGIS in production; tests use SQLite. `pool_recycle=280`
+avoids Render/Supabase idle-kills stalling `/health`. `get_db` must not be
+held for the life of an SSE stream — that used to starve the pool.
+"""
 from __future__ import annotations
 
 from collections.abc import Iterator

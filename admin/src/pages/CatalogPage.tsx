@@ -11,6 +11,7 @@ import { travelerMixStyles } from '../theme/colors'
 
 const PAGE_SIZE = 20
 
+/** Named Cebu place list (the 14 catalog footprints researchers can inspect). */
 export function CatalogPage() {
   const [exportError, setExportError] = useState('')
   const [search, setSearch] = useState('')

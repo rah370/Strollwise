@@ -14,6 +14,7 @@ import { colors } from '../theme/colors'
 
 const PAGE_SIZE = 20
 
+/** Traveler accounts: type, activity, promote/demote admin. Not a public directory. */
 export function UsersPage() {
   const qc = useQueryClient()
   const [search, setSearch] = useState('')

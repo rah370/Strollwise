@@ -1,8 +1,9 @@
-"""Thin, version-tolerant wrapper around the H3 Python library.
+"""Uber H3 helpers used everywhere a lat/lng becomes a map cell.
 
-The h3 package has renamed many functions between v3 and v4. We wrap them
-here so the rest of the codebase stays stable, and so tests can swap in a
-fake implementation if needed.
+Resolution 8 (see `settings.h3_resolution`) is the thesis spatial grain:
+small enough that IT Park and Fuente stay distinct, large enough that one
+person's GPS jitter does not create a unique trail. This module wraps H3 v3
+and v4 names so the rest of the code stays stable.
 """
 from __future__ import annotations
 

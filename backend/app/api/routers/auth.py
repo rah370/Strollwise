@@ -1,3 +1,8 @@
+"""Shared auth for the Flutter app and the researcher console.
+
+Register/login issue a JWT. Forgot/reset password is the same pair of
+routes both clients use. `/auth/me` is how admin confirms `is_admin`.
+"""
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, status

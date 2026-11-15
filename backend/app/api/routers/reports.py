@@ -1,3 +1,9 @@
+"""Traveler write API: submit tags, list own pending pins, visit history.
+
+POST /reports is the only way a traveler changes the public map, and even
+then the tag stays pending until community validation. Feed/map list
+endpoints filter to `visible` except for the owner's own pending pins.
+"""
 from __future__ import annotations
 
 from uuid import UUID

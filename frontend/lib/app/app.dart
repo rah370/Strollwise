@@ -1,3 +1,6 @@
+/// Root widget: theme + router. Auth restore runs once after first frame.
+library;
+
 import 'dart:async';
 
 import 'package:flutter/material.dart';

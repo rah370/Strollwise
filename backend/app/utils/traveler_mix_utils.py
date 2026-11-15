@@ -1,4 +1,10 @@
-"""Traveler mix rollup for zones (local / mixed / international)."""
+"""Live traveler-mix from tag counts (local / mixed / international).
+
+≥70% local tags → local; ≥70% international → international; else mixed.
+Catalog-seeded zones use a different pair (0.75 / 0.30) in
+`ZoneMergeService._traveler_mix_from_catalog_ratio` because those ratios
+are curated defaults, not observed counts. Do not unify the two.
+"""
 from __future__ import annotations
 
 from app.models.enums import BehaviorType

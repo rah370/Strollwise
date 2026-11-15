@@ -1,3 +1,11 @@
+/// Explore: MapLibre map of Cebu zones colored by traveler mix.
+///
+/// Layers: catalog polygons (who uses the area), optional H3 hex overlay,
+/// own pending pins, sensitive-site footprints. Tapping a zone opens
+/// insight + validation metrics. GPS is used only to center *you*; other
+/// travelers appear as aggregates, not markers.
+library;
+
 import 'dart:async';
 import 'dart:math' show Point;
 
@@ -55,6 +63,7 @@ enum _LocationBootstrapState {
   ready,
 }
 
+/// Main map screen. Viewport changes refetch `/zones` and `/cells`.
 class ExploreScreen extends ConsumerStatefulWidget {
   const ExploreScreen({super.key});
 

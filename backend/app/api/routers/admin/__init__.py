@@ -1,3 +1,9 @@
+"""Researcher console API (`/api/v1/admin/*`). All routes require `is_admin`.
+
+Moderation changes visibility; pipeline rebuilds aggregates/places/zones;
+catalog edits named Cebu footprints; config overlays validation thresholds;
+events is SSE so the dashboard refreshes when a traveler tags.
+"""
 from __future__ import annotations
 
 from fastapi import APIRouter

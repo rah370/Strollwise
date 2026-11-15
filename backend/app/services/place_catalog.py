@@ -1,4 +1,10 @@
-"""Curated Cebu place footprints — one place per catalog zone (14 total)."""
+"""Curated Cebu place footprints (one polygon per catalog zone).
+
+This is the geographic ground truth for named areas. Live tags do not
+invent new place polygons; they only attach to these footprints. Aliases
+("it park", "fuente osmena") help hex assignment when the centroid is
+ambiguous.
+"""
 from __future__ import annotations
 
 from dataclasses import dataclass

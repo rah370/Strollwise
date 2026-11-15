@@ -1,3 +1,4 @@
+"""Admin SSE stream. Auth, then drop the DB session before waiting on events."""
 from __future__ import annotations
 
 import asyncio

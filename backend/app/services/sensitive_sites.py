@@ -1,7 +1,9 @@
 """Building-scale sensitive sites: block the facility, not the street.
 
-Pins on the building (about 40 m) are refused. Adjacent cafes and roads
-stay taggable. Facility identity must not become a public place name.
+Ethics rule: hospitals, city hall, and police are tagged as *buildings*
+(~40 m), not neighborhoods. Adjacent cafes and roads stay taggable.
+Public overlays send kind + footprint only — never operational names.
+`public_place_name` also strips facility identity from zone titles.
 """
 from __future__ import annotations
 

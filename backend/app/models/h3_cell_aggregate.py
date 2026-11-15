@@ -12,10 +12,12 @@ from app.core.database import Base
 
 
 class H3CellAggregate(Base):
-    """One row per analyzed H3 cell.
+    """Pre-computed stats for one Uber H3 hex (resolution 8 ≈ a city block).
 
-    The primary key is the H3 index itself (text, base-16) because it is a
-    natural, stable identifier and lets us upsert cheaply.
+    Why H3: every GPS point maps to the same cell id, so we can count tags
+    without storing or publishing trajectories. The primary key *is* the H3
+    index so upserts stay cheap. `local_count` / `international_count` drive
+    behavior classification; tag/category JSON drives function type.
     """
 
     __tablename__ = "h3_cell_aggregates"

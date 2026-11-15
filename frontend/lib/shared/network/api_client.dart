@@ -1,3 +1,8 @@
+/// Shared Dio client. Attaches the JWT and clears it on 401.
+///
+/// Base URL is `--dart-define=API_URL=...` (see [ApiConstants]).
+library;
+
 import 'package:dio/dio.dart';
 import 'package:dio/io.dart';
 import 'package:flutter/foundation.dart';

@@ -1,4 +1,8 @@
-"""Private visit pins — personal map history visible only to the owner."""
+"""Private visit pins — personal map history visible only to the owner.
+
+Not part of public zones. A tag also writes a pin so Profile → History
+works even while the tag is still pending on the community map.
+"""
 from __future__ import annotations
 
 from datetime import datetime, timezone

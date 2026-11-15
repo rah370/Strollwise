@@ -1,12 +1,11 @@
 import '../traveler_gradient.dart';
 import 'place.dart';
 
-/// Mirrors the `ZoneListItem` / `ZoneDetail` schema returned by the
-/// StrollWise backend (`/api/v1/zones` and `/api/v1/zones/{id}`).
+/// Client model for a map zone (`GET /api/v1/zones`).
 ///
-/// The existing UI code still references older names like `h3Index`,
-/// `travelerType`, `zoneType`, `reportCount`, etc., so those are kept as
-/// derived getters / computed fields for compatibility.
+/// `travelerMix` drives the green–blue fill. `placeType` is what the area
+/// is (food, school…). Older getter names (`h3Index`, `travelerType`) stay
+/// as aliases so existing widgets keep compiling.
 class ZoneModel {
   ZoneModel({
     required this.zoneId,

@@ -15,7 +15,12 @@ _LOCAL_ORIGINS = (
 
 
 class Settings(BaseSettings):
-    """Application configuration loaded from environment variables."""
+    """Env + `.env` configuration. Admin Settings can overlay the pending-* keys.
+
+    Spatial: `h3_resolution` (8) and `max_h3_cells_per_place`.
+    Privacy: `pending_min_reports_per_cell` (distinct people) and
+    `pending_agreement_ratio` (same category).
+    """
 
     model_config = SettingsConfigDict(
         env_file=".env",

@@ -1,6 +1,10 @@
 import 'package:geolocator/geolocator.dart';
 import 'package:maplibre_gl/maplibre_gl.dart';
 
+/// Visible lat/lng box sent to `/zones` and `/cells`.
+///
+/// Keeping queries viewport-scoped is what stops the API from scanning
+/// every Cebu zone on each pan.
 class MapViewport {
   const MapViewport({
     required this.center,

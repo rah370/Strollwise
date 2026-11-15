@@ -1,4 +1,10 @@
-"""Registration user_type ↔ legacy traveler_type and aggregation buckets."""
+"""Map thesis `user_type` onto mix buckets used in aggregation.
+
+local_resident and domestic_traveler both count as **local** (Philippine
+residents vs Cebu residents still share local-crowd color).
+international_visitor counts as **international**. Aggregation reads the
+snapshot on the report, not the live profile, so mix history is stable.
+"""
 
 from __future__ import annotations
 

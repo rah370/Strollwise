@@ -1,3 +1,9 @@
+/**
+ * Review queue for pending/flagged tags.
+ *
+ * Approve publishes the cell (same rebuild path as auto-threshold).
+ * Reject/remove keeps it off the traveler map. Reasons are audited.
+ */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'

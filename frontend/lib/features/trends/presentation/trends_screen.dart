@@ -14,6 +14,10 @@ import 'places_to_go_sheet.dart';
 import 'trends_providers.dart';
 import 'trends_widgets.dart';
 
+/// Trends: category movement and "places to go" from zone aggregates.
+///
+/// Charts compare recent vs previous windows. Small samples are labeled
+/// as not-a-trend (`trends_copy.dart`) so we do not over-claim.
 class TrendsScreen extends ConsumerStatefulWidget {
   const TrendsScreen({this.zoneId, super.key});
 

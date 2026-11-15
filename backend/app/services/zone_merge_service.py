@@ -1,8 +1,13 @@
-"""Builds one frontend-facing zone per active place (strategy B).
+"""Build the map layer: one zone per active place (strategy B).
 
-Each place spans many H3 cells; the zone polygon matches the place footprint.
-Zones expose traveler mix (local / mixed / international) only — place type
-(school, food, etc.) lives on the Place model.
+Older prototypes merged adjacent hexes by similar tags (strategy A). That
+created blobs that crossed named places. Strategy B keeps the catalog
+polygon (IT Park stays IT Park) and only paints traveler mix on top.
+
+If the place matches the Cebu catalog, mix comes from the curated local
+ratio. Otherwise mix is counted from the cells' local/international totals.
+Rebuilds **update** the existing zone row by `place_id` so saved bookmarks
+keep the same id.
 """
 from __future__ import annotations
 
@@ -118,6 +123,7 @@ class ZoneMergeService:
 
     @staticmethod
     def _traveler_mix_from_catalog_ratio(ratio: float) -> str:
+        """Catalog defaults: 0.75 local / 0.30 international (not the 0.70 live rule)."""
         if ratio >= 0.75:
             return "local"
         if ratio <= 0.30:

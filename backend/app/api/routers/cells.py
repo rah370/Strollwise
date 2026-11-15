@@ -1,3 +1,8 @@
+"""Viewport H3 cells for the Explore hex overlay.
+
+Each cell is already aggregated (counts, mix color). The map paints hexes
+from this list; it never requests other users' report coordinates.
+"""
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Query

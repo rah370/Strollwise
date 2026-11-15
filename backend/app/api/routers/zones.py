@@ -1,3 +1,9 @@
+"""Public zone read API for Explore / Feed / Trends.
+
+Viewport queries (`min_lat`…`max_lng`) return merged zones already colored
+by traveler mix. Empty viewports must not fall back to a full-table scan.
+Hex rings in the payload are for map labels, not raw GPS.
+"""
 from __future__ import annotations
 
 import logging

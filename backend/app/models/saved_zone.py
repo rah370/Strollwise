@@ -11,6 +11,8 @@ from app.core.database import Base
 
 
 class SavedZone(Base):
+    """Bookmark: a traveler saved a zone. Rebuilds keep `zone_id` stable."""
+
     __tablename__ = "saved_zones"
     __table_args__ = (UniqueConstraint("user_id", "zone_id", name="uq_saved_zones_user_zone"),)
 

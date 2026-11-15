@@ -32,7 +32,13 @@ class _PostGISMultiPolygon(TypeDecorator):
 
 
 class MergedZone(Base):
-    """Frontend-facing zone: one row per active place (traveler mix layer)."""
+    """What Explore draws: one zone per active place.
+
+    Strategy B (current): zone polygon = place footprint, not a union of
+    unrelated hexes. The map color is `traveler_mix` (local / mixed /
+    international). `function_type` is leftover from an older function-label
+    layer; live UI reads place type from the linked Place instead.
+    """
 
     __tablename__ = "merged_zones"
 

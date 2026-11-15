@@ -1,8 +1,8 @@
-"""Captures a daily `ZoneSnapshot` row per active merged zone.
+"""Daily `ZoneSnapshot` rows for zone history / trend charts.
 
-Snapshots are the basis for zone history and trend analytics. The worker
-runs once per day; this service is idempotent — if a snapshot for the
-given (zone, date) already exists it's updated rather than duplicated.
+Idempotent per (zone, date). The writer is not on the live tag path —
+history endpoints still read these rows. Treat as a stored feature, not
+dead code, even if a scheduler is not wired in every deploy.
 """
 from __future__ import annotations
 

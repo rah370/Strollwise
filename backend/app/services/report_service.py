@@ -1,4 +1,17 @@
-"""Handles the full lifecycle of a user report submission."""
+"""Tag (report) lifecycle — the privacy-preserving write path.
+
+Submit flow a panel will ask about:
+
+1. Validate category, tag length, Cebu radius, and sensitive-site buildings.
+2. Snap lat/lng → H3 cell (never publish the raw point on public lists).
+3. Snapshot the tagger's local/visitor type onto the row.
+4. Insert as **pending** (off the public map).
+5. If enough *distinct people* in that cell agree on a category, promote to
+   **visible**, then recompute cell aggregates → places → zones.
+
+Anti-spam: one pending tag per user per cell, cooldown, hourly cap.
+Private visit pins are written for the owner only and do not affect the map.
+"""
 from __future__ import annotations
 
 import logging
@@ -68,6 +81,7 @@ class ReportService:
         self._cfg = effective_settings(db)
 
     def create_report(self, payload: ReportCreate, user: User) -> ReportSubmissionResult:
+        """Insert a pending tag and, if the cell now validates, publish it."""
         self._validate(payload)
         self._validate_not_restricted(payload.latitude, payload.longitude)
         if not within_cebu_service_area(payload.latitude, payload.longitude):
@@ -99,6 +113,7 @@ class ReportService:
             user_type_snapshot=user.user_type,
             country_of_origin_snapshot=user.country_of_origin,
             city_of_origin_snapshot=user.city_of_origin,
+            # Off the public map until `_approve_if_threshold_met` runs.
             visibility_status=VisibilityStatus.PENDING.value,
         )
         self.reports.create(report)
@@ -318,6 +333,12 @@ class ReportService:
         )
 
     def _approve_if_threshold_met(self, h3_index: str) -> bool:
+        """Community validation: N distinct people + category agreement.
+
+        Defaults (overridable in admin Settings): 3 unique contributors and
+        60% of pending tags sharing the same category. Counting people, not
+        rows, stops one user from validating their own cell.
+        """
         pending_reports = self.reports.list_pending_by_h3_index(h3_index)
         min_reports = max(self._cfg.pending_min_reports_per_cell, 1)
         if _distinct_contributors(pending_reports) < min_reports:

@@ -1,3 +1,10 @@
+/// Add Tag: drop a pin in Metro Cebu, pick category/tags, submit.
+///
+/// Client checks: Cebu radius, sensitive-site buildings, category required.
+/// The server still re-validates and stores the tag as pending. After
+/// submit, Explore shows a confirmation and live validation counts.
+library;
+
 import 'dart:async';
 import 'dart:math' as math;
 

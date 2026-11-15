@@ -10,6 +10,11 @@ import 'models/cell.dart';
 import 'models/zone.dart';
 
 /// Green (#22C55E) ↔ blue (#3B82F6) behavioral gradient for map zones.
+///
+/// Green = mostly local, blue = mostly international, teal = mixed.
+/// Same RGB endpoints as `backend/app/utils/traveler_gradient.py` so
+/// server-provided hex and client interpolation match. Also loads the
+/// bundled `cebu_zone_catalog.json` for search/offline labels.
 class TravelerGradient {
   static const Color local = Color(0xFF22C55E);
   static const Color international = Color(0xFF3B82F6);

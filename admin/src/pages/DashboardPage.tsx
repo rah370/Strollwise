@@ -11,6 +11,7 @@ import { StatCard } from '../components/StatCard'
 import { LIVE_POLL_MS, useAdminPollInterval } from '../hooks/useAdminLiveUpdates'
 import { colors } from '../theme/colors'
 
+/** Home stats: pending tags, visible map tags, city pulse. Live-updates via SSE. */
 export function DashboardPage() {
   const dashboardPoll = useAdminPollInterval(LIVE_POLL_MS.dashboard)
   const { data, isPending, isError, error } = useQuery({

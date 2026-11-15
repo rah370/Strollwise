@@ -1,4 +1,9 @@
-"""Scoring for the built-in filters (Popular Now, Local Picks, Food, etc.)."""
+"""Explore filter ranking (Popular Now, Local Picks, Food, …).
+
+Filters combine traveler mix, place type, crowd, and distance from the
+viewport center. This is presentation scoring only — it does not change
+stored zones.
+"""
 from __future__ import annotations
 
 import heapq

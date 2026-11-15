@@ -3,7 +3,7 @@ import 'package:maplibre_gl/maplibre_gl.dart';
 
 import 'models/report.dart';
 
-/// Cell centroid for an H3 index string (hex or decimal). Not raw GPS.
+/// Decode an H3 index to a centroid for map markers. Not a GPS trail.
 LatLng? latLngFromH3Index(String raw) {
   final value = raw.trim();
   if (value.isEmpty) return null;

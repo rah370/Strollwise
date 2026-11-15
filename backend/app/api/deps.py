@@ -1,3 +1,10 @@
+"""FastAPI auth dependencies.
+
+`get_current_user` — any signed-in traveler (Authorization: Bearer).
+`get_current_admin` — same token, but `is_admin` must be true.
+`verify_admin_token` — query-string JWT for SSE (EventSource cannot set
+headers). Used by `/admin/events`.
+"""
 from __future__ import annotations
 
 from uuid import UUID

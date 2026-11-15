@@ -1,3 +1,9 @@
+/// Shared labels for zones/places (titles, mix copy, hex tap text).
+///
+/// Keep map, feed, and trends wording in one file so "Mostly local" does
+/// not drift between screens.
+library;
+
 import 'models/zone.dart';
 
 /// Human label for API `place_type` values.

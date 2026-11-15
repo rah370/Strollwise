@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import '../models/zone.dart';
 import '../traveler_gradient.dart';
 
-/// Compact local ↔ visitor mix strip for cards and feed rows.
+/// Compact local ↔ visitor mix strip (green left, blue right).
 class ZoneTravelerMixBar extends StatelessWidget {
   const ZoneTravelerMixBar({
     required this.zone,
