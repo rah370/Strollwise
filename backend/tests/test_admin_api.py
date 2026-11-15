@@ -327,6 +327,79 @@ def test_admin_moderation_search_by_tag(client, db_session):
     assert miss.json()["total"] == 0
 
 
+def _traveler(db_session, email: str, name: str) -> User:
+    user = User(
+        email=email,
+        password_hash=hash_password("supersecret123"),
+        display_name=name,
+        traveler_type="local",
+        user_type="local_resident",
+        is_admin=False,
+        accepted_research_consent=True,
+    )
+    apply_user_type_to_user(user)
+    db_session.add(user)
+    db_session.commit()
+    db_session.refresh(user)
+    return user
+
+
+def test_admin_moderation_queues_return_without_n_plus_one(client, db_session):
+    admin = _make_admin(db_session, "admin-mod-batch@test.com")
+    h3 = "88283082d9fffff"
+    people = [
+        _traveler(db_session, f"mod-batch-{i}@test.com", f"Traveler {i}")
+        for i in range(4)
+    ]
+    for person in people:
+        _pending_report(db_session, person.id, h3_index=h3)
+    other = _pending_report(
+        db_session, people[0].id, h3_index="88283082dbfffff"
+    )
+    other.category = "nightlife"
+    db_session.commit()
+
+    headers = _admin_headers(client, db_session, admin.email)
+    pending = client.get(
+        "/api/v1/admin/moderation/reports?queue=pending&page_size=20",
+        headers=headers,
+    )
+    assert pending.status_code == 200
+    body = pending.json()
+    assert body["total"] >= 5
+    clustered = next(item for item in body["items"] if item["h3_index"] == h3)
+    assert clustered["contributor_count"] == 4
+    assert clustered["contributor_label"].startswith("Traveler")
+    assert "email" not in clustered
+
+    duplicates = client.get(
+        "/api/v1/admin/moderation/reports?queue=duplicates", headers=headers
+    )
+    near = client.get(
+        "/api/v1/admin/moderation/reports?queue=near_threshold", headers=headers
+    )
+    mixed = client.get(
+        "/api/v1/admin/moderation/reports?queue=mixed_agreement", headers=headers
+    )
+    flagged = client.get(
+        "/api/v1/admin/moderation/reports?queue=flagged", headers=headers
+    )
+    assert duplicates.status_code == 200
+    assert near.status_code == 200
+    assert mixed.status_code == 200
+    assert flagged.status_code == 200
+    assert any(item["h3_index"] == h3 for item in duplicates.json()["items"])
+    assert near.json()["total"] >= 1
+    detail = client.get(
+        f"/api/v1/admin/moderation/reports/{clustered['id']}",
+        headers=headers,
+    )
+    assert detail.status_code == 200
+    ctx = detail.json()["cell_context"]
+    assert ctx["distinct_contributors"] == 4
+    assert ctx["pending_count"] == 4
+
+
 def test_admin_export_reports_csv_is_readable(client, db_session):
     admin = _make_admin(db_session, "admin-csv@test.com")
     _pending_report(db_session, admin.id)

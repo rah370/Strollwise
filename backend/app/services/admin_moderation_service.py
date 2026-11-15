@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 from collections import Counter
+from collections.abc import Iterable
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
@@ -42,6 +43,10 @@ from app.services.zone_merge_service import ZoneMergeService
 log = logging.getLogger(__name__)
 
 _ACTIONS_NEEDING_REASON = {ModerationAction.REJECT, ModerationAction.FLAG}
+# Derived queues used to scan 500 pending rows and then run 3+ queries per
+# row. That hung behind Render's proxy timeout, so the admin UI stayed on
+# "Loading…". Cap the scan; batching below keeps a page to a few round-trips.
+_SPECIAL_QUEUE_SCAN = 150
 
 
 class ModerationValidationError(Exception):
@@ -54,6 +59,8 @@ class AdminModerationService:
         self.reports = ReportRepository(db)
         self.audit = AuditService(db)
         self.cfg = SystemSettingsService(db).get_effective_settings()
+        self._cell_ctx_cache: dict[str, AdminCellContext] = {}
+        self._contributor_label_cache: dict[UUID, str] = {}
 
     def list_reports(
         self,
@@ -69,7 +76,7 @@ class AdminModerationService:
         location_h3s = self._h3_indexes_for_place_search(search)
         if queue == ModerationQueueFilter.DUPLICATES:
             items = self._filter_summaries(
-                self._list_duplicates(page=1, page_size=500),
+                self._list_duplicates(page=1, page_size=_SPECIAL_QUEUE_SCAN),
                 search=search,
                 category=category,
                 tag=tag,
@@ -84,7 +91,7 @@ class AdminModerationService:
             )
         if queue == ModerationQueueFilter.NEAR_THRESHOLD:
             items = self._filter_summaries(
-                self._list_near_threshold(page=1, page_size=500),
+                self._list_near_threshold(page=1, page_size=_SPECIAL_QUEUE_SCAN),
                 search=search,
                 category=category,
                 tag=tag,
@@ -99,7 +106,7 @@ class AdminModerationService:
             )
         if queue == ModerationQueueFilter.MIXED_AGREEMENT:
             items = self._filter_summaries(
-                self._list_mixed_agreement(page=1, page_size=500),
+                self._list_mixed_agreement(page=1, page_size=_SPECIAL_QUEUE_SCAN),
                 search=search,
                 category=category,
                 tag=tag,
@@ -125,7 +132,7 @@ class AdminModerationService:
             user_id=contributor_id,
         )
         return AdminReportListResponse(
-            items=[self._to_summary(r) for r in rows],
+            items=self._summaries_for_reports(rows),
             total=total,
             page=page,
             page_size=page_size,
@@ -236,87 +243,149 @@ class AdminModerationService:
         return ModerationBulkResult(updated=updated, failed=failed)
 
     def _to_summary(self, report: Report) -> AdminReportSummary:
-        ctx = self._cell_context(report.h3_index)
-        since = datetime.now(timezone.utc) - timedelta(
-            hours=max(self.cfg.report_cooldown_hours_per_cell, 24)
-        )
-        dupes = self.reports.list_by_h3_and_category_since(
-            report.h3_index,
-            report.category,
-            since,
-            exclude_id=report.id,
-        )
-        return AdminReportSummary(
-            id=report.id,
-            h3_index=report.h3_index,
-            category=report.category,
-            tags=list(report.tags_json or []),
-            note_text=report.note_text,
-            visibility_status=report.visibility_status,
-            confidence_score=round(ctx.category_agreement * 100, 1),
-            contributor_count=ctx.distinct_contributors,
-            duplicate_count=len(dupes),
-            created_at=report.created_at,
-            image_url=report.image_url,
-            area_name=self._area_name(report.h3_index),
-            contributor_id=report.user_id,
-            contributor_label=self._contributor_label(report.user_id),
+        summaries = self._summaries_for_reports([report])
+        return summaries[0]
+
+    def _summaries_for_reports(self, reports: list[Report]) -> list[AdminReportSummary]:
+        if not reports:
+            return []
+        h3s = list(dict.fromkeys(r.h3_index for r in reports))
+        contexts = self._cell_contexts_for(h3s)
+        duplicate_counts = self._duplicate_counts_for(reports)
+        labels = self._contributor_labels_for(r.user_id for r in reports)
+        items: list[AdminReportSummary] = []
+        for report in reports:
+            ctx = contexts.get(report.h3_index, self._empty_cell_context(report.h3_index))
+            items.append(
+                AdminReportSummary(
+                    id=report.id,
+                    h3_index=report.h3_index,
+                    category=report.category,
+                    tags=list(report.tags_json or []),
+                    note_text=report.note_text,
+                    visibility_status=report.visibility_status,
+                    confidence_score=round(ctx.category_agreement * 100, 1),
+                    contributor_count=ctx.distinct_contributors,
+                    duplicate_count=duplicate_counts.get(report.id, 0),
+                    created_at=report.created_at,
+                    image_url=report.image_url,
+                    area_name=self._area_name(report.h3_index),
+                    contributor_id=report.user_id,
+                    contributor_label=labels.get(report.user_id, "Traveler")
+                    if report.user_id
+                    else "Traveler",
+                )
+            )
+        return items
+
+    def _empty_cell_context(self, h3_index: str) -> AdminCellContext:
+        threshold = max(self.cfg.pending_min_reports_per_cell, 1)
+        return AdminCellContext(
+            h3_index=h3_index,
+            pending_count=0,
+            visible_count=0,
+            flagged_count=0,
+            distinct_contributors=0,
+            top_category=None,
+            category_agreement=0.0,
+            threshold=threshold,
+            threshold_met=False,
         )
 
     def _cell_context(self, h3_index: str) -> AdminCellContext:
-        pending = self.reports.list_pending_by_h3_index(h3_index)
-        visible_count = len(
-            [r for r in self.reports.list_by_h3_indexes([h3_index])]
-        )
-        flagged_stmt_count = sum(
-            1 for r in pending if r.visibility_status == VisibilityStatus.FLAGGED.value
-        )
-        threshold = max(self.cfg.pending_min_reports_per_cell, 1)
-        contributors = _distinct_contributors(pending)
-        category_counts = Counter((r.category or "").lower() for r in pending)
-        top_category = category_counts.most_common(1)[0][0] if category_counts else None
-        top_count = max(category_counts.values(), default=0)
-        agreement = (top_count / len(pending)) if pending else 0.0
-        return AdminCellContext(
-            h3_index=h3_index,
-            pending_count=len(pending),
-            visible_count=visible_count,
-            flagged_count=flagged_stmt_count,
-            distinct_contributors=contributors,
-            top_category=top_category,
-            category_agreement=round(agreement, 3),
-            threshold=threshold,
-            threshold_met=contributors >= threshold
-            and agreement >= self.cfg.pending_agreement_ratio,
+        return self._cell_contexts_for([h3_index]).get(
+            h3_index, self._empty_cell_context(h3_index)
         )
 
+    def _cell_contexts_for(self, h3_indexes: list[str]) -> dict[str, AdminCellContext]:
+        cells = list(dict.fromkeys(idx for idx in h3_indexes if idx))
+        missing = [h3 for h3 in cells if h3 not in self._cell_ctx_cache]
+        if missing:
+            grouped: dict[str, list[Report]] = {h3: [] for h3 in missing}
+            for report in self.reports.list_by_h3_indexes_for_admin(missing):
+                grouped.setdefault(report.h3_index, []).append(report)
+            threshold = max(self.cfg.pending_min_reports_per_cell, 1)
+            ratio = self.cfg.pending_agreement_ratio
+            for h3 in missing:
+                rows = grouped.get(h3, [])
+                pending = [
+                    r
+                    for r in rows
+                    if r.visibility_status == VisibilityStatus.PENDING.value
+                ]
+                visible_count = sum(
+                    1
+                    for r in rows
+                    if r.visibility_status == VisibilityStatus.VISIBLE.value
+                )
+                flagged_count = sum(
+                    1
+                    for r in rows
+                    if r.visibility_status == VisibilityStatus.FLAGGED.value
+                )
+                contributors = _distinct_contributors(pending)
+                category_counts = Counter((r.category or "").lower() for r in pending)
+                top_category = (
+                    category_counts.most_common(1)[0][0] if category_counts else None
+                )
+                top_count = max(category_counts.values(), default=0)
+                agreement = (top_count / len(pending)) if pending else 0.0
+                self._cell_ctx_cache[h3] = AdminCellContext(
+                    h3_index=h3,
+                    pending_count=len(pending),
+                    visible_count=visible_count,
+                    flagged_count=flagged_count,
+                    distinct_contributors=contributors,
+                    top_category=top_category,
+                    category_agreement=round(agreement, 3),
+                    threshold=threshold,
+                    threshold_met=contributors >= threshold and agreement >= ratio,
+                )
+        return {h3: self._cell_ctx_cache[h3] for h3 in cells}
+
+    def _duplicate_counts_for(self, reports: list[Report]) -> dict[UUID, int]:
+        if not reports:
+            return {}
+        since = datetime.now(timezone.utc) - timedelta(
+            hours=max(self.cfg.report_cooldown_hours_per_cell, 24)
+        )
+        siblings = self.reports.list_by_h3_indexes_and_categories_since(
+            (r.h3_index for r in reports),
+            (r.category for r in reports),
+            since,
+        )
+        by_key: dict[tuple[str, str], list[Report]] = {}
+        for sibling in siblings:
+            by_key.setdefault(
+                (sibling.h3_index, (sibling.category or "").lower()), []
+            ).append(sibling)
+        counts: dict[UUID, int] = {}
+        for report in reports:
+            group = by_key.get((report.h3_index, (report.category or "").lower()), [])
+            counts[report.id] = sum(1 for sibling in group if sibling.id != report.id)
+        return counts
+
     def _list_duplicates(self, *, page: int, page_size: int) -> list[AdminReportSummary]:
-        since = datetime.now(timezone.utc) - timedelta(hours=24)
         rows, _ = self.reports.list_admin(
             visibility_status=VisibilityStatus.PENDING.value,
             page=1,
-            page_size=500,
+            page_size=page_size,
         )
-        out: list[AdminReportSummary] = []
-        for report in rows:
-            dupes = self.reports.list_by_h3_and_category_since(
-                report.h3_index,
-                report.category,
-                since,
-                exclude_id=report.id,
-            )
-            if dupes:
-                out.append(self._to_summary(report))
+        out = [s for s in self._summaries_for_reports(rows) if s.duplicate_count >= 1]
         start = max(page - 1, 0) * page_size
         return out[start : start + page_size]
 
     def _list_near_threshold(self, *, page: int, page_size: int) -> list[AdminReportSummary]:
         threshold = max(self.cfg.pending_min_reports_per_cell, 1)
-        cells = self.reports.list_near_threshold_cells(threshold)
-        out: list[AdminReportSummary] = []
-        for h3_index in cells:
-            for report in self.reports.list_pending_by_h3_index(h3_index):
-                out.append(self._to_summary(report))
+        cells = self.reports.list_near_threshold_cells(threshold, limit=80)
+        if not cells:
+            return []
+        pending = [
+            r
+            for r in self.reports.list_by_h3_indexes_for_admin(cells)
+            if r.visibility_status == VisibilityStatus.PENDING.value
+        ]
+        out = self._summaries_for_reports(pending)
         start = max(page - 1, 0) * page_size
         return out[start : start + page_size]
 
@@ -324,47 +393,68 @@ class AdminModerationService:
         rows, _ = self.reports.list_admin(
             visibility_status=VisibilityStatus.PENDING.value,
             page=1,
-            page_size=500,
+            page_size=page_size,
         )
-        out: list[AdminReportSummary] = []
-        for report in rows:
-            ctx = self._cell_context(report.h3_index)
-            if ctx.category_agreement < self.cfg.pending_agreement_ratio:
-                out.append(self._to_summary(report))
+        ratio_pct = self.cfg.pending_agreement_ratio * 100
+        out = [
+            s
+            for s in self._summaries_for_reports(rows)
+            if s.confidence_score < ratio_pct
+        ]
         start = max(page - 1, 0) * page_size
         return out[start : start + page_size]
 
     def _contributor_label(self, user_id: UUID | None) -> str:
         if user_id is None:
             return "Traveler"
-        cached = getattr(self, "_contributor_label_cache", None)
-        if cached is None:
-            cached = {}
-            self._contributor_label_cache = cached
-        if user_id in cached:
-            return cached[user_id]
-        from app.repositories.user_repository import UserRepository
+        return self._contributor_labels_for([user_id]).get(user_id, "Traveler")
 
-        user = UserRepository(self.db).get_by_id(user_id)
-        name = (user.display_name or "").strip() if user else ""
-        label = name or "Traveler"
-        cached[user_id] = label
-        return label
+    def _contributor_labels_for(self, user_ids: Iterable[UUID | None]) -> dict[UUID, str]:
+        ids = list(dict.fromkeys(uid for uid in user_ids if uid is not None))
+        missing = [uid for uid in ids if uid not in self._contributor_label_cache]
+        if missing:
+            from app.repositories.user_repository import UserRepository
+
+            users = UserRepository(self.db).get_by_ids(missing)
+            for uid in missing:
+                user = users.get(uid)
+                name = (user.display_name or "").strip() if user else ""
+                self._contributor_label_cache[uid] = name or "Traveler"
+        return {uid: self._contributor_label_cache[uid] for uid in ids}
 
     def _area_names(self) -> dict[str, str]:
         cached = getattr(self, "_area_name_cache", None)
         if cached is not None:
             return cached
-        from app.models.merged_zone import MergedZone
-        from app.repositories.place_repository import PlaceRepository
         from sqlalchemy import select
+        from sqlalchemy.orm import load_only
+
+        from app.models.merged_zone import MergedZone
+        from app.models.place import Place
 
         names: dict[str, str] = {}
-        zones = list(self.db.execute(select(MergedZone)).scalars())
+        zones = list(
+            self.db.execute(
+                select(MergedZone).options(
+                    load_only(
+                        MergedZone.display_name, MergedZone.source_h3_indexes_json
+                    )
+                )
+            ).scalars()
+        )
         for zone in zones:
             for idx in zone.source_h3_indexes_json or []:
                 names.setdefault(idx, zone.display_name)
-        for place in PlaceRepository(self.db).list_active():
+        places = list(
+            self.db.execute(
+                select(Place)
+                .where(Place.is_active.is_(True), Place.report_count > 0)
+                .options(
+                    load_only(Place.display_name, Place.source_h3_indexes_json)
+                )
+            ).scalars()
+        )
+        for place in places:
             for idx in place.source_h3_indexes_json or []:
                 names.setdefault(idx, place.display_name)
         self._area_name_cache = names

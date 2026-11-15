@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from uuid import UUID
 
 from sqlalchemy import desc, func, select
@@ -14,6 +15,13 @@ class UserRepository:
 
     def get_by_id(self, user_id: UUID) -> User | None:
         return self.db.get(User, user_id)
+
+    def get_by_ids(self, user_ids: Iterable[UUID]) -> dict[UUID, User]:
+        ids = list({uid for uid in user_ids if uid is not None})
+        if not ids:
+            return {}
+        rows = list(self.db.execute(select(User).where(User.id.in_(ids))).scalars())
+        return {user.id: user for user in rows}
 
     def get_by_email(self, email: str) -> User | None:
         stmt = select(User).where(User.email == email.lower())

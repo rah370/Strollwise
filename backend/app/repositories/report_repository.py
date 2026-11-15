@@ -325,6 +325,28 @@ class ReportRepository:
         stmt = select(Report).where(Report.id.in_(report_ids))
         return list(self.db.execute(stmt).scalars())
 
+    def list_by_h3_indexes_and_categories_since(
+        self,
+        h3_indexes: Iterable[str],
+        categories: Iterable[str],
+        since: datetime,
+    ) -> list[Report]:
+        """One round-trip for duplicate counts on a moderation page."""
+        cells = list(dict.fromkeys(idx for idx in h3_indexes if idx))
+        cats = list(dict.fromkeys(c.lower() for c in categories if c))
+        if not cells or not cats:
+            return []
+        stmt = (
+            select(Report)
+            .where(
+                Report.h3_index.in_(cells),
+                Report.category.in_(cats),
+                Report.created_at >= since,
+            )
+            .order_by(desc(Report.created_at))
+        )
+        return list(self.db.execute(stmt).scalars())
+
     def list_by_h3_and_category_since(
         self,
         h3_index: str,
@@ -343,7 +365,9 @@ class ReportRepository:
         stmt = stmt.order_by(desc(Report.created_at))
         return list(self.db.execute(stmt).scalars())
 
-    def list_near_threshold_cells(self, threshold: int) -> list[str]:
+    def list_near_threshold_cells(
+        self, threshold: int, *, limit: int | None = None
+    ) -> list[str]:
         """H3 cells with pending reports from fewer than threshold distinct contributors."""
         stmt = (
             select(Report.h3_index)
@@ -351,6 +375,8 @@ class ReportRepository:
             .group_by(Report.h3_index)
             .having(func.count(func.distinct(Report.user_id)) < threshold)
         )
+        if limit is not None:
+            stmt = stmt.limit(limit)
         return [str(row[0]) for row in self.db.execute(stmt).all()]
 
     def count_by_visibility(self, status: str) -> int:

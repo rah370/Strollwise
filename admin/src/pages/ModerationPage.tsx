@@ -27,10 +27,10 @@ import {
 const PAGE_SIZE = 20
 
 const queues = [
+  { id: 'pending', label: 'Waiting', hint: 'Need a yes or no' },
   { id: 'flagged', label: 'Hold', hint: 'Needs a reason before it can go on the map' },
   { id: 'near_threshold', label: 'Almost ready', hint: 'A few more matching tags would publish this' },
   { id: 'mixed_agreement', label: 'Mixed', hint: 'People described this area differently' },
-  { id: 'pending', label: 'Waiting', hint: 'Need a yes or no' },
   { id: 'duplicates', label: 'Repeats', hint: 'Similar tags in the same area' },
   { id: 'all', label: 'All', hint: 'Every tag, including published ones' },
 ] as const
@@ -41,7 +41,7 @@ type ActionKind = 'approve' | 'reject' | 'flag'
 export function ModerationPage() {
   const qc = useQueryClient()
   const [params] = useSearchParams()
-  const [queue, setQueue] = useState<QueueId>('flagged')
+  const [queue, setQueue] = useState<QueueId>('pending')
   const [selected, setSelected] = useState<string[]>([])
   const [focusedId, setFocusedId] = useState<string | null>(null)
   const [search, setSearch] = useState('')
@@ -85,13 +85,13 @@ export function ModerationPage() {
   if (tag.trim()) query.set('tag', tag.trim())
   if (contributorId) query.set('contributor_id', contributorId)
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['moderation', query.toString()],
     queryFn: () => api<AdminReportList>(`/admin/moderation/reports?${query}`),
     refetchInterval: poll,
   })
 
-  const { data: detail } = useQuery({
+  const { data: detail, isError: detailError, error: detailErr, refetch: refetchDetail } = useQuery({
     queryKey: ['moderation-detail', focusedId],
     queryFn: () => api<AdminReportDetail>(`/admin/moderation/reports/${focusedId}`),
     enabled: !!focusedId,
@@ -122,6 +122,7 @@ export function ModerationPage() {
       setActionError('')
       setPendingAction(null)
       qc.invalidateQueries({ queryKey: ['moderation'] })
+      qc.invalidateQueries({ queryKey: ['moderation-detail'] })
       qc.invalidateQueries({ queryKey: ['dashboard'] })
       qc.invalidateQueries({ queryKey: ['zones'] })
       qc.invalidateQueries({ queryKey: ['audit'] })
@@ -144,6 +145,7 @@ export function ModerationPage() {
       setActionError('')
       setPendingAction(null)
       qc.invalidateQueries({ queryKey: ['moderation'] })
+      qc.invalidateQueries({ queryKey: ['moderation-detail'] })
       qc.invalidateQueries({ queryKey: ['dashboard'] })
       qc.invalidateQueries({ queryKey: ['audit'] })
       setSelected([])
@@ -178,7 +180,7 @@ export function ModerationPage() {
     <div className="space-y-4">
       <PageHeader
         title="Review tags"
-        description="Publish what belongs on the map, mark wrong tags, or hold anything that still needs a look. Hold comes first."
+        description="Publish what belongs on the map, mark wrong tags, or hold anything that still needs a look. Waiting tags open first."
       />
 
       {actionError ? (
@@ -320,7 +322,23 @@ export function ModerationPage() {
                 </tr>
               </thead>
               <tbody>
-                {isLoading ? (
+                {isError ? (
+                  <tr>
+                    <td colSpan={8} className="p-6">
+                      <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-red-800">
+                        <div className="font-bold">Could not load this list</div>
+                        <p className="text-sm mt-1">{error instanceof Error ? error.message : 'Unknown error'}</p>
+                        <button
+                          type="button"
+                          className="mt-3 text-sm font-bold text-sw-primary-dark"
+                          onClick={() => refetch()}
+                        >
+                          Try again
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ) : isLoading ? (
                   <tr><td colSpan={8} className="p-6 text-sw-muted">Loading tags…</td></tr>
                 ) : items.length === 0 ? (
                   <tr><td colSpan={8} className="p-6 text-sw-muted">Nothing in this list. Try another filter.</td></tr>
@@ -379,7 +397,19 @@ export function ModerationPage() {
 
         <Card className="h-fit sticky top-6">
           <h2 className="font-black text-sw-ink mb-3">Should this go on the map?</h2>
-          {!focusedId || !detail ? (
+          {detailError ? (
+            <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">
+              <div className="font-bold">Could not load this tag</div>
+              <p className="mt-1">{detailErr instanceof Error ? detailErr.message : 'Unknown error'}</p>
+              <button
+                type="button"
+                className="mt-3 text-sm font-bold text-sw-primary-dark"
+                onClick={() => refetchDetail()}
+              >
+                Try again
+              </button>
+            </div>
+          ) : !focusedId || !detail ? (
             <p className="text-sm text-sw-muted">
               Select a tag to see how many other people described this area the same way.
             </p>
