@@ -32,7 +32,9 @@ class MainShell extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final location = GoRouterState.of(context).uri.toString();
     final hideNavigation = location.startsWith('/add-tag');
-    final showBrandBar = !hideNavigation && !location.startsWith('/explore');
+    final showBrandBar = !hideNavigation &&
+        !location.startsWith('/explore') &&
+        !location.startsWith('/feed');
     final submittedBanner = ref.watch(tagSubmittedBannerProvider);
     return Scaffold(
       body: Column(

@@ -34,6 +34,9 @@ class ReportPublic(ORMModel):
     # H3 cell centroid for the owner's own contributions list. Not raw GPS.
     cell_lat: float | None = None
     cell_lng: float | None = None
+    # Public feed only. Never an email or user id.
+    author_kind: str | None = None
+    author_handle: str | None = None
 
 
 class AggregationFeedback(ORMModel):

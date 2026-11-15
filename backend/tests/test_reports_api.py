@@ -373,6 +373,48 @@ def test_report_feed_only_includes_approved_reports(client):
     assert feed.json() == []
 
 
+def test_report_feed_exposes_privacy_safe_handle(client, db_session):
+    from datetime import datetime, timezone
+
+    from sqlalchemy import desc, select
+
+    from app.models.report import Report
+
+    token = _register(client, "feed-handle@example.com")
+    created = client.post(
+        "/api/v1/reports",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "latitude": 10.3315,
+            "longitude": 123.9062,
+            "category": "food",
+            "tags": ["public", "cafe"],
+            "note_text": "Quiet lawn seats at IT Park",
+        },
+    )
+    assert created.status_code == 201
+    report = db_session.execute(
+        select(Report).order_by(desc(Report.created_at))
+    ).scalars().first()
+    assert report is not None
+    report.visibility_status = "visible"
+    report.created_at = datetime.now(timezone.utc)
+    db_session.commit()
+
+    feed = client.get("/api/v1/reports/feed")
+    assert feed.status_code == 200
+    items = feed.json()
+    assert items
+    row = items[0]
+    assert row["author_handle"] == "@reporter_cebucity"
+    assert row["author_kind"] == "local"
+    assert "@example.com" not in row["author_handle"]
+    assert row["cell_lat"] is not None
+    assert row["cell_lng"] is not None
+    assert "latitude_raw" not in row
+    assert "email" not in row
+
+
 def test_uspf_tag_uses_same_crowd_threshold(client):
     token = _register(client)
     lat, lng = 10.3380, 123.9010

@@ -15,6 +15,7 @@ from app.api.deps import get_current_user
 from app.core.database import get_db
 from app.models.enums import VisibilityStatus
 from app.models.user import User
+from app.repositories.user_repository import UserRepository
 from app.repositories.zone_repository import ZoneRepository
 from app.schemas.report import (
     AggregationFeedback,
@@ -24,10 +25,11 @@ from app.schemas.report import (
     ReportSubmissionResponse,
     SensitiveSitePublic,
 )
-from app.services.sensitive_sites import public_sites
 from app.schemas.visit_pin import VisitPinCreate, VisitPinPublic
 from app.services import h3_service
+from app.services.feed_privacy import author_kind_for, feed_author_handle
 from app.services.report_service import ReportService, ReportValidationError
+from app.services.sensitive_sites import public_sites
 from app.services.visit_pin_service import VisitPinService
 
 router = APIRouter(prefix="/reports", tags=["reports"])
@@ -183,7 +185,21 @@ def report_feed(
     db: Session = Depends(get_db),
 ) -> list[ReportPublic]:
     reports = ReportService(db).recent_feed(limit)
-    return [ReportPublic.model_validate(r) for r in reports]
+    users = UserRepository(db).get_by_ids(r.user_id for r in reports)
+    items: list[ReportPublic] = []
+    for report in reports:
+        payload = ReportPublic.model_validate(report).model_dump()
+        user = users.get(report.user_id) if report.user_id else None
+        try:
+            lat, lng = h3_service.cell_centroid(report.h3_index)
+        except Exception:
+            lat, lng = None, None
+        payload["author_kind"] = author_kind_for(report)
+        payload["author_handle"] = feed_author_handle(report, user)
+        payload["cell_lat"] = lat
+        payload["cell_lng"] = lng
+        items.append(ReportPublic.model_validate(payload))
+    return items
 
 
 @router.get("/by-zone/{zone_id}", response_model=list[ReportPublic])

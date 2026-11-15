@@ -10,6 +10,8 @@ class ReportModel {
     this.visibilityStatus,
     this.cellLat,
     this.cellLng,
+    this.authorKind,
+    this.authorHandle,
   });
 
   final String id;
@@ -26,6 +28,10 @@ class ReportModel {
   /// H3 cell centroid for the owner's own tags (not raw GPS).
   final double? cellLat;
   final double? cellLng;
+
+  /// Privacy-safe feed identity: `local` or `visitor`. Never an email.
+  final String? authorKind;
+  final String? authorHandle;
 
   bool get isApprovedVisible =>
       (visibilityStatus ?? 'visible').toLowerCase() == 'visible';
@@ -46,6 +52,8 @@ class ReportModel {
       visibilityStatus: json['visibility_status'] as String?,
       cellLat: (json['cell_lat'] as num?)?.toDouble(),
       cellLng: (json['cell_lng'] as num?)?.toDouble(),
+      authorKind: json['author_kind'] as String?,
+      authorHandle: json['author_handle'] as String?,
     );
   }
 }
