@@ -76,8 +76,9 @@ def zones_in_viewport(
     repo = ZoneRepository(db)
     # Fast path: ask PostGIS via ST_Intersects.
     in_viewport = repo.list_active_in_bbox(min_lat, min_lng, max_lat, max_lng)
-    if in_viewport is None or not in_viewport:
-        # Fallback when PostGIS is unavailable or polygon_geometry is missing on rows.
+    if in_viewport is None:
+        # Fallback only when PostGIS is unavailable. An empty list means the
+        # bbox genuinely has no zones — do not full-scan merged_zones.
         in_viewport = [
             z
             for z in repo.list_active()

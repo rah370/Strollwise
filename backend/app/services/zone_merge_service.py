@@ -249,11 +249,11 @@ class ZoneMergeService:
         from app.services.place_service import PlaceService
 
         PlaceService(self.db).sync_catalog_places()
-        for zone in self.zone_repo.list_active():
-            self.zone_repo.delete(zone)
-        self.db.flush()
         places = self.place_repo.list_all_catalog()
-        return self._rebuild_from_places(places, used_slugs=set())
+        rebuilt = self._rebuild_from_places(places, used_slugs=set())
+        kept = {z.place_id for z in rebuilt}
+        self._delete_zones_except_places(kept)
+        return rebuilt
 
     def recompute_near(self, seed_h3_indexes: Iterable[str]) -> list[MergedZone]:
         expanded: set[str] = set()
@@ -264,20 +264,21 @@ class ZoneMergeService:
         if not cells:
             return []
         place_ids = {c.place_id for c in cells if c.place_id is not None}
-        for cell in self.h3_repo.list_all_active():
-            if cell.h3_index in expanded and cell.place_id:
-                place_ids.add(cell.place_id)
         return self.recompute_for_places(place_ids)
 
     def recompute_for_places(self, place_ids: Iterable) -> list[MergedZone]:
         ids = {pid for pid in place_ids if pid is not None}
         if not ids:
             return []
-        self._delete_zones_for_places(ids)
-        self.db.flush()
         places = [self.place_repo.get(pid) for pid in ids]
         places = [p for p in places if p is not None and p.report_count > 0]
-        return self._rebuild_from_places(places, used_slugs=set())
+        rebuilt = self._rebuild_from_places(places, used_slugs=set())
+        kept = {z.place_id for z in rebuilt}
+        stale = ids - kept
+        if stale:
+            self._delete_zones_for_places(stale)
+            self.db.commit()
+        return rebuilt
 
     # ---------------------------------------------------------------- core
 
@@ -286,9 +287,10 @@ class ZoneMergeService:
     ) -> list[MergedZone]:
         new_zones: list[MergedZone] = []
         cells_by_place: dict = {}
-        for cell in self.h3_repo.list_all_active():
-            if cell.place_id and cell.report_count > 0:
-                cells_by_place.setdefault(cell.place_id, []).append(cell)
+        for cell in self.h3_repo.list_active_by_place_ids(
+            [place.place_id for place in places]
+        ):
+            cells_by_place.setdefault(cell.place_id, []).append(cell)
 
         for place in places:
             cells = cells_by_place.get(place.place_id, [])
@@ -307,6 +309,18 @@ class ZoneMergeService:
         for zone in list(self.zone_repo.list_active()):
             if zone.place_id in place_ids:
                 self.zone_repo.delete(zone)
+
+    def _delete_zones_except_places(self, keep_place_ids: set) -> None:
+        stale = [
+            zone
+            for zone in self.zone_repo.list_active()
+            if zone.place_id not in keep_place_ids
+        ]
+        if not stale:
+            return
+        for zone in stale:
+            self.zone_repo.delete(zone)
+        self.db.commit()
 
     def _delete_zones_touching_h3_indexes(self, indexes: set[str]) -> None:
         """Remove merged zones that used any of these cells so we never stack
@@ -388,11 +402,19 @@ class ZoneMergeService:
             place.display_name, float(centroid_lat), float(centroid_lng)
         )
 
+        existing_zone = self.zone_repo.get_by_place_id(place.place_id)
         slug_base = slugify(f"{place.slug}-{traveler_mix}")
         slug = slug_base
         counter = 1
-        while slug in used_slugs or self.zone_repo.list_by_slug(slug):
+        while True:
+            taken = self.zone_repo.list_by_slug(slug)
+            own_slug = existing_zone is not None and taken is not None and taken.zone_id == existing_zone.zone_id
+            if slug not in used_slugs and (taken is None or own_slug):
+                break
             counter += 1
+            if counter > 50:
+                slug = f"{slug_base}-{uuid4().hex[:8]}"
+                break
             slug = f"{slug_base}-{counter}"
         used_slugs.add(slug)
 
@@ -404,16 +426,37 @@ class ZoneMergeService:
             local_presence,
         )
         priority = self._priority(report_count, crowd_level, confidence, popularity)
+        geometry = PolygonService.geojson_to_postgis_geometry(
+            polygon,
+            dialect_name=self.db.get_bind().dialect.name,
+        )
+        now = datetime.utcnow()
+        if existing_zone is not None:
+            existing_zone.display_name = display_name
+            existing_zone.slug = slug
+            existing_zone.behavior_type = behavior
+            existing_zone.function_type = None
+            existing_zone.traveler_mix = traveler_mix
+            existing_zone.summary = summary
+            existing_zone.live_status = live_status
+            existing_zone.polygon_geojson = polygon
+            existing_zone.polygon_geometry = geometry
+            existing_zone.centroid_lat = float(centroid_lat)
+            existing_zone.centroid_lng = float(centroid_lng)
+            existing_zone.source_h3_indexes_json = h3_indexes
+            existing_zone.crowd_level = float(round(crowd_level, 3))
+            existing_zone.local_presence_percent = float(round(local_presence, 2))
+            existing_zone.peak_time_label = peak_label
+            existing_zone.top_activities_json = top_activities
+            existing_zone.confidence_score = float(round(confidence, 2))
+            existing_zone.priority_score = float(round(priority, 2))
+            existing_zone.report_count = report_count
+            existing_zone.is_active = True
+            existing_zone.updated_at = now
+            return existing_zone
 
-        existing_zone = None
-        for zone in self.zone_repo.list_active():
-            if zone.place_id == place.place_id:
-                existing_zone = zone
-                break
-
-        zone_id = existing_zone.zone_id if existing_zone else uuid4()
         return MergedZone(
-            zone_id=zone_id,
+            zone_id=uuid4(),
             display_name=display_name,
             slug=slug,
             behavior_type=behavior,
@@ -423,10 +466,7 @@ class ZoneMergeService:
             summary=summary,
             live_status=live_status,
             polygon_geojson=polygon,
-            polygon_geometry=PolygonService.geojson_to_postgis_geometry(
-                polygon,
-                dialect_name=self.db.get_bind().dialect.name,
-            ),
+            polygon_geometry=geometry,
             centroid_lat=float(centroid_lat),
             centroid_lng=float(centroid_lng),
             source_h3_indexes_json=h3_indexes,
@@ -438,8 +478,8 @@ class ZoneMergeService:
             priority_score=float(round(priority, 2)),
             report_count=report_count,
             is_active=True,
-            updated_at=datetime.utcnow(),
-            created_at=existing_zone.created_at if existing_zone else datetime.utcnow(),
+            updated_at=now,
+            created_at=now,
         )
 
     @staticmethod

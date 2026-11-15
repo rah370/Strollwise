@@ -24,6 +24,23 @@ class H3Repository:
         stmt = select(H3CellAggregate).where(H3CellAggregate.report_count > 0)
         return list(self.db.execute(stmt).scalars())
 
+    def list_active_by_place_id(self, place_id) -> list[H3CellAggregate]:
+        stmt = select(H3CellAggregate).where(
+            H3CellAggregate.place_id == place_id,
+            H3CellAggregate.report_count > 0,
+        )
+        return list(self.db.execute(stmt).scalars())
+
+    def list_active_by_place_ids(self, place_ids: Iterable) -> list[H3CellAggregate]:
+        ids = [pid for pid in place_ids if pid is not None]
+        if not ids:
+            return []
+        stmt = select(H3CellAggregate).where(
+            H3CellAggregate.place_id.in_(ids),
+            H3CellAggregate.report_count > 0,
+        )
+        return list(self.db.execute(stmt).scalars())
+
     def list_by_indexes(self, h3_indexes: Iterable[str]) -> list[H3CellAggregate]:
         idxs = list(h3_indexes)
         if not idxs:

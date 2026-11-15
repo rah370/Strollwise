@@ -66,7 +66,7 @@ class PlaceService:
             place.source = "catalog"
             place.source_h3_indexes_json = list(entry.source_h3_indexes)
             synced.append(self.place_repo.upsert(place))
-        self.db.commit()
+        self.db.flush()
         return synced
 
     def assign_cells(self, cells: Iterable[H3CellAggregate]) -> set[UUID]:
@@ -99,11 +99,7 @@ class PlaceService:
         place = self.place_repo.get(place_id)
         if place is None:
             return None
-        cells = [
-            c
-            for c in self.h3_repo.list_all_active()
-            if c.place_id == place_id and c.report_count > 0
-        ]
+        cells = self.h3_repo.list_active_by_place_id(place_id)
         if not cells:
             place.report_count = 0
             place.confidence_score = 0.0
@@ -185,9 +181,6 @@ class PlaceService:
         if not cells:
             return []
         touched = self.assign_cells(cells)
-        # Also reassign any active cell (catalog membership can shift).
-        all_active = self.h3_repo.list_all_active()
-        touched |= self.assign_cells(all_active)
 
         rebuilt: list[Place] = []
         for place_id in touched:

@@ -39,7 +39,28 @@ class AggregationService:
         return self.h3_repo.upsert(cell)
 
     def recompute_cells(self, h3_indexes: Iterable[str]) -> list[H3CellAggregate]:
-        return [self.recompute_cell(idx) for idx in h3_indexes]
+        indexes = list(dict.fromkeys(idx for idx in h3_indexes if idx))
+        if not indexes:
+            return []
+        grouped = self.report_repo.list_visible_grouped_by_h3(indexes)
+        existing = {c.h3_index: c for c in self.h3_repo.list_by_indexes(indexes)}
+        out: list[H3CellAggregate] = []
+        for idx in indexes:
+            reports = grouped.get(idx, [])
+            if not reports:
+                cell = existing.get(idx)
+                if cell is not None:
+                    cell.report_count = 0
+                    cell.behavior_type = "mixed_area"
+                    cell.function_type = "emerging_zone"
+                    cell.confidence_score = 0
+                    self.h3_repo.upsert(cell)
+                out.append(cell or self._empty_cell(idx))
+                continue
+            cell = self._aggregate(idx, reports)
+            ClassificationService.apply(cell)
+            out.append(self.h3_repo.upsert(cell))
+        return out
 
     # --- internal helpers -------------------------------------------------
 

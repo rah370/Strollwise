@@ -68,6 +68,14 @@ class ZoneRepository:
         )
         return self.db.execute(stmt).scalar_one_or_none()
 
+    def get_by_place_id(self, place_id: UUID) -> MergedZone | None:
+        stmt = (
+            select(MergedZone)
+            .where(MergedZone.place_id == place_id)
+            .options(_DEFER_POLYGON_GEOM)
+        )
+        return self.db.execute(stmt).scalar_one_or_none()
+
     def get(self, zone_id: UUID) -> MergedZone | None:
         stmt = (
             select(MergedZone)

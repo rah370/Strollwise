@@ -683,8 +683,7 @@ class AdminService:
             AggregationService(self.db).recompute_cells(h3_indexes)
             count = len(h3_indexes)
         else:
-            rows, total = self.reports.list_admin(page=1, page_size=5000)
-            indexes = {r.h3_index for r in rows}
+            indexes = self.reports.list_distinct_h3_indexes()
             AggregationService(self.db).recompute_cells(indexes)
             count = len(indexes)
         self.db.commit()
@@ -742,8 +741,7 @@ class AdminService:
 
     def rebuild_all(self, admin: User | None = None) -> AdminPipelineResult:
         started = datetime.now(timezone.utc)
-        rows, _ = self.reports.list_admin(page=1, page_size=5000)
-        indexes = {r.h3_index for r in rows}
+        indexes = self.reports.list_distinct_h3_indexes()
         AggregationService(self.db).recompute_cells(indexes)
         self.db.commit()
         places = PlaceService(self.db).rebuild_all()

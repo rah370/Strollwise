@@ -393,3 +393,11 @@ def test_admin_catalog_list(client, db_session):
     entries = resp.json()
     assert len(entries) >= 1
     assert "zone_name" in entries[0]
+
+
+def test_admin_event_stream_does_not_hold_a_db_dependency():
+    import inspect
+
+    from app.api.routers.admin.events import admin_event_stream
+
+    assert "db" not in inspect.signature(admin_event_stream).parameters

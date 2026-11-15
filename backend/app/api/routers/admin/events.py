@@ -3,12 +3,11 @@ from __future__ import annotations
 import asyncio
 import json
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Query
 from fastapi.responses import StreamingResponse
-from sqlalchemy.orm import Session
 
 from app.api.deps import verify_admin_token
-from app.core.database import get_db
+from app.core.database import SessionLocal
 from app.services.admin_events import subscribe
 
 router = APIRouter(prefix="/events", tags=["admin"])
@@ -17,9 +16,13 @@ router = APIRouter(prefix="/events", tags=["admin"])
 @router.get("")
 async def admin_event_stream(
     token: str = Query(..., description="JWT for EventSource (cannot send Authorization header)"),
-    db: Session = Depends(get_db),
 ) -> StreamingResponse:
-    verify_admin_token(token, db)
+    # Auth only — never keep a pooled connection for the life of the stream.
+    db = SessionLocal()
+    try:
+        verify_admin_token(token, db)
+    finally:
+        db.close()
 
     async def generate():
         queue: asyncio.Queue[str] = asyncio.Queue(maxsize=128)

@@ -25,15 +25,27 @@ class Base(DeclarativeBase):
 
 
 _connect_args: dict[str, object] = {}
+_engine_kwargs: dict[str, object] = {
+    "pool_pre_ping": True,
+    "future": True,
+}
 if settings.database_url.startswith("postgresql"):
     # Keep this short: Render health checks time out around 5s.
     _connect_args["connect_timeout"] = 3
+    # Recycle before Render/Supabase idle-kill (~5–10 min) so checkout
+    # does not stall the whole pool. Default size 5 is enough if SSE
+    # does not hold sessions for the life of the stream.
+    _engine_kwargs.update(
+        pool_recycle=280,
+        pool_size=5,
+        max_overflow=10,
+        pool_timeout=10,
+    )
 
 engine = create_engine(
     settings.database_url,
-    pool_pre_ping=True,
-    future=True,
     connect_args=_connect_args,
+    **_engine_kwargs,
 )
 
 SessionLocal = sessionmaker(

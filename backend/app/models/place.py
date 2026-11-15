@@ -40,7 +40,9 @@ class Place(Base):
     )
     report_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     confidence_score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
-    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, index=True
+    )
 
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

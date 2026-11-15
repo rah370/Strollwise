@@ -16,7 +16,6 @@ from app.schemas.place import PlaceDetail, PlaceListItem, PlaceSummary
 from app.schemas.place_recommendation import PlaceRecommendation
 from app.services.place_recommendations_service import fetch_place_recommendations
 from app.services.place_catalog import CEBU_PLACE_CATALOG
-from app.services.place_service import PlaceService
 from app.utils.geo_utils import polygon_intersects_bbox
 from app.utils.h3_display import display_h3_rings
 from app.utils.place_geometry import point_in_geojson
@@ -90,7 +89,6 @@ def resolve_place_at_point(
     db: Session = Depends(get_db),
 ) -> Optional[PlaceSummary]:
     """Return the catalog place containing this point, if any."""
-    PlaceService(db).sync_catalog_places()
     repo = PlaceRepository(db)
     for entry in CEBU_PLACE_CATALOG:
         if not point_in_geojson(entry.polygon_geojson, lat=lat, lng=lng):

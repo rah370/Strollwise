@@ -112,6 +112,29 @@ class ReportRepository:
         )
         return [row[0] for row in self.db.execute(stmt).all() if row[0] is not None]
 
+    def list_distinct_h3_indexes(self) -> list[str]:
+        stmt = select(Report.h3_index).distinct()
+        return [row[0] for row in self.db.execute(stmt).all() if row[0]]
+
+    def list_visible_grouped_by_h3(
+        self, h3_indexes: Iterable[str]
+    ) -> dict[str, list[Report]]:
+        h3_list = list(dict.fromkeys(h3_indexes))
+        if not h3_list:
+            return {}
+        stmt = (
+            select(Report)
+            .where(
+                Report.h3_index.in_(h3_list),
+                Report.visibility_status == "visible",
+            )
+            .order_by(desc(Report.created_at))
+        )
+        grouped: dict[str, list[Report]] = {idx: [] for idx in h3_list}
+        for report in self.db.execute(stmt).scalars():
+            grouped.setdefault(report.h3_index, []).append(report)
+        return grouped
+
     def list_by_h3_indexes(self, h3_indexes: Iterable[str]) -> list[Report]:
         h3_list = list(h3_indexes)
         if not h3_list:

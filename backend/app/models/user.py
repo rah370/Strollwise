@@ -49,7 +49,11 @@ class User(Base):
         onupdate=func.now(),
     )
 
-    reports = relationship("Report", back_populates="user", cascade="all, delete-orphan")
+    reports = relationship(
+        "Report",
+        back_populates="user",
+        passive_deletes=True,
+    )
     visit_pins = relationship(
         "UserVisitPin", back_populates="user", cascade="all, delete-orphan"
     )

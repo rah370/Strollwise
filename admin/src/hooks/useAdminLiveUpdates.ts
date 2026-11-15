@@ -46,23 +46,44 @@ export function useAdminLiveUpdates() {
     if (!token) return
 
     const url = `${API_URL}/api/v1/admin/events?token=${encodeURIComponent(token)}`
-    const es = new EventSource(url)
+    let stopped = false
+    let retryMs = 1000
+    let timer: ReturnType<typeof setTimeout> | undefined
+    let es: EventSource | null = null
 
-    es.onopen = () => setConnected(true)
-    es.onerror = () => setConnected(false)
-    es.onmessage = (event) => {
-      try {
-        const msg = JSON.parse(event.data) as { type?: string }
-        if (msg.type && msg.type !== 'connected') {
-          invalidateForEvent(qc, msg.type)
+    const connect = () => {
+      if (stopped) return
+      es = new EventSource(url)
+      es.onopen = () => {
+        setConnected(true)
+        retryMs = 1000
+      }
+      es.onerror = () => {
+        setConnected(false)
+        es?.close()
+        es = null
+        if (stopped) return
+        const wait = retryMs
+        retryMs = Math.min(retryMs * 2, 30_000)
+        timer = setTimeout(connect, wait)
+      }
+      es.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data) as { type?: string }
+          if (msg.type && msg.type !== 'connected') {
+            invalidateForEvent(qc, msg.type)
+          }
+        } catch {
+          /* ignore malformed events */
         }
-      } catch {
-        /* ignore malformed events */
       }
     }
 
+    connect()
     return () => {
-      es.close()
+      stopped = true
+      if (timer) clearTimeout(timer)
+      es?.close()
       setConnected(false)
     }
   }, [qc])

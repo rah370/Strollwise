@@ -132,3 +132,53 @@ def test_merge_rollup_traveler_mix_for_mixed_reports(db_session):
     _, zones = _rebuild_places_and_zones(db_session, [h3_index])
     assert zones
     assert zones[0].traveler_mix == "mixed"
+
+
+def test_rebuild_preserves_zone_id_and_saved_bookmark(db_session):
+    from app.models.saved_zone import SavedZone
+
+    user = _create_user(db_session)
+    reports = _seed_food_reports(db_session, user_id=user.id)
+    affected_cells = {r.h3_index for r in reports}
+    AggregationService(db_session).recompute_cells(affected_cells)
+    db_session.commit()
+
+    _, zones = _rebuild_places_and_zones(db_session, affected_cells)
+    assert zones
+    zone_id = zones[0].zone_id
+    slug = zones[0].slug
+    db_session.add(SavedZone(user_id=user.id, zone_id=zone_id))
+    db_session.commit()
+
+    _, zones_again = _rebuild_places_and_zones(db_session, affected_cells)
+    assert zones_again
+    assert zones_again[0].zone_id == zone_id
+    assert zones_again[0].slug == slug
+    saved = db_session.query(SavedZone).filter_by(zone_id=zone_id).one()
+    assert saved.user_id == user.id
+
+
+def test_distinct_h3_indexes_include_every_cell(db_session):
+    from app.repositories.report_repository import ReportRepository
+
+    user = _create_user(db_session)
+    first = h3_service.latlng_to_cell(10.31, 123.88, 8)
+    second = h3_service.latlng_to_cell(10.35, 123.92, 8)
+    for h3_index in (first, second):
+        db_session.add(
+            Report(
+                user_id=user.id,
+                h3_index=h3_index,
+                resolution=8,
+                latitude_raw=10.31,
+                longitude_raw=123.88,
+                category="food",
+                tags_json=["food"],
+                traveler_type_snapshot="local",
+                source_type="user",
+                visibility_status="visible",
+            )
+        )
+    db_session.commit()
+    found = set(ReportRepository(db_session).list_distinct_h3_indexes())
+    assert found == {first, second}

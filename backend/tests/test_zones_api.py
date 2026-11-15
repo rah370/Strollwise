@@ -120,6 +120,20 @@ def test_zone_detail_returns_expected_fields(client):
     assert isinstance(body["places"], list)
 
 
+def test_empty_ocean_viewport_returns_no_zones(client):
+    resp = client.get(
+        "/api/v1/zones",
+        params={
+            "min_lat": 0.0,
+            "min_lng": 0.0,
+            "max_lat": 0.2,
+            "max_lng": 0.2,
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == []
+
+
 def test_zone_detail_404_for_unknown_id(client):
     resp = client.get("/api/v1/zones/00000000-0000-0000-0000-000000000000")
     assert resp.status_code == 404

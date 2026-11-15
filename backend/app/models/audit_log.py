@@ -27,5 +27,5 @@ class AuditLog(Base):
     entity_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     payload_json: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now()
+        DateTime(timezone=True), nullable=False, server_default=func.now(), index=True
     )
