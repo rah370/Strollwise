@@ -141,8 +141,6 @@ cd backend && pytest -q
 
 Tests use in-memory SQLite — no Postgres required for pytest.
 
-End-user **traveler and researcher manual**: [`docs/USER_MANUAL.md`](docs/USER_MANUAL.md).
-
 Stakeholder **user acceptance testing** (traveler app + admin + tag/moderation loop, hosted URLs, pass/fail, known limitations): [`docs/UAT.md`](docs/UAT.md).
 
 ## Environment
