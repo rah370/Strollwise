@@ -52,6 +52,12 @@ def test_root_explains_this_is_the_api(client):
     assert "/api/v1/admin/docs" in resp.text
 
 
+def test_admin_moderation_shortcut_redirects_into_console(client):
+    resp = client.get("/moderation", follow_redirects=False)
+    assert resp.status_code == 307
+    assert resp.headers["location"] == "/console/moderation"
+
+
 def test_admin_logo_is_served_at_site_root(client):
     resp = client.get("/strollwiselogo.jpg")
     assert resp.status_code == 200

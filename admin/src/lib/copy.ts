@@ -41,6 +41,23 @@ export function statusLabel(value?: string | null): string {
   }
 }
 
+/** One-word pill for dense tables. Full sentence stays on `statusLabel`. */
+export function compactStatusLabel(value?: string | null): string {
+  switch (value) {
+    case 'pending':
+      return 'Waiting'
+    case 'visible':
+      return 'On map'
+    case 'flagged':
+      return 'Hold'
+    case 'removed':
+    case 'hidden':
+      return 'Hidden'
+    default:
+      return statusLabel(value)
+  }
+}
+
 export function categoryLabel(value?: string | null): string {
   if (!value) return 'Unspecified'
   const labels: Record<string, string> = {

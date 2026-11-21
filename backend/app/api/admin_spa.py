@@ -35,6 +35,10 @@ def install_admin_spa(app: FastAPI) -> None:
     def admin_console_redirect() -> RedirectResponse:
         return RedirectResponse(url="/console/", status_code=307)
 
+    @app.get("/moderation", include_in_schema=False)
+    def admin_moderation_shortcut() -> RedirectResponse:
+        return RedirectResponse(url="/console/moderation", status_code=307)
+
     @app.get("/console/{full_path:path}", include_in_schema=False)
     def admin_console(full_path: str) -> Response:
         target = (root / full_path).resolve()

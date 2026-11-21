@@ -144,7 +144,15 @@ class AdminModerationService:
             return None
         summary = self._to_summary(report)
         ctx = self._cell_context(report.h3_index)
-        return AdminReportDetail(**summary.model_dump(), cell_context=ctx)
+        lat = lng = None
+        if report.h3_index:
+            try:
+                lat, lng = h3_service.cell_centroid(report.h3_index)
+            except Exception:
+                lat = lng = None
+        return AdminReportDetail(
+            **summary.model_dump(), cell_context=ctx, lat=lat, lng=lng
+        )
 
     def apply_action(
         self,

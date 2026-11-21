@@ -9,6 +9,7 @@ export type AdminReport = {
   contributor_count: number
   duplicate_count: number
   created_at: string
+  image_url?: string | null
   area_name?: string | null
   contributor_id?: string | null
   contributor_label?: string | null
@@ -35,6 +36,8 @@ export type AdminCellContext = {
 
 export type AdminReportDetail = AdminReport & {
   cell_context: AdminCellContext
+  lat?: number | null
+  lng?: number | null
 }
 
 export type AdminZoneValidation = {
