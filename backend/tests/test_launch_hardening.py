@@ -47,9 +47,24 @@ def test_root_explains_this_is_the_api(client):
     resp = client.get("/")
     assert resp.status_code == 200
     assert "admin dashboard" in resp.text.lower()
-    assert "strollwise.onrender.com" in resp.text
+    assert "/console/" in resp.text
     assert "backend/API.md" in resp.text
     assert "/api/v1/admin/docs" in resp.text
+
+
+def test_admin_console_is_served_from_api(client):
+    resp = client.get("/console/")
+    assert resp.status_code == 200
+    assert "text/html" in resp.headers.get("content-type", "")
+    assert "StrollWise Admin" in resp.text
+    assert "/console/assets/" in resp.text
+    start = resp.text.index('src="') + 5
+    end = resp.text.index('"', start)
+    js_path = resp.text[start:end]
+    js = client.get(js_path)
+    assert js.status_code == 200
+    assert "Forgot password" in js.text
+    assert "Why is this tag wrong" in js.text
 
 
 def test_health_includes_database(client):

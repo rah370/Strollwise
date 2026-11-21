@@ -38,6 +38,7 @@ from app.api.routers import (
     zones,
 )
 from app.api.admin_docs import install_admin_docs
+from app.api.admin_spa import install_admin_spa
 from app.api.routers.admin import router as admin_router
 from app.core.config import settings
 from app.core.health import health_payload
@@ -111,6 +112,7 @@ def create_app() -> FastAPI:
     app.include_router(geocode.router, prefix=prefix)
     app.include_router(admin_router, prefix=prefix)
     install_admin_docs(app)
+    install_admin_spa(app)
 
     local_media = Path(settings.upload_local_dir)
     local_media.mkdir(parents=True, exist_ok=True)
@@ -118,7 +120,7 @@ def create_app() -> FastAPI:
 
     @app.get("/", include_in_schema=False)
     def root() -> HTMLResponse:
-        admin = "https://strollwise.onrender.com"
+        admin = "/console/"
         return HTMLResponse(
             f"""<!doctype html>
 <html lang="en">
