@@ -134,6 +134,14 @@ export const MODERATION_REASONS = [
   'other',
 ] as const
 
+export const MODERATION_REASON_HINTS: Record<(typeof MODERATION_REASONS)[number], string> = {
+  wrong_location: 'The pin is not this place.',
+  wrong_kind: 'Food, school, safety — the kind does not match.',
+  spam: 'Repeated, empty, or not a real observation.',
+  sensitive: 'Hospital, school, military, or similar.',
+  other: 'Something else — keep it off the map.',
+}
+
 export function manilaWhen(iso?: string | null): string {
   if (!iso) return '—'
   return new Date(iso).toLocaleString('en-PH', {

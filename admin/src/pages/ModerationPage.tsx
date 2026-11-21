@@ -18,6 +18,7 @@ import { colors } from '../theme/colors'
 import { LIVE_POLL_MS, useAdminPollInterval } from '../hooks/useAdminLiveUpdates'
 import {
   MODERATION_REASONS,
+  MODERATION_REASON_HINTS,
   REPORT_CATEGORIES,
   categoryLabel,
   moderationReasonLabel,
@@ -52,7 +53,7 @@ export function ModerationPage() {
   const [page, setPage] = useState(1)
   const [actionError, setActionError] = useState('')
   const [pendingAction, setPendingAction] = useState<{ kind: ActionKind; ids: string[] } | null>(null)
-  const [reason, setReason] = useState<(typeof MODERATION_REASONS)[number]>('wrong_location')
+  const [reason, setReason] = useState<(typeof MODERATION_REASONS)[number] | ''>('')
 
   useEffect(() => {
     const t = window.setTimeout(() => setDebounced(search.trim()), 250)
@@ -158,23 +159,30 @@ export function ModerationPage() {
   }
 
   function requestAction(kind: ActionKind, ids: string[]) {
+    if (ids.length === 0) return
+    setActionError('')
     if (kind === 'approve') {
       if (ids.length === 1) action.mutate({ id: ids[0], kind })
       else bulk.mutate({ kind })
       return
     }
-    setReason('wrong_location')
+    // Hold and Wrong need an audit reason. Production used to POST with
+    // an empty body, which 422'd "Choose a reason" and never rejected.
+    setFocusedId(ids[0])
+    setReason('')
     setPendingAction({ kind, ids })
   }
 
   function confirmReasonedAction() {
-    if (!pendingAction) return
+    if (!pendingAction || !reason) return
     if (pendingAction.ids.length === 1) {
       action.mutate({ id: pendingAction.ids[0], kind: pendingAction.kind, reasonCode: reason })
     } else {
       bulk.mutate({ kind: pendingAction.kind, reasonCode: reason })
     }
   }
+
+  const actionBusy = action.isPending || bulk.isPending
 
   return (
     <div className="space-y-4">
@@ -187,33 +195,6 @@ export function ModerationPage() {
         <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
           {actionError}
         </div>
-      ) : null}
-
-      {pendingAction ? (
-        <Card className="p-4 space-y-3 border-amber-200 bg-amber-50">
-          <p className="text-sm font-bold text-sw-ink">
-            {pendingAction.kind === 'reject' ? 'Why is this wrong?' : 'Why is this on hold?'}
-          </p>
-          <select
-            value={reason}
-            onChange={(e) => setReason(e.target.value as typeof reason)}
-            className="border border-sw-border rounded-xl px-3 py-2 text-sm bg-white w-full md:w-80"
-          >
-            {MODERATION_REASONS.map((code) => (
-              <option key={code} value={code}>
-                {moderationReasonLabel(code)}
-              </option>
-            ))}
-          </select>
-          <div className="flex gap-2">
-            <Button onClick={confirmReasonedAction}>
-              {pendingAction.kind === 'reject' ? 'Mark wrong' : 'Hold'}
-            </Button>
-            <Button variant="ghost" onClick={() => setPendingAction(null)}>
-              Cancel
-            </Button>
-          </div>
-        </Card>
       ) : null}
 
       <div className="flex flex-col lg:flex-row gap-2">
@@ -467,10 +448,28 @@ export function ModerationPage() {
                 <Button variant="warning" onClick={() => requestAction('flag', [detail.id])}>Hold</Button>
                 <Button variant="danger" onClick={() => requestAction('reject', [detail.id])}>Wrong</Button>
               </div>
+              <p className="text-[11px] text-sw-muted">
+                Hold and Wrong ask why on the next step. That reason is stored in Activity.
+              </p>
             </div>
           )}
         </Card>
       </div>
+
+      {pendingAction ? (
+        <ReasonDialog
+          kind={pendingAction.kind}
+          count={pendingAction.ids.length}
+          reason={reason}
+          busy={actionBusy}
+          onReasonChange={setReason}
+          onConfirm={confirmReasonedAction}
+          onCancel={() => {
+            setPendingAction(null)
+            setActionError('')
+          }}
+        />
+      ) : null}
     </div>
   )
 }
@@ -480,6 +479,99 @@ function Metric({ label, value }: { label: string; value: string | number }) {
     <div className="bg-sw-bg rounded-xl p-3">
       <div className="text-[10px] font-bold uppercase text-sw-muted">{label}</div>
       <div className="text-lg font-black text-sw-ink mt-0.5">{value}</div>
+    </div>
+  )
+}
+
+function ReasonDialog({
+  kind,
+  count,
+  reason,
+  busy,
+  onReasonChange,
+  onConfirm,
+  onCancel,
+}: {
+  kind: ActionKind
+  count: number
+  reason: (typeof MODERATION_REASONS)[number] | ''
+  busy: boolean
+  onReasonChange: (value: (typeof MODERATION_REASONS)[number]) => void
+  onConfirm: () => void
+  onCancel: () => void
+}) {
+  const isReject = kind === 'reject'
+  const title = isReject ? 'Why is this tag wrong?' : 'Why put this on hold?'
+  const confirmLabel = isReject
+    ? count > 1
+      ? `Mark ${count} wrong`
+      : 'Mark wrong'
+    : count > 1
+      ? `Hold ${count}`
+      : 'Hold'
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="moderation-reason-title"
+    >
+      <button
+        type="button"
+        className="absolute inset-0 bg-black/40"
+        aria-label="Cancel"
+        onClick={onCancel}
+      />
+      <div className="relative w-full max-w-md rounded-2xl bg-white shadow-xl p-5 space-y-4">
+        <div>
+          <h2 id="moderation-reason-title" className="font-black text-sw-ink text-lg">
+            {title}
+          </h2>
+          <p className="text-sm text-sw-muted mt-1">
+            Pick one reason, then confirm. This is saved in Activity so the decision is not a silent delete.
+          </p>
+        </div>
+        <fieldset className="space-y-2">
+          <legend className="sr-only">Reason</legend>
+          {MODERATION_REASONS.map((code) => (
+            <label
+              key={code}
+              className={`flex gap-3 items-start rounded-xl border px-3 py-2.5 cursor-pointer ${
+                reason === code
+                  ? 'border-sw-primary bg-sw-primary/5'
+                  : 'border-sw-border bg-sw-bg hover:border-sw-primary/40'
+              }`}
+            >
+              <input
+                type="radio"
+                name="moderation-reason"
+                className="mt-1"
+                checked={reason === code}
+                onChange={() => onReasonChange(code)}
+              />
+              <span>
+                <span className="block font-semibold text-sm text-sw-ink">
+                  {moderationReasonLabel(code)}
+                </span>
+                <span className="block text-xs text-sw-muted">{MODERATION_REASON_HINTS[code]}</span>
+              </span>
+            </label>
+          ))}
+        </fieldset>
+        <div className="flex gap-2 pt-1">
+          <Button
+            variant={isReject ? 'danger' : 'warning'}
+            className="flex-1"
+            disabled={!reason || busy}
+            onClick={onConfirm}
+          >
+            {confirmLabel}
+          </Button>
+          <Button variant="ghost" disabled={busy} onClick={onCancel}>
+            Cancel
+          </Button>
+        </div>
+      </div>
     </div>
   )
 }

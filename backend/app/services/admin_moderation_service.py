@@ -160,6 +160,9 @@ class AdminModerationService:
             return None
 
         if action in _ACTIONS_NEEDING_REASON:
+            # Hold/reject must name why so the audit log and traveler
+            # "removed" status are not a silent delete. The admin UI has to
+            # collect this before POST — an empty body is a 422, not a reject.
             if reason not in MODERATION_REASONS:
                 raise ModerationValidationError(
                     "Choose a reason: wrong location, wrong kind, spam, sensitive, or other."
