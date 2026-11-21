@@ -26,9 +26,18 @@ def install_admin_spa(app: FastAPI) -> None:
         return
     root = dist.resolve()
 
+    @app.get("/strollwiselogo.jpg", include_in_schema=False)
+    def admin_logo() -> FileResponse:
+        # Older console JS requested the mark from the site root.
+        return FileResponse(root / "strollwiselogo.jpg")
+
     @app.get("/console", include_in_schema=False)
     def admin_console_redirect() -> RedirectResponse:
         return RedirectResponse(url="/console/", status_code=307)
+
+    @app.get("/moderation", include_in_schema=False)
+    def admin_moderation_shortcut() -> RedirectResponse:
+        return RedirectResponse(url="/console/moderation", status_code=307)
 
     @app.get("/console/{full_path:path}", include_in_schema=False)
     def admin_console(full_path: str) -> Response:

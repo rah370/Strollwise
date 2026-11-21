@@ -19,7 +19,7 @@ export function Badge({
 
   return (
     <span
-      className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold uppercase tracking-wide"
+      className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold uppercase tracking-wide whitespace-nowrap"
       style={{ backgroundColor: style.bg, color: style.text }}
     >
       {label ?? value.replace(/_/g, ' ')}

@@ -69,6 +69,8 @@ class AdminCellContext(BaseModel):
 
 class AdminReportDetail(AdminReportSummary):
     cell_context: AdminCellContext
+    lat: float | None = None
+    lng: float | None = None
 
 
 class AdminReportListResponse(BaseModel):
