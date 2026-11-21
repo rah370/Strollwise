@@ -1,3 +1,5 @@
+import { assetUrl } from '../lib/assetUrl'
+
 type BrandLogoProps = {
   size?: 'sm' | 'md' | 'lg'
   showWordmark?: boolean
@@ -25,7 +27,7 @@ export function BrandLogo({
   return (
     <div className={`flex items-center gap-3 ${className}`}>
       <img
-        src="/strollwiselogo.jpg"
+        src={assetUrl('strollwiselogo.jpg')}
         alt="StrollWise"
         className={`${sizes[size]} rounded-lg object-cover shadow-sm ring-1 ring-white/10`}
       />

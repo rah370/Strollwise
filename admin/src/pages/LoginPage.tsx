@@ -12,6 +12,7 @@ import {
 } from '../api/client'
 import { BrandLogo } from '../components/BrandLogo'
 import { Button } from '../components/Button'
+import { assetUrl } from '../lib/assetUrl'
 import { colors } from '../theme/colors'
 
 /** Researcher sign-in. Same `/auth/login` as travelers; then `/auth/me` must be admin. */
@@ -83,7 +84,7 @@ export function LoginPage() {
         className="absolute inset-0 flex items-center justify-center pointer-events-none opacity-[0.06]"
         aria-hidden
       >
-        <img src="/strollwiselogo.jpg" alt="" className="w-80 h-80 object-cover rounded-full" />
+        <img src={assetUrl('strollwiselogo.jpg')} alt="" className="w-80 h-80 object-cover rounded-full" />
       </div>
 
       <form

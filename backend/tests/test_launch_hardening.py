@@ -52,6 +52,13 @@ def test_root_explains_this_is_the_api(client):
     assert "/api/v1/admin/docs" in resp.text
 
 
+def test_admin_logo_is_served_at_site_root(client):
+    resp = client.get("/strollwiselogo.jpg")
+    assert resp.status_code == 200
+    assert resp.headers.get("content-type", "").startswith("image/")
+    assert len(resp.content) > 100
+
+
 def test_admin_console_is_served_from_api(client):
     resp = client.get("/console/")
     assert resp.status_code == 200
@@ -65,6 +72,12 @@ def test_admin_console_is_served_from_api(client):
     assert js.status_code == 200
     assert "Forgot password" in js.text
     assert "Why is this tag wrong" in js.text
+    # Console is mounted at /console/, so a root-absolute logo path 404s.
+    assert '"/strollwiselogo.jpg"' not in js.text
+    assert "strollwiselogo.jpg" in js.text
+    logo = client.get("/console/strollwiselogo.jpg")
+    assert logo.status_code == 200
+    assert logo.headers.get("content-type", "").startswith("image/")
 
 
 def test_health_includes_database(client):
