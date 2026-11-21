@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Link, NavLink, Navigate, Outlet } from 'react-router-dom'
+import { Link, NavLink, Navigate, Outlet, useNavigate } from 'react-router-dom'
 import { ApiError, API_URL, apiDocsUrl, fetchMe, getToken, legalUrl, setToken } from '../api/client'
 import { AdminLiveProvider, useAdminLiveConnected } from '../hooks/useAdminLiveUpdates'
 import { BrandLogo } from './BrandLogo'
@@ -37,6 +37,7 @@ export function AppLayout() {
 }
 
 function AppLayoutInner() {
+  const navigate = useNavigate()
   const token = getToken()
   const { data: me, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['auth', 'me'],
@@ -147,7 +148,7 @@ function AppLayoutInner() {
             className="w-full px-3 py-2 text-left text-sm font-semibold text-white/60 hover:text-white rounded-xl hover:bg-white/5"
             onClick={() => {
               setToken(null)
-              window.location.href = '/login'
+              navigate('/login', { replace: true })
             }}
           >
             Sign out

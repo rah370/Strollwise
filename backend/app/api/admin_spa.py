@@ -6,10 +6,13 @@ current console at /console/ on the same origin as /api/v1.
 """
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.responses import FileResponse, RedirectResponse, Response
+
+log = logging.getLogger(__name__)
 
 _ADMIN_DIST = Path(__file__).resolve().parents[2] / "admin_dist"
 
@@ -25,6 +28,12 @@ def install_admin_spa(app: FastAPI) -> None:
     if dist is None:
         return
     root = dist.resolve()
+    index_html = (root / "index.html").read_text(encoding="utf-8")
+    if "/console/assets/" not in index_html:
+        log.warning(
+            "admin_dist/index.html is not built with VITE_BASE=/console/; "
+            "JS/CSS will 404 at /console/. Run backend/scripts/embed_admin.sh"
+        )
 
     @app.get("/strollwiselogo.jpg", include_in_schema=False)
     def admin_logo() -> FileResponse:
