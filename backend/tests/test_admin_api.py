@@ -398,6 +398,8 @@ def test_admin_moderation_queues_return_without_n_plus_one(client, db_session):
     ctx = detail.json()["cell_context"]
     assert ctx["distinct_contributors"] == 4
     assert ctx["pending_count"] == 4
+    assert isinstance(detail.json()["lat"], float)
+    assert isinstance(detail.json()["lng"], float)
 
 
 def test_admin_export_reports_csv_is_readable(client, db_session):

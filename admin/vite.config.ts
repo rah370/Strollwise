@@ -4,6 +4,8 @@ import tailwindcss from '@tailwindcss/vite'
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  // /console/ when the SPA is served from the API image; / on the static host.
+  base: process.env.VITE_BASE || '/',
   build: {
     // Admin bundles React + Recharts in one chunk (~670 kB). That is expected
     // for this SPA; raise the warn threshold so Render logs stay clean.
