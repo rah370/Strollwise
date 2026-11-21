@@ -61,7 +61,6 @@ class ForgotPasswordRequest(BaseModel):
 class ForgotPasswordResponse(BaseModel):
     message: str
     delivery: str
-    reset_code: str | None = None
 
 
 class ResetPasswordRequest(BaseModel):

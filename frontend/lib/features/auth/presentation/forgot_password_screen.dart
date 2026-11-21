@@ -65,24 +65,16 @@ class _ForgotPasswordScreenState extends ConsumerState<ForgotPasswordScreen> {
         data: {'email': email.toLowerCase()},
       );
       final data = response.data;
-      String? code;
-      if (data is Map) {
-        final raw = data['reset_code'];
-        if (raw != null && raw.toString().trim().isNotEmpty) {
-          code = raw.toString().trim();
-        }
-      }
+      final message = data is Map
+          ? (data['message']?.toString() ?? '')
+          : '';
       if (!mounted) return;
       setState(() {
         _codeStep = true;
-        if (code != null) {
-          _codeController.text = code;
-          _hint =
-              'Mail is not configured on this server, so your reset code is shown here. It expires in 15 minutes.';
-        } else {
-          _hint =
-              'If that email is registered, we sent a 6-digit code. It expires in 15 minutes.';
-        }
+        _codeController.clear();
+        _hint = message.isNotEmpty
+            ? message
+            : 'If that email is registered, we sent a 6-digit code. Check your inbox. It expires in 15 minutes.';
       });
     } catch (error) {
       if (!mounted) return;
@@ -185,7 +177,7 @@ class _ForgotPasswordScreenState extends ConsumerState<ForgotPasswordScreen> {
                       const SizedBox(height: 8),
                       Text(
                         _codeStep
-                            ? 'Enter the 6-digit code and choose a new password.'
+                            ? 'Enter the 6-digit code from your email and choose a new password.'
                             : 'We will send a 6-digit code to your account email so you can set a new password.',
                         style: const TextStyle(
                           color: AppColors.secondaryText,

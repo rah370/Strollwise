@@ -104,7 +104,6 @@ export async function checkApiHealth(): Promise<boolean> {
 export type ForgotPasswordResponse = {
   message: string
   delivery: string
-  reset_code?: string | null
 }
 
 export async function forgotPassword(email: string) {

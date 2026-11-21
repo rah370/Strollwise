@@ -1,8 +1,8 @@
 """Register, login, and password reset for travelers and researchers.
 
 Same user table for both apps. Forgot-password always returns a generic
-message so emails cannot be enumerated. The 6-digit code is hashed at rest;
-it is echoed in JSON only when `password_reset_echo_code` is on (local tests).
+message so emails cannot be enumerated. The 6-digit code is hashed at rest
+and delivered only by email — never in the API response or client UI.
 """
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ from app.schemas.auth import (
     TokenResponse,
 )
 from app.schemas.user import UserPublic
-from app.services.mailer import mail_configured, send_password_reset_code
+from app.services.mailer import send_password_reset_code
 from app.utils.user_type_utils import apply_user_type_to_user
 
 _GENERIC_FORGOT_MESSAGE = (
@@ -104,17 +104,10 @@ class AuthService:
         )
         self.db.add(token)
         self.db.commit()
-        emailed = send_password_reset_code(user.email, code)
-        echo = settings.password_reset_echo_code or not mail_configured()
+        send_password_reset_code(user.email, code)
         return ForgotPasswordResponse(
-            message=_GENERIC_FORGOT_MESSAGE
-            if emailed
-            else (
-                "If that email is registered, use the 6-digit code to set a "
-                "new password. It expires in 15 minutes."
-            ),
-            delivery="email" if emailed else "on_screen",
-            reset_code=code if echo else None,
+            message=_GENERIC_FORGOT_MESSAGE,
+            delivery="email",
         )
 
     def reset_password(

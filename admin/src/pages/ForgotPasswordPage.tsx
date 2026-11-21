@@ -40,19 +40,12 @@ export function ForgotPasswordPage() {
     setError('')
     try {
       const result = await forgotPassword(email.trim().toLowerCase())
-      const echoed = result.reset_code?.trim()
+      setCode('')
       setCodeStep(true)
-      if (echoed) {
-        setCode(echoed)
-        setHint(
-          'Mail is not configured on this server, so your reset code is shown here. It expires in 15 minutes.',
-        )
-      } else {
-        setHint(
-          result.message ||
-            'If that email is registered, we sent a 6-digit code. It expires in 15 minutes.',
-        )
-      }
+      setHint(
+        result.message ||
+          'If that email is registered, we sent a 6-digit code. Check your inbox. It expires in 15 minutes.',
+      )
     } catch (err) {
       if (err instanceof ApiError) setError(err.message)
       else if (err instanceof TypeError) setError(unreachableApiMessage())
@@ -114,7 +107,7 @@ export function ForgotPasswordPage() {
         <h1 className="text-xl font-black text-sw-ink">Forgot password</h1>
         <p className="text-sm text-sw-muted mt-1 mb-6">
           {codeStep
-            ? 'Enter the 6-digit code and choose a new password for this researcher account.'
+            ? 'Enter the 6-digit code from your email and choose a new password for this researcher account.'
             : 'Reset the password for this researcher account. We send a 6-digit code to the email you use to sign in.'}
         </p>
 

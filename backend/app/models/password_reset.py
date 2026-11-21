@@ -12,7 +12,7 @@ from app.core.database import Base
 
 
 class PasswordResetToken(Base):
-    """Hashed one-time reset code. Raw codes are emailed or shown once."""
+    """Hashed one-time reset code. The raw code is emailed, never returned in JSON."""
 
     __tablename__ = "password_reset_tokens"
 

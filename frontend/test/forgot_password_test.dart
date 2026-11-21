@@ -67,7 +67,7 @@ void main() {
     expect(find.text('Send reset code'), findsOneWidget);
   });
 
-  testWidgets('forgot password recovers with on-screen code', (tester) async {
+  testWidgets('forgot password recovers with emailed code', (tester) async {
     final posts = <String, Map<String, dynamic>>{};
     final dio = Dio(BaseOptions(baseUrl: 'http://test/api/v1'));
     dio.httpClientAdapter = _ScriptedAdapter((options) async {
@@ -77,9 +77,9 @@ void main() {
       }
       if (options.path.contains('forgot-password')) {
         return _json(200, {
-          'message': 'If that email is registered, use the 6-digit code.',
-          'delivery': 'on_screen',
-          'reset_code': '123456',
+          'message':
+              'If that email is registered, we sent a 6-digit reset code. It expires in 15 minutes.',
+          'delivery': 'email',
         });
       }
       if (options.path.contains('reset-password')) {
@@ -115,14 +115,17 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(
-      find.textContaining('Mail is not configured on this server'),
+      find.textContaining('we sent a 6-digit reset code'),
       findsOneWidget,
     );
+    expect(find.textContaining('Mail is not configured'), findsNothing);
     expect(find.text('Update password'), findsOneWidget);
 
     final fields = find.byType(TextField);
+    await tester.enterText(fields.at(1), '123456');
     await tester.enterText(fields.at(2), 'newpass999');
     await tester.enterText(fields.at(3), 'newpass999');
+    await tester.ensureVisible(find.text('Update password'));
     await tester.tap(find.text('Update password'));
     await tester.pumpAndSettle();
 

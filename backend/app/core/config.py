@@ -89,9 +89,6 @@ class Settings(BaseSettings):
     smtp_from: str | None = Field(default=None)
     resend_api_key: str | None = Field(default=None)
     password_reset_minutes: int = Field(default=15)
-    # When true, forgot-password JSON includes the code so local tests work
-    # without a mailbox. Production with SMTP/Resend leaves this false.
-    password_reset_echo_code: bool = Field(default=False)
 
     @property
     def is_production(self) -> bool:

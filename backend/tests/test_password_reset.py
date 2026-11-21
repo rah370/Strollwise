@@ -23,6 +23,22 @@ def _register(client, email: str, password: str = "supersecret123"):
     )
 
 
+def _capture_reset_code(monkeypatch):
+    """Intercept the mailer so tests can use the code without echoing it in JSON."""
+    captured: dict[str, str] = {}
+
+    def fake_send(email: str, code: str) -> bool:
+        captured["email"] = email
+        captured["code"] = code
+        return True
+
+    monkeypatch.setattr(
+        "app.services.auth_service.send_password_reset_code",
+        fake_send,
+    )
+    return captured
+
+
 def test_forgot_password_unknown_email_is_generic(client):
     resp = client.post(
         "/api/v1/auth/forgot-password",
@@ -31,20 +47,19 @@ def test_forgot_password_unknown_email_is_generic(client):
     assert resp.status_code == 200, resp.text
     data = resp.json()
     assert "reset code" in data["message"].lower()
-    assert data.get("reset_code") is None
+    assert "reset_code" not in data
 
 
 def test_forgot_and_reset_password_recovers_account(client, db_session, monkeypatch):
-    monkeypatch.setattr(
-        "app.services.auth_service.send_password_reset_code",
-        lambda email, code: False,
-    )
+    captured = _capture_reset_code(monkeypatch)
     email = "recover@example.com"
     assert _register(client, email).status_code == 201
 
     forgot = client.post("/api/v1/auth/forgot-password", json={"email": email})
     assert forgot.status_code == 200, forgot.text
-    code = forgot.json()["reset_code"]
+    data = forgot.json()
+    assert "reset_code" not in data
+    code = captured["code"]
     assert code and len(code) == 6
 
     old_login = client.post(
@@ -74,10 +89,7 @@ def test_forgot_and_reset_password_recovers_account(client, db_session, monkeypa
 
 
 def test_reset_rejects_wrong_code(client, monkeypatch):
-    monkeypatch.setattr(
-        "app.services.auth_service.send_password_reset_code",
-        lambda email, code: False,
-    )
+    _capture_reset_code(monkeypatch)
     email = "wrongcode@example.com"
     _register(client, email)
     client.post("/api/v1/auth/forgot-password", json={"email": email})
@@ -89,14 +101,12 @@ def test_reset_rejects_wrong_code(client, monkeypatch):
 
 
 def test_reset_rejects_expired_code(client, db_session, monkeypatch):
-    monkeypatch.setattr(
-        "app.services.auth_service.send_password_reset_code",
-        lambda email, code: False,
-    )
+    captured = _capture_reset_code(monkeypatch)
     email = "expired@example.com"
     _register(client, email)
     forgot = client.post("/api/v1/auth/forgot-password", json={"email": email})
-    code = forgot.json()["reset_code"]
+    assert forgot.status_code == 200
+    code = captured["code"]
     token = db_session.query(PasswordResetToken).one()
     token.expires_at = datetime.now(timezone.utc) - timedelta(minutes=1)
     db_session.commit()
@@ -110,15 +120,13 @@ def test_reset_rejects_expired_code(client, db_session, monkeypatch):
 def test_default_researcher_admin_email_can_reset(client, db_session, monkeypatch):
     from app.services.admin_bootstrap import ADMIN_EMAIL, ensure_admin_user
 
-    monkeypatch.setattr(
-        "app.services.auth_service.send_password_reset_code",
-        lambda email, code: False,
-    )
+    captured = _capture_reset_code(monkeypatch)
     ensure_admin_user(db_session, reset_password=True)
 
     forgot = client.post("/api/v1/auth/forgot-password", json={"email": ADMIN_EMAIL})
     assert forgot.status_code == 200, forgot.text
-    code = forgot.json()["reset_code"]
+    assert "reset_code" not in forgot.json()
+    code = captured["code"]
     assert code and len(code) == 6
 
     reset = client.post(
@@ -135,10 +143,7 @@ def test_default_researcher_admin_email_can_reset(client, db_session, monkeypatc
 
 
 def test_admin_can_reset_and_keep_admin_flag(client, db_session, monkeypatch):
-    monkeypatch.setattr(
-        "app.services.auth_service.send_password_reset_code",
-        lambda email, code: False,
-    )
+    captured = _capture_reset_code(monkeypatch)
     email = "ops@example.com"
     _register(client, email)
     user = UserRepository(db_session).get_by_email(email)
@@ -147,7 +152,7 @@ def test_admin_can_reset_and_keep_admin_flag(client, db_session, monkeypatch):
     db_session.commit()
 
     forgot = client.post("/api/v1/auth/forgot-password", json={"email": email})
-    code = forgot.json()["reset_code"]
+    code = captured["code"]
     reset = client.post(
         "/api/v1/auth/reset-password",
         json={"email": email, "code": code, "new_password": "adminnewpass"},
@@ -165,16 +170,16 @@ def test_admin_can_reset_and_keep_admin_flag(client, db_session, monkeypatch):
     assert verify_password("adminnewpass", stored.password_hash)
 
 
-def test_forgot_does_not_echo_code_when_email_sends(client, monkeypatch):
+def test_forgot_never_echoes_code_even_when_mail_fails(client, monkeypatch):
     monkeypatch.setattr(
         "app.services.auth_service.send_password_reset_code",
-        lambda email, code: True,
+        lambda email, code: False,
     )
-    monkeypatch.setattr("app.services.auth_service.mail_configured", lambda: True)
-    email = "mailed@example.com"
+    email = "nomailecho@example.com"
     assert _register(client, email).status_code == 201
     forgot = client.post("/api/v1/auth/forgot-password", json={"email": email})
     assert forgot.status_code == 200, forgot.text
     data = forgot.json()
-    assert data.get("reset_code") is None
+    assert "reset_code" not in data
     assert data["delivery"] == "email"
+    assert "6-digit" in data["message"]
