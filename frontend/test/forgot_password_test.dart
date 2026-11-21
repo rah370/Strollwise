@@ -44,10 +44,10 @@ void main() {
     final router = GoRouter(
       initialLocation: '/auth',
       routes: [
-        GoRoute(path: '/auth', builder: (_, __) => const AuthScreen()),
+        GoRoute(path: '/auth', builder: (_, _) => const AuthScreen()),
         GoRoute(
           path: '/auth/forgot',
-          builder: (_, __) => const ForgotPasswordScreen(),
+          builder: (_, _) => const ForgotPasswordScreen(),
         ),
       ],
     );
@@ -93,11 +93,11 @@ void main() {
       routes: [
         GoRoute(
           path: '/auth',
-          builder: (_, __) => const Scaffold(body: Text('Sign in ready')),
+          builder: (_, _) => const Scaffold(body: Text('Sign in ready')),
         ),
         GoRoute(
           path: '/auth/forgot',
-          builder: (_, __) => const ForgotPasswordScreen(),
+          builder: (_, _) => const ForgotPasswordScreen(),
         ),
       ],
     );

@@ -55,9 +55,7 @@ bool isLocalDemoSession(String? token) =>
 bool isUsableAccessToken(String? token) =>
     token != null && token.isNotEmpty && token != kLocalDemoAccessToken;
 
-const _secureStorage = FlutterSecureStorage(
-  aOptions: AndroidOptions(encryptedSharedPreferences: true),
-);
+const _secureStorage = FlutterSecureStorage();
 
 Future<void> persistAuthCredentials({
   required String token,
