@@ -261,6 +261,27 @@ class ZoneCatalog {
     if (best == null || bestKm > maxKm) return null;
     return best;
   }
+
+  /// Closest catalog zone whose radius disk (with [slack]) covers the point.
+  static ZoneCatalogEntry? nearestCoveringEntry(
+    double lat,
+    double lng, {
+    double slack = 1.2,
+  }) {
+    final list = entries;
+    if (list.isEmpty) return null;
+    ZoneCatalogEntry? best;
+    var bestKm = double.infinity;
+    for (final entry in list) {
+      final km = _haversineKm(lat, lng, entry.centerLat, entry.centerLng);
+      if (km > entry.radiusKm * slack) continue;
+      if (km < bestKm) {
+        bestKm = km;
+        best = entry;
+      }
+    }
+    return best;
+  }
 }
 
 const int _catalogH3Resolution = 8;

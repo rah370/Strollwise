@@ -20,6 +20,9 @@ void openAreaOnExplore(
   if (enriched != null) {
     ref.read(selectedZoneProvider.notifier).state = enriched;
     ref.invalidate(selectedZoneDetailProvider);
+  } else if (submitSummary != null && submitSummary.trim().isNotEmpty) {
+    ref.read(selectedZoneProvider.notifier).state = null;
+    ref.invalidate(selectedZoneDetailProvider);
   }
   ref.read(zoneLookupLocationProvider.notifier).state = focus;
   ref.read(exploreFocusLocationProvider.notifier).state = focus;

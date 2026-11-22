@@ -68,6 +68,32 @@ def test_find_current_zone_overlap_returns_mixed(db_session):
     assert z.crowd_level == 0.5
 
 
+def _cebu_named_zones():
+    sm = _box(123.91, 10.30, 123.93, 10.32, uuid.uuid4(), "SM City Cebu")
+    mactan = _box(124.00, 10.29, 124.03, 10.31, uuid.uuid4(), "Mactan Resort Zone")
+    return sm, mactan
+
+
+def test_find_current_zone_lapu_lapu_is_not_sm_city(db_session):
+    sm, mactan = _cebu_named_zones()
+    z = _find_current_zone(db_session, [sm, mactan], lat=10.31, lng=123.96)
+    assert z is None or "SM City" not in (z.display_name or "")
+
+
+def test_find_current_zone_sm_centroid_stays_sm(db_session):
+    sm, mactan = _cebu_named_zones()
+    z = _find_current_zone(db_session, [sm, mactan], lat=10.3116, lng=123.9182)
+    assert z is not None
+    assert z.display_name == "SM City Cebu"
+
+
+def test_find_current_zone_punta_enganio_is_mactan(db_session):
+    sm, mactan = _cebu_named_zones()
+    z = _find_current_zone(db_session, [sm, mactan], lat=10.30, lng=124.02)
+    assert z is not None
+    assert z.display_name == "Mactan Resort Zone"
+
+
 def test_zone_contains_point_respects_interior_hole():
     from app.api.routers import zones as zones_router
 

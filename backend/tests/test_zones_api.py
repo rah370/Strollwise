@@ -174,3 +174,28 @@ def test_current_zone_overview_returns_launch_payload(client):
     assert "city_activity" in body["context"]
     assert "crowd_level_percent" in body["context"]
     assert "local_presence_percent" in body["context"]
+
+
+def test_current_zone_far_from_catalog_returns_null_zone(client):
+    resp = client.get(
+        "/api/v1/zones/current",
+        params={"lat": 0.0, "lng": 0.0, "ring": 1, "limit": 5},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["current_zone"] is None
+    assert body["context"]["city_activity"] == "quiet"
+    assert body["context"]["crowd_level_percent"] == 0
+
+
+def test_current_zone_western_lapu_lapu_is_not_sm_city(client):
+    token = _register(client)
+    _seed_cluster(client, token)
+    resp = client.get(
+        "/api/v1/zones/current",
+        params={"lat": 10.31, "lng": 123.96, "ring": 2, "limit": 5},
+    )
+    assert resp.status_code == 200, resp.text
+    zone = resp.json()["current_zone"]
+    if zone is not None:
+        assert "SM City" not in (zone.get("display_name") or "")

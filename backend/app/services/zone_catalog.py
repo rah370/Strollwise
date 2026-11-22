@@ -320,6 +320,27 @@ def nearest_catalog_entry(lat: float, lng: float) -> ZoneCatalogEntry | None:
     return best
 
 
+def nearest_catalog_entry_within(
+    lat: float, lng: float, *, slack: float = 1.2
+) -> ZoneCatalogEntry | None:
+    """Closest catalog zone whose radius disk (with slack) covers the point.
+
+    Unbounded nearest-centroid matching is wrong for GPS tags: western
+    Lapu-Lapu is closer to SM City Cebu than to Mactan Resort Zone but is
+    not in SM.
+    """
+    best: ZoneCatalogEntry | None = None
+    best_km = float("inf")
+    for entry in CEBU_ZONE_CATALOG:
+        km = haversine_km(lat, lng, entry.center_lat, entry.center_lng)
+        if km > entry.radius_km * slack:
+            continue
+        if km < best_km:
+            best_km = km
+            best = entry
+    return best
+
+
 _BY_NAME: dict[str, ZoneCatalogEntry] = {
     e.zone_name.lower(): e for e in CEBU_ZONE_CATALOG
 }

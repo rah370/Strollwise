@@ -351,7 +351,7 @@ class _TagSubmissionScreenState extends ConsumerState<TagSubmissionScreen> {
     if (!mounted) return;
 
     final focus = LatLng(payload.latitude, payload.longitude);
-    final zone = ref.read(selectedZoneProvider) ??
+    final zone =
         ref.read(tagFlowZoneOverviewNotifierProvider).overview?.currentZone;
     final summary = _friendlySubmitSummary(zone);
 
@@ -1029,7 +1029,9 @@ class _SelectedLocationCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final zoneLine = zone == null
-        ? (zoneRefreshing ? 'Finding zone…' : null)
+        ? (zoneRefreshing
+            ? 'Finding zone…'
+            : 'This spot isn’t in a named area yet')
         : '${zoneDisplayTitle(zone!)} · ${zoneMapSubtitle(zone!)}';
     return Material(
       color: Colors.white,
@@ -1056,9 +1058,9 @@ class _SelectedLocationCard extends StatelessWidget {
                       fontSize: 14,
                     ),
                   ),
-                  if (placeLine != null || zoneLine != null)
+                  if (placeLine != null || zoneLine.isNotEmpty)
                     Text(
-                      placeLine ?? zoneLine!,
+                      placeLine ?? zoneLine,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(

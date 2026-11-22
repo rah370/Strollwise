@@ -33,7 +33,7 @@ from app.services.ranking_service import RankingService
 from app.services.zone_catalog import (
     catalog_entry_for_name,
     default_local_ratio_for_name,
-    nearest_catalog_entry,
+    nearest_catalog_entry_within,
 )
 from app.utils.geo_utils import haversine_km, polygon_intersects_bbox
 from app.utils.h3_display import zone_display_rings
@@ -194,7 +194,19 @@ def current_zone_overview(
         if current is not None and current.crowd_level >= 0.6
         else []
     )
-    context_source = current if current is not None else nearby[0]
+    context_source = current if current is not None else (nearby[0] if nearby else None)
+    if context_source is None:
+        return CurrentZoneOverview(
+            current_zone=None,
+            nearby_zones=[],
+            alternative_zones=[],
+            context=ZoneLaunchContext(
+                city_activity="quiet",
+                crowd_level_percent=0,
+                local_presence_percent=0,
+                peak_time_window=None,
+            ),
+        )
     city_activity = _city_activity_label(context_source.crowd_level)
     crowd_percent = min(max(context_source.crowd_level * 100, 0), 100)
 
@@ -499,22 +511,14 @@ def _find_current_zone(db: Session, zones: list, *, lat: float, lng: float):
                 ).lower():
                     return zone
 
-    catalog_near = nearest_catalog_entry(lat, lng)
-    if catalog_near is not None:
-        for zone in zones:
-            name = catalog_near.zone_name.lower()
-            if name in (getattr(zone, "display_name", None) or "").lower():
-                return zone
-
-    distances = [
-        (
-            haversine_km(lat, lng, zone.centroid_lat, zone.centroid_lng),
-            zone,
-        )
-        for zone in zones
-    ]
-    distances.sort(key=lambda pair: pair[0])
-    return distances[0][1] if distances else None
+    catalog_near = nearest_catalog_entry_within(lat, lng)
+    if catalog_near is None:
+        return None
+    name = catalog_near.zone_name.lower()
+    for zone in zones:
+        if name in (getattr(zone, "display_name", None) or "").lower():
+            return zone
+    return None
 
 
 def _nearby_ranked(

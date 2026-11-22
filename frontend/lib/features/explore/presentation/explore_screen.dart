@@ -1532,7 +1532,7 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
     }
     if (zone == null) {
       await ZoneCatalog.ensureLoaded();
-      final entry = ZoneCatalog.nearestEntry(
+      final entry = ZoneCatalog.nearestCoveringEntry(
         location.latitude,
         location.longitude,
       );

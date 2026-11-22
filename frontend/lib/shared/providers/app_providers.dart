@@ -1027,7 +1027,7 @@ class TagFlowZoneOverviewNotifier extends StateNotifier<TagFlowZoneOverviewState
 
 Future<CurrentZoneOverviewModel?> _catalogOverviewFor(LatLng loc) async {
   await ZoneCatalog.ensureLoaded();
-  final entry = ZoneCatalog.nearestEntry(loc.latitude, loc.longitude);
+  final entry = ZoneCatalog.nearestCoveringEntry(loc.latitude, loc.longitude);
   if (entry == null) return null;
   final zone = zoneModelFromCatalogEntry(entry);
   return CurrentZoneOverviewModel(
@@ -1609,16 +1609,13 @@ Future<void> _applyZoneValidationAfterTag(
     } catch (_) {}
   }
 
-  var selected = ref.read(selectedZoneProvider);
-  ZoneModel? base = selected;
-  if (fromApi != null) {
-    if (base == null ||
-        base.zoneId.isEmpty ||
-        base.zoneId == fromApi.zoneId) {
-      base = fromApi;
-    }
+  final selected = ref.read(selectedZoneProvider);
+  ZoneModel? base = fromApi;
+  if (base == null &&
+      selected != null &&
+      _zoneCoversTagPoint(selected, payload.latitude, payload.longitude)) {
+    base = selected;
   }
-
   if (base == null) {
     final zones = ref.read(visibleZonesProvider).valueOrNull ?? const <ZoneModel>[];
     base = _nearestZoneForTag(zones, payload.latitude, payload.longitude);
@@ -1655,23 +1652,29 @@ Future<void> _applyZoneValidationAfterTag(
   }
 }
 
+bool _zoneCoversTagPoint(ZoneModel zone, double lat, double lng) {
+  final covering = ZoneCatalog.nearestCoveringEntry(lat, lng);
+  if (covering == null) return false;
+  final name = zone.displayName.toLowerCase();
+  return zone.zoneId == covering.zoneId ||
+      name.contains(covering.zoneName.toLowerCase());
+}
+
 ZoneModel? _nearestZoneForTag(
   List<ZoneModel> zones,
   double lat,
   double lng,
 ) {
-  ZoneModel? nearest;
-  var bestKm = double.infinity;
+  final entry = ZoneCatalog.nearestCoveringEntry(lat, lng);
+  if (entry == null) return null;
+  final key = entry.zoneName.toLowerCase();
   for (final zone in zones) {
-    final dLat = zone.centroidLat - lat;
-    final dLng = zone.centroidLng - lng;
-    final km = math.sqrt(dLat * dLat + dLng * dLng) * 111.0;
-    if (km < bestKm) {
-      bestKm = km;
-      nearest = zone;
+    final name = zone.displayName.toLowerCase();
+    if (zone.zoneId == entry.zoneId || name.contains(key)) {
+      return zone;
     }
   }
-  return nearest;
+  return null;
 }
 
 class TagSubmissionController
