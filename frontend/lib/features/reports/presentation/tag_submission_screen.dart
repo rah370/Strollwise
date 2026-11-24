@@ -105,14 +105,6 @@ class TagSubmissionScreen extends ConsumerStatefulWidget {
 }
 
 class _TagSubmissionScreenState extends ConsumerState<TagSubmissionScreen> {
-  @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      unawaited(_refreshOfflineState());
-    });
-  }
-
   Future<void> _refreshOfflineState() async {
     final online = await ApiReachability.probe();
     if (!mounted) return;
@@ -268,6 +260,9 @@ class _TagSubmissionScreenState extends ConsumerState<TagSubmissionScreen> {
   void initState() {
     super.initState();
     placeSearchController.addListener(_onPlaceQueryChanged);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      unawaited(_refreshOfflineState());
+    });
   }
 
   _TagType? get _selectedType {
