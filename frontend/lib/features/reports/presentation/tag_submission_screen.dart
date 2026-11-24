@@ -105,25 +105,6 @@ class TagSubmissionScreen extends ConsumerStatefulWidget {
 }
 
 class _TagSubmissionScreenState extends ConsumerState<TagSubmissionScreen> {
-  @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      unawaited(_refreshOfflineState());
-    });
-  }
-
-  Future<void> _refreshOfflineState() async {
-    final online = await ApiReachability.probe();
-    if (!mounted) return;
-    ref.read(apiOnlineProvider.notifier).state = online;
-    ref.read(offlineTagCountProvider.notifier).state =
-        await OfflineTagQueue.length();
-    if (online) {
-      await flushOfflineTags(ref);
-    }
-  }
-
   static const _tagTypes = [
     _TagType(
       backendCategory: 'food',
@@ -268,6 +249,20 @@ class _TagSubmissionScreenState extends ConsumerState<TagSubmissionScreen> {
   void initState() {
     super.initState();
     placeSearchController.addListener(_onPlaceQueryChanged);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      unawaited(_refreshOfflineState());
+    });
+  }
+
+  Future<void> _refreshOfflineState() async {
+    final online = await ApiReachability.probe();
+    if (!mounted) return;
+    ref.read(apiOnlineProvider.notifier).state = online;
+    ref.read(offlineTagCountProvider.notifier).state =
+        await OfflineTagQueue.length();
+    if (online) {
+      await flushOfflineTags(ref);
+    }
   }
 
   _TagType? get _selectedType {
@@ -411,7 +406,7 @@ class _TagSubmissionScreenState extends ConsumerState<TagSubmissionScreen> {
     final focus = LatLng(payload.latitude, payload.longitude);
     final zone =
         ref.read(tagFlowZoneOverviewNotifierProvider).overview?.currentZone;
-    final savedOffline = feedback?.savedOffline == true;
+    final savedOffline = feedback.savedOffline;
     final summary = savedOffline
         ? offlineTagSavedMessage
         : _friendlySubmitSummary(zone);
