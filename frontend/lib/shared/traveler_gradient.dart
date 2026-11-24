@@ -262,6 +262,28 @@ class ZoneCatalog {
     return best;
   }
 
+  /// The catalog zone that owns this point.
+  ///
+  /// Several disks can cover one hex. Ayala's 2.5 km disk also covers IT Park
+  /// and Fuente, which is why those hexes were all labeled Ayala. The owner is
+  /// the covering zone whose own center is closest, and the map uses that
+  /// zone's stored name.
+  static ZoneCatalogEntry? ownerOf(double lat, double lng) {
+    final list = entries;
+    if (list.isEmpty) return null;
+    ZoneCatalogEntry? best;
+    var bestKm = double.infinity;
+    for (final entry in list) {
+      final km = _haversineKm(lat, lng, entry.centerLat, entry.centerLng);
+      if (km > entry.radiusKm) continue;
+      if (km < bestKm) {
+        best = entry;
+        bestKm = km;
+      }
+    }
+    return best;
+  }
+
   /// Closest catalog zone whose radius disk (with [slack]) covers the point.
   static ZoneCatalogEntry? nearestCoveringEntry(
     double lat,

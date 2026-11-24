@@ -536,6 +536,7 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
           }
           for (final ring in zone.sourceH3Rings) {
             if (ring.length < 3) continue;
+            if (!_zoneOwnsRing(zone, ring)) continue;
             final closed = _closeGeoJsonLngLatRing(ring);
             if (closed.length < 4) continue;
             features.add({
@@ -630,7 +631,7 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
         }
         final center = isSelected && _hexLabelAt != null
             ? _hexLabelAt!
-            : _zoneCenter(zone);
+            : _labelAnchor(zone);
         final shouldLabel =
             isSelected || labeledZoneIds.contains(zone.h3Index);
         if (shouldLabel) {
@@ -867,6 +868,35 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
     } catch (_) {}
   }
 
+  /// A hex belongs to this zone when this zone's center is the closest
+  /// catalog center that still covers the hex.
+  bool _zoneOwnsRing(ZoneModel zone, List<List<double>> ring) {
+    if (ZoneCatalog.entries.isEmpty) return true;
+    final mine = ZoneCatalog.entryForZone(zone);
+    if (mine == null) return true;
+    final center = _ringCenter(ring);
+    final owner = ZoneCatalog.ownerOf(center.latitude, center.longitude);
+    if (owner == null) return true;
+    return owner.zoneId == mine.zoneId;
+  }
+
+  /// Label sits on a hex this zone still owns, so a wide disk does not
+  /// print its name on top of a smaller zone.
+  LatLng _labelAnchor(ZoneModel zone) {
+    final center = _zoneCenter(zone);
+    final mine = ZoneCatalog.entryForZone(zone);
+    final owner = ZoneCatalog.ownerOf(center.latitude, center.longitude);
+    if (mine == null || owner == null || owner.zoneId == mine.zoneId) {
+      return center;
+    }
+    for (final ring in zone.sourceH3Rings) {
+      if (ring.length >= 3 && _zoneOwnsRing(zone, ring)) {
+        return _ringCenter(ring);
+      }
+    }
+    return center;
+  }
+
   LatLng _zoneCenter(ZoneModel zone) {
     // Prefer the backend-computed centroid — it accounts for multi-part
     // zones and holes correctly. Fall back to the first outer ring's
@@ -913,12 +943,10 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
     final point = [tap.longitude, tap.latitude];
     for (final zone in zones.reversed) {
       for (final ring in zone.sourceH3Rings) {
+        if (!_zoneOwnsRing(zone, ring)) continue;
         if (_pointInRing(point, ring)) {
           return (zone: zone, hexCenter: _ringCenter(ring));
         }
-      }
-      if (_tapInsideZone(tap, zone)) {
-        return (zone: zone, hexCenter: _zoneCenter(zone));
       }
     }
     ZoneModel? bestZone;
@@ -930,6 +958,7 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
           : (zone.boundary.isEmpty ? const <List<List<double>>>[] : [zone.boundary]);
       for (final ring in rings) {
         if (ring.length < 3) continue;
+        if (!_zoneOwnsRing(zone, ring)) continue;
         final center = _ringCenter(ring);
         final meters = Geolocator.distanceBetween(
           tap.latitude,
@@ -970,23 +999,6 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
       }
     }
     return bestDistance <= 750 ? selected : null;
-  }
-
-  bool _tapInsideZone(LatLng tap, ZoneModel zone) {
-    final point = [tap.longitude, tap.latitude];
-    for (final ring in zone.sourceH3Rings) {
-      if (_pointInRing(point, ring)) return true;
-    }
-    for (final part in zone.polygonParts) {
-      if (part.isEmpty) continue;
-      if (!_pointInRing(point, part.first)) continue;
-      final inHole = part.skip(1).any((hole) => _pointInRing(point, hole));
-      if (!inHole) return true;
-    }
-    if (zone.boundary.isNotEmpty && _pointInRing(point, zone.boundary)) {
-      return true;
-    }
-    return false;
   }
 
   bool _pointInRing(List<double> point, List<List<double>> ring) {
