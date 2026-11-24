@@ -22,6 +22,8 @@ import '../../../shared/models/report.dart';
 import '../../../shared/models/zone.dart';
 import '../../../shared/network/api_client.dart';
 import '../../../shared/notifications/app_notifications.dart';
+import '../../../shared/offline/api_reachability.dart';
+import '../../../shared/offline/offline_tag_queue.dart';
 import '../../../shared/models/sensitive_site.dart';
 import '../../../shared/open_area_on_explore.dart';
 import '../../../shared/providers/app_providers.dart';
@@ -58,6 +60,42 @@ double _approxMeters(LatLng a, LatLng b) {
   return math.sqrt(dLat * dLat + dLng * dLng);
 }
 
+class _OfflineTagNotice extends StatelessWidget {
+  const _OfflineTagNotice({required this.offline, required this.queued});
+
+  final bool offline;
+  final int queued;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!offline && queued < 1) return const SizedBox.shrink();
+    final message = offline
+        ? 'You are offline. Tags you add now stay on this phone and will be sent when your connection returns.'
+        : 'Saved on this phone. $queued tag${queued == 1 ? '' : 's'} will be sent when your connection returns.';
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: const Color(0xFFFFF7ED),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: const Color(0xFFFDBA74)),
+        ),
+        child: Text(
+          message,
+          style: const TextStyle(
+            color: Color(0xFF9A3412),
+            fontWeight: FontWeight.w700,
+            height: 1.35,
+            fontSize: 13,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class TagSubmissionScreen extends ConsumerStatefulWidget {
   const TagSubmissionScreen({super.key});
 
@@ -67,6 +105,25 @@ class TagSubmissionScreen extends ConsumerStatefulWidget {
 }
 
 class _TagSubmissionScreenState extends ConsumerState<TagSubmissionScreen> {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      unawaited(_refreshOfflineState());
+    });
+  }
+
+  Future<void> _refreshOfflineState() async {
+    final online = await ApiReachability.probe();
+    if (!mounted) return;
+    ref.read(apiOnlineProvider.notifier).state = online;
+    ref.read(offlineTagCountProvider.notifier).state =
+        await OfflineTagQueue.length();
+    if (online) {
+      await flushOfflineTags(ref);
+    }
+  }
+
   static const _tagTypes = [
     _TagType(
       backendCategory: 'food',
@@ -333,8 +390,9 @@ class _TagSubmissionScreenState extends ConsumerState<TagSubmissionScreen> {
 
     setState(() => _submitError = null);
 
+    TagSubmissionFeedback? feedback;
     try {
-      await ref.read(tagSubmissionProvider.notifier).submit(payload);
+      feedback = await ref.read(tagSubmissionProvider.notifier).submit(payload);
     } catch (error) {
       if (!mounted) return;
       final message = _submissionErrorMessage(error);
@@ -353,7 +411,10 @@ class _TagSubmissionScreenState extends ConsumerState<TagSubmissionScreen> {
     final focus = LatLng(payload.latitude, payload.longitude);
     final zone =
         ref.read(tagFlowZoneOverviewNotifierProvider).overview?.currentZone;
-    final summary = _friendlySubmitSummary(zone);
+    final savedOffline = feedback?.savedOffline == true;
+    final summary = savedOffline
+        ? offlineTagSavedMessage
+        : _friendlySubmitSummary(zone);
 
     ref.read(tagSubmittedBannerProvider.notifier).state = TagSubmittedBanner(
       message: summary,
@@ -361,7 +422,7 @@ class _TagSubmissionScreenState extends ConsumerState<TagSubmissionScreen> {
     );
     pushAppNotification(
       ref,
-      title: 'Tag submitted',
+      title: savedOffline ? 'Tag saved on this phone' : 'Tag submitted',
       message: summary,
       kind: AppNotificationKind.success,
       showToast: true,
@@ -639,6 +700,10 @@ class _TagSubmissionScreenState extends ConsumerState<TagSubmissionScreen> {
           controller: _scrollController,
           padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
           children: [
+            _OfflineTagNotice(
+              offline: ref.watch(apiOnlineProvider) == false,
+              queued: ref.watch(offlineTagCountProvider),
+            ),
             const Text(
               'Help others find useful places around you.',
               style: TextStyle(

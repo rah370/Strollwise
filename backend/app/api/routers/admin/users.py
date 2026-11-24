@@ -9,6 +9,7 @@ from app.api.deps import get_current_admin
 from app.core.database import get_db
 from app.models.user import User
 from app.schemas.admin import (
+    AdminOfflineTag,
     AdminUserContributions,
     AdminUserListResponse,
     AdminUserSummary,
@@ -38,6 +39,15 @@ def list_users(
         role=role,
         status=status,
     )
+
+
+@router.get("/offline-tags", response_model=list[AdminOfflineTag])
+def list_offline_tags(
+    limit: int = Query(default=50, ge=1, le=200),
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_admin),
+) -> list[AdminOfflineTag]:
+    return AdminService(db).list_offline_tags(limit=limit)
 
 
 @router.patch("/{user_id}", response_model=AdminUserSummary)

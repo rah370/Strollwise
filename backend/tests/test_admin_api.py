@@ -87,6 +87,35 @@ def _pending_report(db_session, user_id: UUID, h3_index: str = "8828308281fffff"
     return report
 
 
+def test_admin_lists_users_who_uploaded_offline_tags(client, db_session):
+    from datetime import datetime, timedelta, timezone
+
+    traveler = _user_headers(client, "offline-traveler@test.com")
+    tagged = (datetime.now(timezone.utc) - timedelta(minutes=37)).isoformat()
+    created = client.post(
+        "/api/v1/reports",
+        headers=traveler,
+        json={
+            "latitude": 10.3157,
+            "longitude": 123.8854,
+            "category": "food",
+            "tags": ["food"],
+            "client_created_at": tagged,
+            "submitted_offline": True,
+        },
+    )
+    assert created.status_code == 201, created.text
+
+    headers = _admin_headers(client, db_session, "offline-admin@test.com")
+    listed = client.get("/api/v1/admin/users/offline-tags", headers=headers)
+    assert listed.status_code == 200, listed.text
+    body = listed.json()
+    assert len(body) == 1
+    assert body[0]["email"] == "offline-traveler@test.com"
+    assert body[0]["category"] == "food"
+    assert body[0]["delay_seconds"] >= 30 * 60
+
+
 def test_non_admin_forbidden(client, db_session):
     headers = _user_headers(client)
     resp = client.get("/api/v1/admin/moderation/reports", headers=headers)

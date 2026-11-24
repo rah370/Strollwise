@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, func
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -53,6 +53,15 @@ class Report(Base):
     city_of_origin_snapshot: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
     visibility_status: Mapped[str] = mapped_column(
         String(16), nullable=False, default="visible", index=True
+    )
+    # Phone clock when the traveler tagged. Null on tags sent while online
+    # before this column existed.
+    client_created_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    # True when the phone stored the tag and uploaded it after reconnecting.
+    submitted_offline: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False
     )
 
     created_at: Mapped[datetime] = mapped_column(

@@ -96,6 +96,7 @@ class ReportService:
             payload.latitude, payload.longitude, h3_resolution
         )
         self._validate_submission_limits(user, h3_index)
+        tagged_at = self._client_tagged_at(payload.client_created_at)
         report = Report(
             user_id=user.id,
             h3_index=h3_index,
@@ -117,6 +118,8 @@ class ReportService:
             city_of_origin_snapshot=user.city_of_origin,
             # Off the public map until `_approve_if_threshold_met` runs.
             visibility_status=VisibilityStatus.PENDING.value,
+            client_created_at=tagged_at,
+            submitted_offline=bool(payload.submitted_offline and tagged_at is not None),
         )
         self.reports.create(report)
         self.db.flush()
@@ -350,9 +353,10 @@ class ReportService:
     def _flag_spike(self, h3_index: str, actor_user_id: UUID) -> str | None:
         """Hold a cell when one category arrives too many times in a short window.
 
-        Pending and already-visible tags both count. A real lunch rush of three
-        people can still publish; the fifth matching tag inside 30 minutes
-        pulls that burst off the map for a researcher to review.
+        Pending and already-visible tags both count. Times come from the phone
+        clock when the traveler tagged, so a later upload of an old queue is
+        not treated as a new burst. Five matching tags inside 30 minutes are
+        pulled off the map for a researcher to review.
         """
         minimum = self._cfg.spike_min_same_category
         window_minutes = self._cfg.spike_window_minutes
@@ -361,11 +365,11 @@ class ReportService:
 
         pending = self.reports.list_pending_by_h3_index(h3_index)
         visible = self.reports.list_by_h3_indexes([h3_index])
-        recent = self._within_spike_window([*pending, *visible], window_minutes)
-        grouped: dict[str, list[Report]] = {}
-        for report in recent:
-            grouped.setdefault((report.category or "").lower(), []).append(report)
-        spiked = [group for group in grouped.values() if len(group) >= minimum]
+        spiked = self._burst_groups(
+            [*pending, *visible],
+            window_minutes=window_minutes,
+            minimum=minimum,
+        )
         if not spiked:
             return None
 
@@ -407,21 +411,52 @@ class ReportService:
             "A researcher will review it."
         )
 
-    def _within_spike_window(
-        self, reports: list[Report], window_minutes: int
-    ) -> list[Report]:
-        cutoff = datetime.now(timezone.utc) - timedelta(minutes=window_minutes)  # noqa: UP017
-        recent: list[Report] = []
+    def _client_tagged_at(self, raw: datetime | None) -> datetime | None:
+        if raw is None:
+            return None
+        moment = as_utc_aware(raw)
+        now = datetime.now(timezone.utc)  # noqa: UP017
+        if moment > now + timedelta(minutes=5):
+            return now
+        if moment < now - timedelta(days=30):
+            return now - timedelta(days=30)
+        return moment
+
+    def _tag_moment(self, report: Report) -> datetime:
+        """When the traveler tagged, not when a queued phone finished uploading."""
+        raw = report.client_created_at or report.created_at
+        if raw is None:
+            return datetime.now(timezone.utc)  # noqa: UP017
+        return as_utc_aware(raw)
+
+    def _burst_groups(
+        self,
+        reports: list[Report],
+        *,
+        window_minutes: int,
+        minimum: int,
+    ) -> list[list[Report]]:
+        """Same category whose tag times fit inside the spike window."""
+        window = timedelta(minutes=window_minutes)
+        grouped: dict[str, list[Report]] = {}
         seen: set[UUID] = set()
         for report in reports:
             if report.id in seen:
                 continue
             seen.add(report.id)
-            created = report.created_at
-            if created is not None and as_utc_aware(created) < cutoff:
-                continue
-            recent.append(report)
-        return recent
+            grouped.setdefault((report.category or "").lower(), []).append(report)
+
+        bursts: list[list[Report]] = []
+        for group in grouped.values():
+            ordered = sorted(group, key=self._tag_moment)
+            start = 0
+            for end in range(len(ordered)):
+                while self._tag_moment(ordered[end]) - self._tag_moment(ordered[start]) > window:
+                    start += 1
+                if end - start + 1 >= minimum:
+                    bursts.append(ordered[start : end + 1])
+                    break
+        return bursts
 
     def _recompute_after_spike(self, h3_index: str) -> None:
         try:

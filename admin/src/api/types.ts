@@ -1,3 +1,16 @@
+export type AdminOfflineTag = {
+  report_id: string
+  user_id: string | null
+  display_name: string | null
+  email: string | null
+  category: string
+  h3_index: string
+  visibility_status: string
+  tagged_at: string
+  synced_at: string
+  delay_seconds: number
+}
+
 export type AdminReport = {
   id: string
   h3_index: string

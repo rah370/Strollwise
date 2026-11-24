@@ -35,6 +35,8 @@ import '../../shared/models/user_me.dart';
 import '../../shared/models/zone.dart';
 import '../../shared/map/map_viewport.dart';
 import '../../shared/network/api_client.dart';
+import '../../shared/offline/api_reachability.dart';
+import '../../shared/offline/offline_tag_queue.dart';
 import '../../shared/zone_validation_metrics.dart';
 
 final authTokenProvider = StateProvider<String?>((ref) => null);
@@ -1540,6 +1542,7 @@ class TagSubmissionFeedback {
     required this.remainingToThreshold,
     required this.thresholdMet,
     required this.publicZoneUpdate,
+    this.savedOffline = false,
   });
 
   final String h3Index;
@@ -1549,6 +1552,7 @@ class TagSubmissionFeedback {
   final int remainingToThreshold;
   final bool thresholdMet;
   final String publicZoneUpdate;
+  final bool savedOffline;
 
   factory TagSubmissionFeedback.fromJson(Map<String, dynamic> json) {
     return TagSubmissionFeedback(
@@ -1568,6 +1572,13 @@ class TagSubmissionFeedback {
     return int.tryParse(value?.toString() ?? '') ?? 0;
   }
 }
+
+final apiOnlineProvider = StateProvider<bool?>((ref) => null);
+
+final offlineTagCountProvider = StateProvider<int>((ref) => 0);
+
+const offlineTagSavedMessage =
+    'You are offline. This tag is saved on this phone and will be sent when your connection returns.';
 
 final tagSubmissionProvider =
     StateNotifierProvider<
@@ -1683,12 +1694,23 @@ class TagSubmissionController
 
   final Ref ref;
 
-  Future<TagSubmissionFeedback> submit(TagSubmissionPayload payload) async {
+  Future<TagSubmissionFeedback> submit(
+    TagSubmissionPayload payload, {
+    DateTime? taggedAt,
+    bool fromQueue = false,
+  }) async {
     state = const AsyncLoading();
     try {
       final dio = ref.read(dioProvider);
       final token = ref.read(authTokenProvider);
       final isDemoSession = isLocalDemoSession(token);
+      if (!isDemoSession && !fromQueue) {
+        final online = await ApiReachability.probe();
+        ref.read(apiOnlineProvider.notifier).state = online;
+        if (!online) {
+          return _saveOffline(payload, taggedAt: taggedAt);
+        }
+      }
       if (isDemoSession) {
         // Demo/offline mode has no valid backend JWT, so keep the prototype flow
         // responsive while still refreshing local fallback providers.
@@ -1724,9 +1746,13 @@ class TagSubmissionController
         state = AsyncData(feedback);
         return feedback;
       }
+      final body = payload.toJson();
+      final tagged = (taggedAt ?? DateTime.now()).toUtc();
+      body['client_created_at'] = tagged.toIso8601String();
+      body['submitted_offline'] = fromQueue;
       final response = await dio.post(
         '/reports',
-        data: payload.toJson(),
+        data: body,
         options: Options(headers: {'Authorization': 'Bearer $token'}),
       );
       final data = response.data as Map<String, dynamic>;
@@ -1769,10 +1795,54 @@ class TagSubmissionController
       ref.invalidate(savedZonesProfileProvider);
       state = AsyncData(feedback);
       return feedback;
+    } on DioException catch (error, stackTrace) {
+      final offline = !fromQueue && _isOfflineError(error);
+      if (offline && !isLocalDemoSession(ref.read(authTokenProvider))) {
+        ref.read(apiOnlineProvider.notifier).state = false;
+        return _saveOffline(payload, taggedAt: taggedAt);
+      }
+      state = AsyncError(error, stackTrace);
+      rethrow;
     } catch (error, stackTrace) {
       state = AsyncError(error, stackTrace);
       rethrow;
     }
+  }
+
+  Future<TagSubmissionFeedback> _saveOffline(
+    TagSubmissionPayload payload, {
+    DateTime? taggedAt,
+  }) async {
+    await OfflineTagQueue.enqueue(
+      latitude: payload.latitude,
+      longitude: payload.longitude,
+      category: payload.category,
+      tags: payload.tags,
+      note: payload.note,
+      taggedAt: taggedAt,
+    );
+    ref.read(offlineTagCountProvider.notifier).state =
+        await OfflineTagQueue.length();
+    final feedback = TagSubmissionFeedback(
+      h3Index: '',
+      pendingCount: 0,
+      matchingCount: 0,
+      threshold: 0,
+      remainingToThreshold: 0,
+      thresholdMet: false,
+      publicZoneUpdate: offlineTagSavedMessage,
+      savedOffline: true,
+    );
+    state = AsyncData(feedback);
+    return feedback;
+  }
+
+  bool _isOfflineError(DioException error) {
+    return error.type == DioExceptionType.connectionError ||
+        error.type == DioExceptionType.connectionTimeout ||
+        error.type == DioExceptionType.sendTimeout ||
+        error.type == DioExceptionType.receiveTimeout ||
+        error.type == DioExceptionType.unknown;
   }
 
   TagSubmissionFeedback _demoFeedback(TagSubmissionPayload payload) {
@@ -1803,6 +1873,44 @@ class TagSubmissionController
       );
     }
   }
+}
+
+/// Send tags the phone saved while offline. Stops on the first network error.
+Future<void> flushOfflineTags(dynamic ref) async {
+  final token = ref.read(authTokenProvider);
+  if (!isUsableAccessToken(token as String?)) return;
+  final online = await ApiReachability.probe();
+  ref.read(apiOnlineProvider.notifier).state = online;
+  final queued = await OfflineTagQueue.load();
+  ref.read(offlineTagCountProvider.notifier).state = queued.length;
+  if (!online || queued.isEmpty) return;
+  for (final item in queued) {
+    try {
+      await ref.read(tagSubmissionProvider.notifier).submit(
+        TagSubmissionPayload(
+          latitude: item.latitude,
+          longitude: item.longitude,
+          category: item.category,
+          tags: item.tags,
+          note: item.note,
+        ),
+        taggedAt: item.taggedAt,
+        fromQueue: true,
+      );
+      await OfflineTagQueue.remove(item.id);
+    } on DioException catch (error) {
+      final status = error.response?.statusCode;
+      if (status == 422 || status == 401 || status == 403) {
+        await OfflineTagQueue.remove(item.id);
+        continue;
+      }
+      break;
+    } catch (_) {
+      break;
+    }
+  }
+  ref.read(offlineTagCountProvider.notifier).state =
+      await OfflineTagQueue.length();
 }
 
 enum AuthMode { login, register }

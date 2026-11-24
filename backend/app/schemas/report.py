@@ -18,6 +18,8 @@ class ReportCreate(ORMModel):
     image_mime_type: str | None = Field(default=None, max_length=80)
     image_size_bytes: int | None = Field(default=None, ge=0)
     source_type: str = Field(default="user", max_length=16)
+    client_created_at: datetime | None = None
+    submitted_offline: bool = False
 
 
 class ReportPublic(ORMModel):

@@ -8,11 +8,13 @@ import logging
 from datetime import datetime, timezone
 from uuid import UUID
 
+from sqlalchemy import desc, select
 from sqlalchemy.orm import Session
 
 from app.core.cache import cache_delete_pattern
 from app.models.audit_log import AuditLog
 from app.models.merged_zone import MergedZone
+from app.models.report import Report
 from app.models.user import User
 from app.models.zone_catalog_entry import ZoneCatalogEntryModel
 from app.repositories.audit_repository import AuditRepository
@@ -28,6 +30,7 @@ from app.schemas.admin import (
     AdminCatalogEntry,
     AdminCatalogUpdate,
     AdminDashboardStats,
+    AdminOfflineTag,
     AdminPeopleSnapshot,
     AdminPipelineResult,
     AdminUserContributions,
@@ -49,6 +52,7 @@ from app.services.city_pulse_service import CityPulseService
 from app.services.place_service import PlaceService
 from app.services.zone_catalog import invalidate_catalog_cache
 from app.services.zone_merge_service import ZoneMergeService
+from app.utils.time_utils import as_utc_aware
 
 log = logging.getLogger(__name__)
 
@@ -443,6 +447,42 @@ class AdminService:
             flagged_reports=counts.get("flagged", 0),
             badges=badges,
         )
+
+    def list_offline_tags(self, *, limit: int = 50) -> list[AdminOfflineTag]:
+        """Tags the phone saved offline and uploaded after the connection returned."""
+        stmt = (
+            select(Report, User)
+            .outerjoin(User, Report.user_id == User.id)
+            .where(Report.submitted_offline.is_(True))
+            .order_by(desc(Report.created_at))
+            .limit(limit)
+        )
+        rows = self.db.execute(stmt).all()
+        items: list[AdminOfflineTag] = []
+        for report, user in rows:
+            tagged = report.client_created_at or report.created_at
+            synced = report.created_at
+            delay = 0
+            if tagged is not None and synced is not None:
+                delay = max(
+                    int((as_utc_aware(synced) - as_utc_aware(tagged)).total_seconds()),
+                    0,
+                )
+            items.append(
+                AdminOfflineTag(
+                    report_id=report.id,
+                    user_id=user.id if user is not None else report.user_id,
+                    display_name=user.display_name if user is not None else None,
+                    email=user.email if user is not None else None,
+                    category=report.category,
+                    h3_index=report.h3_index,
+                    visibility_status=report.visibility_status,
+                    tagged_at=tagged,
+                    synced_at=synced,
+                    delay_seconds=delay,
+                )
+            )
+        return items
 
     # --- Analytics ---------------------------------------------------------
 

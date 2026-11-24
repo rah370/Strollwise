@@ -132,6 +132,37 @@ def test_same_category_spike_flags_the_cell(client, db_session):
     assert audit[0].payload_json["flagged_count"] == 5
 
 
+def test_offline_tags_spread_over_time_do_not_spike(client, db_session):
+    """A reconnect must not look like five people tagged in the same minute."""
+    from datetime import datetime, timedelta, timezone
+
+    from app.models.report import Report
+
+    start = datetime.now(timezone.utc) - timedelta(hours=10)
+    for index in range(5):
+        token = _register(client, f"offline-spread-{index}@example.com")
+        tagged = (start + timedelta(hours=index)).isoformat()
+        resp = client.post(
+            "/api/v1/reports",
+            headers={"Authorization": f"Bearer {token}"},
+            json={
+                "latitude": 10.3157,
+                "longitude": 123.8854,
+                "category": "food",
+                "tags": ["food"],
+                "note_text": f"queued {index}",
+                "client_created_at": tagged,
+                "submitted_offline": True,
+            },
+        )
+        assert resp.status_code == 201, resp.text
+        assert resp.json()["visibility_status"] != "flagged"
+
+    rows = db_session.query(Report).filter(Report.submitted_offline.is_(True)).all()
+    assert len(rows) == 5
+    assert "flagged" not in {row.visibility_status for row in rows}
+
+
 def test_zones_endpoint_returns_list(client):
     # Three distinct people in the same H3 cell trigger approval/publication.
     for email in (

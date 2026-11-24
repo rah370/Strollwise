@@ -185,6 +185,19 @@ class AdminUserContributions(BaseModel):
     badges: list[str] = Field(default_factory=list)
 
 
+class AdminOfflineTag(BaseModel):
+    report_id: UUID
+    user_id: UUID | None = None
+    display_name: str | None = None
+    email: str | None = None
+    category: str
+    h3_index: str
+    visibility_status: str
+    tagged_at: datetime
+    synced_at: datetime
+    delay_seconds: int
+
+
 class AdminAuditEntry(BaseModel):
     id: UUID
     actor_user_id: UUID | None = None

@@ -23,7 +23,10 @@ class _StrollWiseAppState extends ConsumerState<StrollWiseApp> {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      unawaited(restoreAuthFromPrefs(ref));
+      unawaited(() async {
+        await restoreAuthFromPrefs(ref);
+        await flushOfflineTags(ref);
+      }());
     });
   }
 

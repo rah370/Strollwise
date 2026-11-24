@@ -1,7 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 import { api } from '../api/client'
-import type { AdminUser, AdminUserContributions, AdminUserList } from '../api/types'
+import type {
+  AdminOfflineTag,
+  AdminUser,
+  AdminUserContributions,
+  AdminUserList,
+} from '../api/types'
 import { Badge } from '../components/Badge'
 import { Button } from '../components/Button'
 import { Card } from '../components/Card'
@@ -44,6 +49,12 @@ export function UsersPage() {
   if (userType) params.set('user_type', userType)
   if (role) params.set('role', role)
   if (status) params.set('status', status)
+
+  const { data: offlineTags } = useQuery({
+    queryKey: ['offline-tags'],
+    queryFn: () => api<AdminOfflineTag[]>('/admin/users/offline-tags?limit=50'),
+    refetchInterval: poll,
+  })
 
   const { data, isLoading } = useQuery({
     queryKey: ['users', params.toString()],
@@ -126,6 +137,49 @@ export function UsersPage() {
           accent={colors.accent}
         />
       </div>
+
+      <Card className="p-4">
+        <h2 className="text-sm font-bold text-sw-primary">Tags sent after going offline</h2>
+        <p className="mt-1 text-sm text-sw-secondary">
+          These people tagged without a connection. The phone kept the tag and sent it when the
+          internet returned. The delay is the wait between those two times.
+        </p>
+        {(offlineTags ?? []).length === 0 ? (
+          <p className="mt-3 text-sm text-sw-muted">No offline tags have been uploaded yet.</p>
+        ) : (
+          <div className="mt-3 overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-[10px] uppercase tracking-wide text-sw-muted">
+                  <th className="py-2 pr-3">Person</th>
+                  <th className="py-2 pr-3">Tag</th>
+                  <th className="py-2 pr-3">Tagged</th>
+                  <th className="py-2 pr-3">Sent</th>
+                  <th className="py-2">Wait</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(offlineTags ?? []).map((tag) => (
+                  <tr key={tag.report_id} className="border-t border-sw-border">
+                    <td className="py-2 pr-3">
+                      <div className="font-semibold">{tag.display_name || 'Traveler'}</div>
+                      <div className="text-xs text-sw-muted">{tag.email}</div>
+                    </td>
+                    <td className="py-2 pr-3 capitalize">{tag.category}</td>
+                    <td className="py-2 pr-3 whitespace-nowrap">
+                      {new Date(tag.tagged_at).toLocaleString()}
+                    </td>
+                    <td className="py-2 pr-3 whitespace-nowrap">
+                      {new Date(tag.synced_at).toLocaleString()}
+                    </td>
+                    <td className="py-2 font-semibold">{formatOfflineDelay(tag.delay_seconds)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
 
       <Card className="p-4">
         <p className="text-sm text-sw-secondary">
@@ -253,6 +307,15 @@ export function UsersPage() {
       </div>
     </div>
   )
+}
+
+function formatOfflineDelay(seconds: number): string {
+  if (seconds < 60) return `${seconds}s`
+  const minutes = Math.round(seconds / 60)
+  if (minutes < 60) return `${minutes} min`
+  const hours = Math.floor(minutes / 60)
+  const rest = minutes % 60
+  return rest ? `${hours}h ${rest}m` : `${hours}h`
 }
 
 function UserSummary({
