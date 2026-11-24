@@ -183,6 +183,7 @@ def _audit_label(action: str) -> str:
         "report.approved": "A tag was approved",
         "report.rejected": "A tag was rejected",
         "report.flagged": "A tag was flagged",
+        "report.spike_flag": "Flagged a burst of the same tag",
     }
     return labels.get(action, action.replace(".", " ").replace("_", " "))
 

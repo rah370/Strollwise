@@ -10,6 +10,7 @@ Submit flow a panel will ask about:
    **visible**, then recompute cell aggregates → places → zones.
 
 Anti-spam: one pending tag per user per cell, cooldown, hourly cap.
+A burst of the same category in one cell is flagged for review.
 Private visit pins are written for the owner only and do not affect the map.
 """
 from __future__ import annotations
@@ -36,11 +37,12 @@ from app.services.admin_events import publish_report_event, publish_zones_update
 from app.services.aggregation_service import AggregationService
 from app.services.audit_service import AuditService
 from app.services.place_service import PlaceService
-from app.services.system_settings_service import effective_settings
 from app.services.sensitive_sites import pin_on_building_message, site_at
+from app.services.system_settings_service import effective_settings
 from app.services.visit_pin_service import VisitPinService
 from app.services.zone_merge_service import ZoneMergeService
 from app.utils.geo_utils import within_cebu_service_area
+from app.utils.time_utils import as_utc_aware
 from app.utils.user_type_utils import traveler_type_from_user_type
 
 log = logging.getLogger(__name__)
@@ -166,6 +168,19 @@ class ReportService:
         cache_delete_pattern("zones:feed*")
         publish_report_event("created", report_id=str(report.id), h3_index=h3_index)
         aggregation = self._build_aggregation_feedback(h3_index, report.category)
+        held = self._flag_spike(h3_index, user.id)
+        if held:
+            self.db.refresh(report)
+            aggregation = AggregationFeedback(
+                h3_index=aggregation.h3_index,
+                pending_count=aggregation.pending_count,
+                matching_count=aggregation.matching_count,
+                threshold=aggregation.threshold,
+                remaining_to_threshold=aggregation.remaining_to_threshold,
+                threshold_met=False,
+                public_zone_update=held,
+            )
+            return ReportSubmissionResult(report=report, aggregation=aggregation)
         threshold_met = self._approve_if_threshold_met(h3_index)
         if threshold_met:
             publish_report_event("approved", h3_index=h3_index, source="auto_threshold")
@@ -331,6 +346,96 @@ class ReportService:
             threshold_met=threshold_met,
             public_zone_update=zone_update,
         )
+
+    def _flag_spike(self, h3_index: str, actor_user_id: UUID) -> str | None:
+        """Hold a cell when one category arrives too many times in a short window.
+
+        Pending and already-visible tags both count. A real lunch rush of three
+        people can still publish; the fifth matching tag inside 30 minutes
+        pulls that burst off the map for a researcher to review.
+        """
+        minimum = self._cfg.spike_min_same_category
+        window_minutes = self._cfg.spike_window_minutes
+        if minimum <= 0 or window_minutes <= 0:
+            return None
+
+        pending = self.reports.list_pending_by_h3_index(h3_index)
+        visible = self.reports.list_by_h3_indexes([h3_index])
+        recent = self._within_spike_window([*pending, *visible], window_minutes)
+        grouped: dict[str, list[Report]] = {}
+        for report in recent:
+            grouped.setdefault((report.category or "").lower(), []).append(report)
+        spiked = [group for group in grouped.values() if len(group) >= minimum]
+        if not spiked:
+            return None
+
+        had_visible = False
+        categories: list[str] = []
+        flagged_ids: list[str] = []
+        for group in spiked:
+            categories.append((group[0].category or "").lower())
+            for report in group:
+                if report.visibility_status == VisibilityStatus.VISIBLE.value:
+                    had_visible = True
+                report.visibility_status = VisibilityStatus.FLAGGED.value
+                flagged_ids.append(str(report.id))
+
+        self.audit.record(
+            actor_user_id=actor_user_id,
+            action_type="report.spike_flag",
+            entity_type="h3_cell",
+            entity_id=h3_index,
+            payload={
+                "h3_index": h3_index,
+                "categories": categories,
+                "flagged_count": len(flagged_ids),
+                "window_minutes": window_minutes,
+                "report_ids": flagged_ids,
+            },
+        )
+        self.db.commit()
+        publish_report_event(
+            "flagged",
+            h3_index=h3_index,
+            source="spike",
+            categories=categories,
+        )
+        if had_visible:
+            self._recompute_after_spike(h3_index)
+        return (
+            "This area was flagged because the same tag arrived too quickly. "
+            "A researcher will review it."
+        )
+
+    def _within_spike_window(
+        self, reports: list[Report], window_minutes: int
+    ) -> list[Report]:
+        cutoff = datetime.now(timezone.utc) - timedelta(minutes=window_minutes)  # noqa: UP017
+        recent: list[Report] = []
+        seen: set[UUID] = set()
+        for report in reports:
+            if report.id in seen:
+                continue
+            seen.add(report.id)
+            created = report.created_at
+            if created is not None and as_utc_aware(created) < cutoff:
+                continue
+            recent.append(report)
+        return recent
+
+    def _recompute_after_spike(self, h3_index: str) -> None:
+        try:
+            AggregationService(self.db).recompute_cells([h3_index])
+            self.db.commit()
+            places = PlaceService(self.db).rebuild_places_for_cells([h3_index])
+            ZoneMergeService(self.db).recompute_for_places([p.place_id for p in places])
+            cache_delete_pattern("zones:vp:*")
+            cache_delete_pattern("zones:feed*")
+            cache_delete_pattern("city:pulse:*")
+            cache_delete_pattern(f"reports:pending:{h3_index}")
+        except Exception:
+            log.exception("zone refresh failed after spike flag h3_index=%s", h3_index)
+            self.db.rollback()
 
     def _approve_if_threshold_met(self, h3_index: str) -> bool:
         """Community validation: N distinct people + category agreement.

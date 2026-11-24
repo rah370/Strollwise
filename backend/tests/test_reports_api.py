@@ -103,6 +103,35 @@ def test_single_user_cannot_form_cell_with_multiple_reports(client):
     assert "pending tag" in dup.json()["detail"].lower()
 
 
+def test_same_category_spike_flags_the_cell(client, db_session):
+    """Five matching tags in one cell are pulled off the map for review."""
+    from app.models.audit_log import AuditLog
+    from app.models.report import Report
+
+    bodies = []
+    for index in range(5):
+        token = _register(client, f"spike-{index}@example.com")
+        bodies.append(_post_food_report(client, token, f"spike {index}"))
+
+    assert bodies[2]["aggregation"]["threshold_met"] is True
+    assert bodies[4]["visibility_status"] == "flagged"
+    assert bodies[4]["aggregation"]["threshold_met"] is False
+    assert "flagged" in bodies[4]["aggregation"]["public_zone_update"].lower()
+
+    h3_index = bodies[0]["h3_index"]
+    rows = db_session.query(Report).filter(Report.h3_index == h3_index).all()
+    assert len(rows) == 5
+    assert {row.visibility_status for row in rows} == {"flagged"}
+
+    audit = (
+        db_session.query(AuditLog)
+        .filter(AuditLog.action_type == "report.spike_flag")
+        .all()
+    )
+    assert len(audit) == 1
+    assert audit[0].payload_json["flagged_count"] == 5
+
+
 def test_zones_endpoint_returns_list(client):
     # Three distinct people in the same H3 cell trigger approval/publication.
     for email in (

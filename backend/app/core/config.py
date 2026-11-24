@@ -63,6 +63,10 @@ class Settings(BaseSettings):
     # Per-user anti-spam on POST /reports (0 disables that guard).
     report_cooldown_hours_per_cell: int = Field(default=24)
     report_max_per_user_per_hour: int = Field(default=30)
+    # Same category in one cell, this many times inside the window, is held
+    # for review instead of published. 0 disables that check.
+    spike_window_minutes: int = Field(default=30)
+    spike_min_same_category: int = Field(default=5)
 
     s3_bucket_name: str | None = Field(default=None)
     s3_access_key: str | None = Field(default=None)
