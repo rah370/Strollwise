@@ -26,6 +26,8 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
+from app.api.admin_docs import install_admin_docs
+from app.api.admin_spa import install_admin_spa
 from app.api.routers import (
     analytics,
     auth,
@@ -37,8 +39,6 @@ from app.api.routers import (
     users,
     zones,
 )
-from app.api.admin_docs import install_admin_docs
-from app.api.admin_spa import install_admin_spa
 from app.api.routers.admin import router as admin_router
 from app.core.config import settings
 from app.core.health import health_payload
